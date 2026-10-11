@@ -1,0 +1,18 @@
+# Environment Configuration (Contains sensitive DB credentials and app secrets)
+.env
+!.env.example
+
+# Temporary and Log files
+storage/logs/*.log
+storage/uploads/*
+!storage/uploads/.gitkeep
+!storage/logs/.gitkeep
+
+# Operating System & IDE Artifacts
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.tmp
+*.bak
+*.swp
