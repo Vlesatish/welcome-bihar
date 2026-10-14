@@ -71,7 +71,28 @@ class WalletController
         $autoUpiSetting = $db->query("SELECT setting_value FROM settings WHERE setting_key = 'gateway_auto_upi'")->fetchColumn();
         $autoUpiEnabled = ($autoUpiSetting === false || ((string)$autoUpiSetting !== '0' && strtolower((string)$autoUpiSetting) !== 'false'));
 
-        // Recent topup orders (fast instant load from database)
+        // Auto-reconcile recent pending orders on page visit so completed payments credit immediately
+        try {
+            $pendingStmt = $db->prepare("
+                SELECT id, order_id FROM topup_orders 
+                WHERE user_id = ? AND status = 'PENDING' AND created_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
+                ORDER BY id DESC LIMIT 3
+            ");
+            $pendingStmt->execute([$userId]);
+            $pendingList = $pendingStmt->fetchAll();
+
+            foreach ($pendingList as $po) {
+                $statusCheck = $this->provider->checkPaymentStatus($po['order_id']);
+                if (!empty($statusCheck['status']) && $statusCheck['status'] === 'PAID') {
+                    $this->executeOrderCredit((int)$po['id'], $statusCheck['provider_txn_id'] ?? null, $statusCheck['utr'] ?? null, $statusCheck['raw'] ?? null);
+                    $balance = WalletService::getBalance($userId);
+                }
+            }
+        } catch (\Throwable $e) {
+            error_log("Auto-reconcile on topup error: " . $e->getMessage());
+        }
+
+        // Recent topup orders (fresh after check)
         $stmt = $db->prepare("SELECT * FROM topup_orders WHERE user_id = ? ORDER BY id DESC LIMIT 15");
         $stmt->execute([$userId]);
         $recentOrders = $stmt->fetchAll();
@@ -448,18 +469,29 @@ class WalletController
         $statusCheck = $this->provider->checkPaymentStatus($orderId);
 
         if ($statusCheck['status'] === 'PAID') {
-            // Atomically credit wallet
-            $creditRes = $this->executeOrderCredit($order['id'], $statusCheck['provider_txn_id'], $statusCheck['utr'], $statusCheck['raw']);
+            try {
+                // Atomically credit wallet
+                $creditRes = $this->executeOrderCredit($order['id'], $statusCheck['provider_txn_id'], $statusCheck['utr'], $statusCheck['raw']);
 
-            echo json_encode([
-                'success' => true,
-                'status' => 'PAID',
-                'credited' => true,
-                'amount' => (float)$order['amount'],
-                'new_balance' => $creditRes['new_balance'] ?? null,
-                'message' => 'Payment verified! Wallet has been credited.'
-            ]);
-            exit;
+                echo json_encode([
+                    'success' => true,
+                    'status' => 'PAID',
+                    'credited' => true,
+                    'amount' => (float)$order['amount'],
+                    'new_balance' => $creditRes['new_balance'] ?? WalletService::getBalance((int)$order['user_id']),
+                    'message' => 'Payment verified! Wallet has been credited.'
+                ]);
+                exit;
+            } catch (\Throwable $e) {
+                error_log("Credit execution failed for order {$orderId}: " . $e->getMessage());
+                echo json_encode([
+                    'success' => false,
+                    'status' => 'PENDING',
+                    'credited' => false,
+                    'message' => 'Payment detected, processing credit: ' . $e->getMessage()
+                ]);
+                exit;
+            }
         }
 
         if ($statusCheck['status'] === 'FAILED' || $statusCheck['status'] === 'EXPIRED') {
@@ -639,6 +671,14 @@ class WalletController
                 "UPI Provider Txn: " . ($providerTxnId ?: 'N/A') . " | UTR: " . ($utr ?: 'N/A'),
                 $userId
             );
+
+            // Ensure is_credited column exists defensively
+            try {
+                $hasCol = $db->query("SHOW COLUMNS FROM `topup_orders` LIKE 'is_credited'")->fetch();
+                if (!$hasCol) {
+                    $db->exec("ALTER TABLE `topup_orders` ADD COLUMN `is_credited` TINYINT(1) NOT NULL DEFAULT 0 AFTER `status`");
+                }
+            } catch (\Throwable $e) {}
 
             // Update topup order atomically
             $upd = $db->prepare("

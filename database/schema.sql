@@ -281,6 +281,7 @@ CREATE TABLE IF NOT EXISTS `topup_orders` (
   `user_id` INT NOT NULL,
   `amount` DECIMAL(12,2) NOT NULL,
   `status` ENUM('PENDING', 'PAID', 'FAILED', 'EXPIRED', 'PENDING_VERIFICATION') NOT NULL DEFAULT 'PENDING',
+  `is_credited` TINYINT(1) NOT NULL DEFAULT 0,
   `provider` VARCHAR(50) NOT NULL DEFAULT 'ALL_API',
   `provider_txn_id` VARCHAR(150) NULL,
   `provider_utr` VARCHAR(150) NULL,

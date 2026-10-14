@@ -197,6 +197,15 @@ class SystemUpdateService
             }
 
             // 5. Payment Gateway Configuration Self-Healing:
+            // Ensure is_credited column exists on topup_orders
+            if (in_array('topup_orders', $tables, true)) {
+                $topupCols = $db->query("SHOW COLUMNS FROM `topup_orders`")->fetchAll(PDO::FETCH_COLUMN);
+                $topupCols = array_map('strtolower', $topupCols);
+                if (!in_array('is_credited', $topupCols, true)) {
+                    $db->exec("ALTER TABLE `topup_orders` ADD COLUMN `is_credited` TINYINT(1) NOT NULL DEFAULT 0 AFTER `status`");
+                }
+            }
+
             // Ensure allapi_mode is set to LIVE so real AllAPI gateway is active
             $db->exec("UPDATE `settings` SET `setting_value` = 'LIVE' WHERE `setting_key` = 'allapi_mode' AND `setting_value` = 'SANDBOX'");
             $db->exec("INSERT INTO `settings` (`setting_key`, `setting_value`, `setting_group`, `description`) 
