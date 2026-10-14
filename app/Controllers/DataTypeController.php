@@ -401,6 +401,46 @@ class DataTypeController
             'CHAR_CERT' => 'Character Certificate'
         ];
 
+        // Dynamically merge custom application codes registered in data_type_fields or configured in service_rate_rules
+        try {
+            // 1. Check data_type_fields options_json
+            $dtfRow = $db->query("SELECT options_json FROM data_type_fields WHERE field_name = 'application_code' AND options_json IS NOT NULL LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+            if ($dtfRow && !empty($dtfRow['options_json'])) {
+                $decoded = json_decode($dtfRow['options_json'], true);
+                if (is_array($decoded)) {
+                    foreach ($decoded as $opt) {
+                        if (!empty($opt['value'])) {
+                            $cKey = strtoupper(trim($opt['value']));
+                            if (!isset($appCodes[$cKey])) {
+                                $appCodes[$cKey] = $opt['label_en'] ?? $cKey;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. Check service_rate_rules for any previously saved custom codes
+            $existingRuleCodes = $db->query("
+                SELECT DISTINCT application_code, rule_label 
+                FROM service_rate_rules 
+                WHERE application_code IS NOT NULL 
+                  AND application_code != '' 
+                  AND application_code != '*'
+                ORDER BY application_code ASC
+            ")->fetchAll(PDO::FETCH_ASSOC);
+
+            foreach ($existingRuleCodes as $erc) {
+                $cKey = strtoupper(trim($erc['application_code']));
+                if (!isset($appCodes[$cKey])) {
+                    $cleanLabel = !empty($erc['rule_label']) ? trim($erc['rule_label']) : $cKey;
+                    $cleanLabel = preg_replace('/(\s*-\s*[A-Z0-9_]+)?\s*Rate(\s*Rule)?$/i', '', $cleanLabel);
+                    $appCodes[$cKey] = !empty($cleanLabel) ? $cleanLabel : $cKey;
+                }
+            }
+        } catch (\Throwable $e) {
+            // Ignore DB error during dynamic code discovery
+        }
+
         require dirname(__DIR__) . '/Views/admin/service_rate_rules.php';
     }
 
@@ -577,6 +617,167 @@ class DataTypeController
 
             $_SESSION['flash_error'] = 'Error: ' . $e->getMessage();
             header("Location: /admin/data-types/rate-rules?id={$dataTypeId}");
+            exit;
+        }
+    }
+
+    /**
+     * Dedicated method: Register a new Custom Application Code system-wide
+     */
+    public function addCustomAppCode(): void
+    {
+        $isAjax = (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest')
+            || (isset($_POST['is_ajax']) && $_POST['is_ajax'] === '1')
+            || (str_contains($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json'));
+
+        if (!AuthService::isAdmin()) {
+            if ($isAjax) {
+                http_response_code(403);
+                echo json_encode(['success' => false, 'message' => 'Admin authorization required.']);
+                exit;
+            }
+            $_SESSION['flash_error'] = 'Unauthorized.';
+            header('Location: /login');
+            exit;
+        }
+
+        if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
+            if ($isAjax) {
+                http_response_code(400);
+                echo json_encode(['success' => false, 'message' => 'Invalid CSRF token.']);
+                exit;
+            }
+            $_SESSION['flash_error'] = 'Invalid CSRF token.';
+            header('Location: /admin/block-rates');
+            exit;
+        }
+
+        $dataTypeId = (int)($_POST['data_type_id'] ?? 4);
+        $rawCode = trim($_POST['code'] ?? '');
+        $code = strtoupper(preg_replace('/[^A-Za-z0-9_]/', '', $rawCode));
+        $labelEn = trim($_POST['label_en'] ?? '');
+        $labelHi = trim($_POST['label_hi'] ?? '') ?: $labelEn;
+        $defaultFee = isset($_POST['default_fee']) && is_numeric($_POST['default_fee']) ? (float)$_POST['default_fee'] : 0.00;
+        $distComm = isset($_POST['distributor_commission']) && is_numeric($_POST['distributor_commission']) ? (float)$_POST['distributor_commission'] : 0.00;
+        $description = trim($_POST['description'] ?? '');
+
+        $db = Database::getConnection();
+
+        try {
+            if (empty($code) || strlen($code) < 2) {
+                throw new Exception("Custom Application Code must be at least 2 characters (letters, numbers and underscore).");
+            }
+
+            if (empty($labelEn)) {
+                $labelEn = $code . ' Service';
+            }
+
+            $db->beginTransaction();
+
+            // 1. Update data_type_fields for application_code so it is available across forms
+            $dtfStmt = $db->prepare("SELECT id, options_json FROM data_type_fields WHERE field_name = 'application_code'");
+            $dtfStmt->execute();
+            $fields = $dtfStmt->fetchAll(PDO::FETCH_ASSOC);
+
+            foreach ($fields as $field) {
+                $opts = !empty($field['options_json']) ? json_decode($field['options_json'], true) : [];
+                if (!is_array($opts)) $opts = [];
+                $alreadyExists = false;
+                foreach ($opts as &$op) {
+                    if (isset($op['value']) && strcasecmp($op['value'], $code) === 0) {
+                        $alreadyExists = true;
+                        $op['label_en'] = $labelEn;
+                        $op['label_hi'] = $labelHi;
+                        break;
+                    }
+                }
+                unset($op);
+
+                if (!$alreadyExists) {
+                    $opts[] = [
+                        'value' => $code,
+                        'label_en' => $labelEn,
+                        'label_hi' => $labelHi
+                    ];
+                }
+
+                $upd = $db->prepare("UPDATE data_type_fields SET options_json = ? WHERE id = ?");
+                $upd->execute([json_encode($opts, JSON_UNESCAPED_UNICODE), $field['id']]);
+            }
+
+            // 2. If a default rate is provided (> 0), optionally save a base rate rule for Bihar if none exists
+            if ($defaultFee > 0) {
+                $chkRule = $db->prepare("
+                    SELECT id FROM service_rate_rules 
+                    WHERE data_type_id = ? 
+                      AND (state = 'Bihar' OR state IS NULL)
+                      AND district_id IS NULL 
+                      AND block_id IS NULL 
+                      AND application_code = ? 
+                    LIMIT 1
+                ");
+                $chkRule->execute([$dataTypeId, $code]);
+                $existingRule = $chkRule->fetch(PDO::FETCH_ASSOC);
+
+                if (!$existingRule) {
+                    $insRule = $db->prepare("
+                        INSERT INTO service_rate_rules (
+                            data_type_id, state, district_id, block_id, application_code,
+                            fee_amount, distributor_commission, rule_label, is_active, created_at
+                        ) VALUES (?, 'Bihar', NULL, NULL, ?, ?, ?, ?, 1, NOW())
+                    ");
+                    $insRule->execute([
+                        $dataTypeId,
+                        $code,
+                        $defaultFee,
+                        $distComm,
+                        $labelEn . ' Standard Rate'
+                    ]);
+                }
+            }
+
+            AuditService::log('CUSTOM_APP_CODE_CREATED', 'DATA_TYPE_FIELD', $code, [
+                'code' => $code,
+                'label_en' => $labelEn,
+                'label_hi' => $labelHi,
+                'default_fee' => $defaultFee,
+                'data_type_id' => $dataTypeId
+            ]);
+
+            $db->commit();
+
+            if ($isAjax) {
+                echo json_encode([
+                    'success' => true,
+                    'message' => "Application code '{$code}' ({$labelEn}) added successfully.",
+                    'code' => [
+                        'value' => $code,
+                        'label' => $code . ' — ' . $labelEn,
+                        'label_en' => $labelEn,
+                        'label_hi' => $labelHi,
+                        'default_fee' => $defaultFee
+                    ]
+                ]);
+                exit;
+            }
+
+            $_SESSION['flash_success'] = "Application code '{$code}' ({$labelEn}) registered successfully.";
+            header("Location: /admin/block-rates?id={$dataTypeId}");
+            exit;
+
+        } catch (Exception $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+
+            if ($isAjax) {
+                http_response_code(400);
+                echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+                exit;
+            }
+
+            $_SESSION['flash_error'] = 'Error adding app code: ' . $e->getMessage();
+            header("Location: /admin/block-rates?id={$dataTypeId}");
             exit;
         }
     }
@@ -807,6 +1008,19 @@ class DataTypeController
             } else {
                 // Single code rule or wildcard rule
                 $appCode = trim($_POST['application_code'] ?? '') ?: null;
+                $customAppCode = strtoupper(preg_replace('/[^A-Za-z0-9_]/', '', trim($_POST['custom_application_code'] ?? '')));
+
+                if ($appCode === '__CUSTOM__' || (!empty($customAppCode) && (empty($appCode) || $appCode === '__CUSTOM__'))) {
+                    if (empty($customAppCode) || strlen($customAppCode) < 2) {
+                        throw new Exception("Custom Application Code must be at least 2 characters (letters, numbers and underscore).");
+                    }
+                    $appCode = $customAppCode;
+                }
+
+                $customCodeLabel = trim($_POST['custom_code_label'] ?? '');
+                if (!empty($customCodeLabel)) {
+                    $ruleLabel = $customCodeLabel;
+                }
 
                 // Explicit prepared conflict check
                 $chkParams = [$dataTypeId];
@@ -914,6 +1128,38 @@ class DataTypeController
                             'status' => 'LIVE',
                             'reason' => 'Auto-created on first block rate addition'
                         ]);
+                    }
+                }
+
+                // Persist new custom code into data_type_fields options_json if requested
+                $saveToOptions = isset($_POST['save_to_service_options']) ? (int)$_POST['save_to_service_options'] === 1 : true;
+                if (!empty($customAppCode) && $saveToOptions) {
+                    try {
+                        $dtfStmt = $db->prepare("SELECT id, options_json FROM data_type_fields WHERE field_name = 'application_code'");
+                        $dtfStmt->execute();
+                        $fields = $dtfStmt->fetchAll(PDO::FETCH_ASSOC);
+                        foreach ($fields as $field) {
+                            $opts = !empty($field['options_json']) ? json_decode($field['options_json'], true) : [];
+                            if (!is_array($opts)) $opts = [];
+                            $alreadyExists = false;
+                            foreach ($opts as $op) {
+                                if (isset($op['value']) && strcasecmp($op['value'], $customAppCode) === 0) {
+                                    $alreadyExists = true;
+                                    break;
+                                }
+                            }
+                            if (!$alreadyExists) {
+                                $opts[] = [
+                                    'value' => $customAppCode,
+                                    'label_en' => !empty($customCodeLabel) ? $customCodeLabel : $customAppCode,
+                                    'label_hi' => !empty($customCodeLabel) ? $customCodeLabel : $customAppCode
+                                ];
+                                $updDtf = $db->prepare("UPDATE data_type_fields SET options_json = ? WHERE id = ?");
+                                $updDtf->execute([json_encode($opts, JSON_UNESCAPED_UNICODE), $field['id']]);
+                            }
+                        }
+                    } catch (\Throwable $e) {
+                        // Non-critical option sync error
                     }
                 }
 

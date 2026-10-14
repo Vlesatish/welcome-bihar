@@ -345,6 +345,11 @@ try {
             $ctrl->addLocationBlock();
             break;
 
+        case '/admin/data-types/rate-rules/add-app-code':
+            $ctrl = new \App\Controllers\DataTypeController();
+            $ctrl->addCustomAppCode();
+            break;
+
         case '/admin/data-types/fields':
             $ctrl = new \App\Controllers\DataTypeController();
             $ctrl->fields();

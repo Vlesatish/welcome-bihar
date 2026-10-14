@@ -25,6 +25,49 @@ class ApplicationController
         }
     }
 
+    private function getApplicationCodes(): array
+    {
+        $appCodes = [
+            'BICCO' => 'BICCO (Income Certificate)',
+            'BCCCO' => 'BCCCO (Caste Certificate)',
+            'BRCCO' => 'BRCCO (Residential Certificate)',
+            'BOBC'  => 'BOBC (OBC Certificate)',
+            'NCLCO' => 'NCLCO (Non-Creamy Layer)',
+            'RTPS'  => 'RTPS General',
+            'OTHER' => 'OTHER (Other Citizen Service)'
+        ];
+
+        try {
+            $db = Database::getConnection();
+            $dtfRow = $db->query("SELECT options_json FROM data_type_fields WHERE field_name = 'application_code' AND options_json IS NOT NULL LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+            if ($dtfRow && !empty($dtfRow['options_json'])) {
+                $decoded = json_decode($dtfRow['options_json'], true);
+                if (is_array($decoded)) {
+                    foreach ($decoded as $opt) {
+                        if (!empty($opt['value'])) {
+                            $cKey = strtoupper(trim($opt['value']));
+                            if (!isset($appCodes[$cKey])) {
+                                $appCodes[$cKey] = $cKey . ' (' . ($opt['label_en'] ?? $cKey) . ')';
+                            }
+                        }
+                    }
+                }
+            }
+
+            $ruleCodes = $db->query("SELECT DISTINCT application_code, rule_label FROM service_rate_rules WHERE application_code IS NOT NULL AND application_code != '' AND application_code != '*'")->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($ruleCodes as $rc) {
+                $cKey = strtoupper(trim($rc['application_code']));
+                if (!isset($appCodes[$cKey])) {
+                    $cleanLabel = !empty($rc['rule_label']) ? trim($rc['rule_label']) : $cKey;
+                    $cleanLabel = preg_replace('/(\s*-\s*[A-Z0-9_]+)?\s*Rate(\s*Rule)?$/i', '', $cleanLabel);
+                    $appCodes[$cKey] = $cKey . ' (' . $cleanLabel . ')';
+                }
+            }
+        } catch (\Throwable $e) {}
+
+        return $appCodes;
+    }
+
     public function wizard(): void
     {
         $userId = AuthService::id();
@@ -362,15 +405,7 @@ class ApplicationController
             $districts = [];
             $blocks = [];
             $retailers = [];
-            $appCodes = [
-                'BICCO' => 'BICCO (Income Certificate)',
-                'BCCCO' => 'BCCCO (Caste Certificate)',
-                'BRCCO' => 'BRCCO (Residential Certificate)',
-                'BOBC'  => 'BOBC (OBC Certificate)',
-                'NCLCO' => 'NCLCO (Non-Creamy Layer)',
-                'RTPS'  => 'RTPS General',
-                'OTHER' => 'OTHER (Other Citizen Service)'
-            ];
+            $appCodes = $this->getApplicationCodes();
             $page = 1;
             $totalPages = 1;
             $totalRecords = 0;
@@ -565,15 +600,7 @@ class ApplicationController
         $retailersQuery .= " ORDER BY u.name ASC";
         $retailers = $db->query($retailersQuery)->fetchAll(PDO::FETCH_ASSOC);
 
-        $appCodes = [
-            'BICCO' => 'BICCO (Income Certificate)',
-            'BCCCO' => 'BCCCO (Caste Certificate)',
-            'BRCCO' => 'BRCCO (Residential Certificate)',
-            'BOBC'  => 'BOBC (OBC Certificate)',
-            'NCLCO' => 'NCLCO (Non-Creamy Layer)',
-            'RTPS'  => 'RTPS General',
-            'OTHER' => 'OTHER (Other Citizen Service)'
-        ];
+        $appCodes = $this->getApplicationCodes();
 
         require dirname(__DIR__) . '/Views/admin/applications.php';
     }
@@ -734,15 +761,7 @@ class ApplicationController
             $blocks = $bStmt->fetchAll(PDO::FETCH_ASSOC);
         }
 
-        $appCodes = [
-            'BICCO' => 'BICCO (Income Certificate)',
-            'BCCCO' => 'BCCCO (Caste Certificate)',
-            'BRCCO' => 'BRCCO (Residential Certificate)',
-            'BOBC'  => 'BOBC (OBC Certificate)',
-            'NCLCO' => 'NCLCO (Non-Creamy Layer)',
-            'RTPS'  => 'RTPS General',
-            'OTHER' => 'OTHER (Other Citizen Service)'
-        ];
+        $appCodes = $this->getApplicationCodes();
 
         require dirname(__DIR__) . '/Views/user/application_list.php';
     }

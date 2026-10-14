@@ -12,6 +12,9 @@
         </div>
     </div>
     <div class="d-flex gap-2 flex-wrap">
+        <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill px-3 py-1 fw-semibold shadow-2xs" data-bs-toggle="modal" data-bs-target="#customAppCodeModal" onclick="openCustomAppCodeModal()">
+            <i class="bi bi-tag-fill text-primary me-1"></i> Add App Code
+        </button>
         <button type="button" class="btn btn-sm btn-outline-primary rounded-pill px-3 py-1 fw-semibold shadow-2xs" data-bs-toggle="modal" data-bs-target="#locationModal" onclick="openLocationModal()">
             <i class="bi bi-geo-alt me-1"></i> Add Block
         </button>
@@ -314,6 +317,97 @@
 </div>
 
 <!-- ============================================================== -->
+<!-- MODAL 3: ADD CUSTOM APPLICATION CODE (SYSTEM-WIDE)             -->
+<!-- ============================================================== -->
+<div class="modal fade" id="customAppCodeModal" tabindex="-1" aria-labelledby="customAppCodeModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" style="max-width: 540px;">
+        <form method="POST" action="/admin/data-types/rate-rules/add-app-code" id="addAppCodeForm" class="modal-content border-0 shadow-lg" style="border-radius: 20px; overflow: hidden;">
+            <?= csrf_field() ?>
+            <input type="hidden" name="data_type_id" value="<?= $dataType['id'] ?>">
+            <input type="hidden" name="is_ajax" value="1">
+
+            <div class="modal-header border-bottom py-3 px-4 bg-white d-flex align-items-center justify-content-between">
+                <div class="d-flex align-items-center gap-2.5">
+                    <div class="d-inline-flex align-items-center justify-content-center bg-primary-subtle text-primary rounded-3" style="width: 40px; height: 40px;">
+                        <i class="bi bi-tag-fill fs-5"></i>
+                    </div>
+                    <div>
+                        <h5 class="modal-title fw-bold text-dark mb-0 fs-6" id="customAppCodeModalTitle">Add Custom Application Code</h5>
+                        <div class="small text-muted" style="font-size: 0.78rem;">Register a new certificate/service prefix code system-wide</div>
+                    </div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+
+            <div class="modal-body p-4">
+                <div id="appCodeAlert" class="alert alert-danger d-none py-2 px-3 small rounded-3 mb-3"></div>
+
+                <div class="alert alert-info py-2 px-3 small border-0 bg-primary-subtle text-primary rounded-3 mb-3" style="font-size: 0.78rem;">
+                    <i class="bi bi-info-circle-fill me-1"></i>
+                    Newly added application codes become instantly available for Block Rates, Citizen Forms, and Application tracking filters.
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-md-5">
+                        <label class="form-label small fw-bold text-secondary text-uppercase mb-1" style="font-size: 0.72rem; letter-spacing: 0.5px;">
+                            App Code Prefix <span class="text-danger">*</span>
+                        </label>
+                        <input type="text" name="code" id="modal_app_code" class="form-control font-monospace text-uppercase fw-bold rounded-3" placeholder="e.g. DLCO" required maxlength="32" oninput="this.value = this.value.toUpperCase().replace(/[^A-Z0-9_]/g, '')">
+                        <div class="form-text text-muted" style="font-size: 0.68rem;">A-Z, 0-9 & _ only</div>
+                    </div>
+
+                    <div class="col-md-7">
+                        <label class="form-label small fw-bold text-secondary text-uppercase mb-1" style="font-size: 0.72rem; letter-spacing: 0.5px;">
+                            Service Title (English) <span class="text-danger">*</span>
+                        </label>
+                        <input type="text" name="label_en" id="modal_app_label_en" class="form-control rounded-3" placeholder="e.g. Driving License Service" required>
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label small fw-bold text-secondary text-uppercase mb-1" style="font-size: 0.72rem; letter-spacing: 0.5px;">
+                            Service Title (Hindi)
+                        </label>
+                        <input type="text" name="label_hi" id="modal_app_label_hi" class="form-control rounded-3" placeholder="e.g. ड्राइविंग लाइसेंस सेवा (वैकल्पिक)">
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold text-secondary text-uppercase mb-1" style="font-size: 0.72rem; letter-spacing: 0.5px;">
+                            Default Fallback Fee (₹)
+                        </label>
+                        <div class="input-group">
+                            <span class="input-group-text bg-light fw-bold text-dark border-end-0">₹</span>
+                            <input type="number" step="0.01" name="default_fee" id="modal_app_default_fee" class="form-control fw-bold border-start-0" placeholder="50.00">
+                        </div>
+                        <div class="form-text text-muted" style="font-size: 0.68rem;">Base fee when block rate is not customized</div>
+                    </div>
+
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold text-secondary text-uppercase mb-1" style="font-size: 0.72rem; letter-spacing: 0.5px;">
+                            Distributor Comm. (₹)
+                        </label>
+                        <div class="input-group">
+                            <span class="input-group-text bg-light fw-bold text-dark border-end-0">₹</span>
+                            <input type="number" step="0.01" name="distributor_commission" id="modal_app_comm" class="form-control fw-bold border-start-0" placeholder="0.00">
+                        </div>
+                        <div class="form-text text-muted" style="font-size: 0.68rem;">Optional commission per application</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer border-top py-2.5 px-4 bg-light d-flex justify-content-end gap-2">
+                <button type="button" class="btn btn-light border px-3 fw-semibold rounded-2" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-outline-primary fw-bold rounded-2 px-3" onclick="submitAppCodeForm(false)">
+                    <i class="bi bi-save me-1"></i> Save Code
+                </button>
+                <button type="button" class="btn btn-primary px-4 fw-bold shadow-sm rounded-2" onclick="submitAppCodeForm(true)">
+                    <i class="bi bi-arrow-right-circle me-1"></i> Save & Configure Rate
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ============================================================== -->
 <!-- MODAL 2: ADD / EDIT RATE RULE (CLEAN & FRESH DESIGN)           -->
 <!-- ============================================================== -->
 <div class="modal fade" id="rateRuleModal" tabindex="-1" aria-labelledby="rateRuleModalTitle" aria-hidden="true">
@@ -391,15 +485,64 @@
                 <div id="singleModeSection">
                     <div class="row g-3">
                         <div class="col-12">
-                            <label class="form-label small fw-bold text-secondary text-uppercase mb-1" style="font-size: 0.72rem; letter-spacing: 0.5px;">
-                                Application Code
-                            </label>
-                            <select name="application_code" id="rule_app_code" class="form-select font-monospace rounded-3 py-2">
-                                <option value="">-- All Codes (Default Rate for this Block) --</option>
-                                <?php foreach ($appCodes as $codeVal => $codeLabel): ?>
-                                    <option value="<?= e($codeVal) ?>"><?= e($codeVal) ?> &mdash; <?= e($codeLabel) ?></option>
-                                <?php endforeach; ?>
-                            </select>
+                            <div class="d-flex justify-content-between align-items-center mb-1">
+                                <label class="form-label small fw-bold text-secondary text-uppercase mb-0" style="font-size: 0.72rem; letter-spacing: 0.5px;">
+                                    Application Code
+                                </label>
+                                <a href="#" class="small text-primary text-decoration-none fw-semibold" id="btnToggleCustomAppCode" onclick="event.preventDefault(); toggleCustomAppCodeMode();" style="font-size: 0.75rem;">
+                                    <i class="bi bi-plus-circle me-1"></i>+ Custom App Code
+                                </a>
+                            </div>
+                            <div id="appCodeSelectWrap">
+                                <select name="application_code" id="rule_app_code" class="form-select font-monospace rounded-3 py-2" onchange="onRuleAppCodeChange(this.value)">
+                                    <option value="">-- All Codes (Default Rate for this Block) --</option>
+                                    <option value="__CUSTOM__" class="text-primary fw-bold py-1">+ Add Custom App Code...</option>
+                                    <option disabled>────────────────────────────</option>
+                                    <?php foreach ($appCodes as $codeVal => $codeLabel): ?>
+                                        <option value="<?= e($codeVal) ?>"><?= e($codeVal) ?> &mdash; <?= e($codeLabel) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+
+                            <!-- Inline Custom App Code Input Form -->
+                            <div id="customAppCodeBox" class="p-3 rounded-3 border border-primary-subtle bg-primary-subtle bg-opacity-10 mt-2 d-none">
+                                <div class="d-flex align-items-center justify-content-between mb-2 pb-1 border-bottom border-primary-subtle border-opacity-50">
+                                    <div class="d-flex align-items-center gap-1.5">
+                                        <span class="badge bg-primary text-white rounded-pill px-2 py-0.5" style="font-size: 0.68rem;">NEW</span>
+                                        <span class="small fw-bold text-primary" style="font-size: 0.78rem;">Custom Application Code</span>
+                                    </div>
+                                    <button type="button" class="btn btn-sm btn-link text-decoration-none p-0 text-muted small" onclick="toggleCustomAppCodeMode(false)" style="font-size: 0.75rem;">
+                                        <i class="bi bi-arrow-left me-1"></i>Select from List
+                                    </button>
+                                </div>
+                                <div class="row g-2">
+                                    <div class="col-md-5">
+                                        <label class="form-label small fw-bold text-secondary text-uppercase mb-1" style="font-size: 0.7rem; letter-spacing: 0.5px;">
+                                            Code Prefix <span class="text-danger">*</span>
+                                        </label>
+                                        <input type="text" name="custom_application_code" id="custom_application_code" 
+                                               class="form-control form-control-sm font-monospace text-uppercase fw-bold rounded-2" 
+                                               placeholder="e.g. DLCO" maxlength="32"
+                                               oninput="this.value = this.value.toUpperCase().replace(/[^A-Z0-9_]/g, '')">
+                                        <div class="form-text text-muted" style="font-size: 0.67rem;">A-Z, 0-9 & _ only</div>
+                                    </div>
+                                    <div class="col-md-7">
+                                        <label class="form-label small fw-bold text-secondary text-uppercase mb-1" style="font-size: 0.7rem; letter-spacing: 0.5px;">
+                                            Service Name / Title
+                                        </label>
+                                        <input type="text" name="custom_code_label" id="custom_code_label" 
+                                               class="form-control form-control-sm rounded-2" 
+                                               placeholder="e.g. Driving License Service">
+                                        <div class="form-text text-muted" style="font-size: 0.67rem;">Friendly service title</div>
+                                    </div>
+                                </div>
+                                <div class="form-check mt-2 pt-1 border-top border-light">
+                                    <input class="form-check-input" type="checkbox" name="save_to_service_options" id="save_to_service_options" value="1" checked>
+                                    <label class="form-check-label text-muted small" for="save_to_service_options" style="font-size: 0.73rem;">
+                                        Save globally for future rate rules & applicant dropdowns
+                                    </label>
+                                </div>
+                            </div>
                         </div>
 
                         <div class="col-md-6">
@@ -438,11 +581,14 @@
                         <div class="d-flex gap-1">
                             <button type="button" class="btn btn-sm btn-light border px-2 py-0.5 small fw-semibold" onclick="toggleAllCodes(true)">All</button>
                             <button type="button" class="btn btn-sm btn-light border px-2 py-0.5 small fw-semibold" onclick="toggleAllCodes(false)">None</button>
+                            <button type="button" class="btn btn-sm btn-outline-primary border px-2 py-0.5 small fw-semibold" onclick="promptAddBatchCustomCode()">
+                                <i class="bi bi-plus-circle me-1"></i>+ Custom Code
+                            </button>
                         </div>
                     </div>
 
                     <div class="table-responsive border rounded-3 bg-white" style="max-height: 230px; overflow-y: auto;">
-                        <table class="table table-hover table-sm align-middle mb-0">
+                        <table class="table table-hover table-sm align-middle mb-0" id="batchCodesTable">
                             <thead class="table-light sticky-top" style="font-size: 0.72rem; text-transform: uppercase;">
                                 <tr>
                                     <th style="width: 36px;" class="text-center">#</th>
@@ -452,7 +598,7 @@
                                     <th style="width: 100px;">Comm (₹)</th>
                                 </tr>
                             </thead>
-                            <tbody>
+                            <tbody id="batchCodesTbody">
                                 <?php foreach ($appCodes as $cCode => $cDesc): ?>
                                     <tr>
                                         <td class="text-center">
@@ -784,6 +930,219 @@ function onCodeCheckChange(code) {
     }
 }
 
+function toggleCustomAppCodeMode(forceState) {
+    const box = document.getElementById('customAppCodeBox');
+    const selectWrap = document.getElementById('appCodeSelectWrap');
+    const sel = document.getElementById('rule_app_code');
+    const customCodeInput = document.getElementById('custom_application_code');
+    const btnToggle = document.getElementById('btnToggleCustomAppCode');
+    if (!box || !selectWrap) return;
+
+    const willShowCustom = forceState !== undefined ? forceState : box.classList.contains('d-none');
+
+    if (willShowCustom) {
+        box.classList.remove('d-none');
+        selectWrap.classList.add('d-none');
+        if (sel) sel.value = '__CUSTOM__';
+        if (btnToggle) {
+            btnToggle.innerHTML = '<i class="bi bi-arrow-left me-1"></i>Choose Existing Code';
+            btnToggle.classList.remove('text-primary');
+            btnToggle.classList.add('text-secondary');
+        }
+        if (customCodeInput) {
+            customCodeInput.required = true;
+            setTimeout(() => customCodeInput.focus(), 100);
+        }
+    } else {
+        box.classList.add('d-none');
+        selectWrap.classList.remove('d-none');
+        if (sel && sel.value === '__CUSTOM__') {
+            sel.value = '';
+        }
+        if (btnToggle) {
+            btnToggle.innerHTML = '<i class="bi bi-plus-circle me-1"></i>+ Custom App Code';
+            btnToggle.classList.remove('text-secondary');
+            btnToggle.classList.add('text-primary');
+        }
+        if (customCodeInput) {
+            customCodeInput.required = false;
+        }
+    }
+}
+
+function onRuleAppCodeChange(val) {
+    if (val === '__CUSTOM__') {
+        toggleCustomAppCodeMode(true);
+    } else {
+        toggleCustomAppCodeMode(false);
+    }
+}
+
+function promptAddBatchCustomCode() {
+    const rawCode = prompt('Enter New Custom Application Code (e.g. DLCO, BIRTH_CERT):');
+    if (!rawCode) return;
+
+    const code = rawCode.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '');
+    if (code.length < 2) {
+        alert('Invalid code prefix. Minimum 2 alphanumeric characters required.');
+        return;
+    }
+
+    // Check if already in batch table
+    const existingCheck = document.getElementById('chk_' + code);
+    if (existingCheck) {
+        existingCheck.checked = true;
+        existingCheck.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        existingCheck.closest('tr').classList.add('table-primary');
+        setTimeout(() => existingCheck.closest('tr').classList.remove('table-primary'), 1500);
+        return;
+    }
+
+    const title = prompt(`Enter Service Title for "${code}" (e.g. Driving License Service):`, `${code} Service`) || `${code} Service`;
+    const commonFee = document.getElementById('batch_common_fee')?.value || '';
+
+    const tbody = document.getElementById('batchCodesTbody');
+    if (!tbody) return;
+
+    const tr = document.createElement('tr');
+    tr.className = 'table-info';
+    tr.innerHTML = `
+        <td class="text-center">
+            <input class="form-check-input multi-code-check" type="checkbox" name="multi_app_codes[]" value="${code}" id="chk_${code}" checked onchange="onCodeCheckChange('${code}')">
+        </td>
+        <td>
+            <label for="chk_${code}" class="badge bg-success-subtle text-success border border-success-subtle font-monospace px-2 py-1 mb-0" style="cursor: pointer;">
+                ${code}
+            </label>
+            <input type="hidden" name="custom_code_label_${code}" value="${title.replace(/"/g, '&quot;')}">
+        </td>
+        <td>
+            <label for="chk_${code}" class="small text-dark mb-0 fw-semibold" style="cursor: pointer;">
+                ${title} <span class="badge bg-light text-primary border" style="font-size: 0.65rem;">Custom</span>
+            </label>
+        </td>
+        <td>
+            <input type="number" step="0.01" name="fee_amount_${code}" id="fee_${code}" class="form-control form-control-sm fw-bold text-dark fee-input" value="${commonFee}" placeholder="0.00">
+        </td>
+        <td>
+            <input type="number" step="0.01" name="comm_${code}" id="comm_${code}" class="form-control form-control-sm text-dark comm-input" placeholder="0.00">
+        </td>
+    `;
+
+    tbody.prepend(tr);
+    tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setTimeout(() => tr.classList.remove('table-info'), 2000);
+}
+
+function openCustomAppCodeModal() {
+    const alertBox = document.getElementById('appCodeAlert');
+    if (alertBox) {
+        alertBox.classList.add('d-none');
+        alertBox.textContent = '';
+    }
+    document.getElementById('modal_app_code').value = '';
+    document.getElementById('modal_app_label_en').value = '';
+    document.getElementById('modal_app_label_hi').value = '';
+    document.getElementById('modal_app_default_fee').value = '';
+    document.getElementById('modal_app_comm').value = '';
+}
+
+function submitAppCodeForm(openRateModalAfter = false) {
+    const form = document.getElementById('addAppCodeForm');
+    const alertBox = document.getElementById('appCodeAlert');
+    const codeInput = document.getElementById('modal_app_code');
+    const labelInput = document.getElementById('modal_app_label_en');
+
+    if (!form || !codeInput || !labelInput) return;
+
+    if (!codeInput.value.trim() || codeInput.value.trim().length < 2) {
+        alertBox.textContent = 'Please enter a valid code prefix (minimum 2 characters).';
+        alertBox.classList.remove('d-none');
+        codeInput.focus();
+        return;
+    }
+
+    if (!labelInput.value.trim()) {
+        alertBox.textContent = 'Please enter a service title.';
+        alertBox.classList.remove('d-none');
+        labelInput.focus();
+        return;
+    }
+
+    const submitBtn = document.getElementById('btn_save_app_code');
+    const originalText = submitBtn ? submitBtn.innerHTML : '';
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Saving...';
+    }
+
+    const formData = new FormData(form);
+
+    fetch('/admin/data-types/rate-rules/add-app-code', {
+        method: 'POST',
+        body: formData,
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+    })
+    .then(r => r.json())
+    .then(res => {
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = originalText;
+        }
+
+        if (res.success && res.code) {
+            // 1. Add to Single Mode dropdown
+            const sel = document.getElementById('rule_app_code');
+            if (sel) {
+                let exists = false;
+                for (let i = 0; i < sel.options.length; i++) {
+                    if (sel.options[i].value === res.code.value) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists) {
+                    const opt = document.createElement('option');
+                    opt.value = res.code.value;
+                    opt.textContent = res.code.label;
+                    sel.appendChild(opt);
+                }
+                sel.value = res.code.value;
+            }
+
+            // Close Custom App Code Modal
+            const codeModalEl = document.getElementById('customAppCodeModal');
+            const codeModal = bootstrap.Modal.getInstance(codeModalEl);
+            if (codeModal) codeModal.hide();
+
+            if (openRateModalAfter) {
+                resetRateRuleModal();
+                if (sel) sel.value = res.code.value;
+                if (res.code.default_fee > 0) {
+                    document.getElementById('rule_fee').value = parseFloat(res.code.default_fee).toFixed(2);
+                }
+                const rateModal = new bootstrap.Modal(document.getElementById('rateRuleModal'));
+                rateModal.show();
+            } else {
+                window.location.reload();
+            }
+        } else {
+            alertBox.textContent = res.message || 'Error adding application code.';
+            alertBox.classList.remove('d-none');
+        }
+    })
+    .catch(err => {
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = originalText;
+        }
+        alertBox.textContent = 'Server communication error: ' + err.message;
+        alertBox.classList.remove('d-none');
+    });
+}
+
 function resetRateRuleModal() {
     document.getElementById('rule_id').value = '0';
     document.getElementById('rule_label').value = '';
@@ -794,6 +1153,13 @@ function resetRateRuleModal() {
     document.getElementById('rule_fee').value = '';
     document.getElementById('rule_comm').value = '';
     document.getElementById('rule_is_active').checked = true;
+
+    // Reset Custom App Code Section
+    toggleCustomAppCodeMode(false);
+    const customCodeInput = document.getElementById('custom_application_code');
+    const customLabelInput = document.getElementById('custom_code_label');
+    if (customCodeInput) customCodeInput.value = '';
+    if (customLabelInput) customLabelInput.value = '';
 
     const btnMulti = document.getElementById('btn_mode_multi');
     if (btnMulti) {
@@ -820,11 +1186,30 @@ function editRateRule(r) {
     document.getElementById('rule_label').value = r.rule_label || '';
     document.getElementById('rule_state').value = r.state || 'Bihar';
     document.getElementById('rule_district_id').value = r.district_id || '';
-    document.getElementById('rule_app_code').value = r.application_code || '';
     document.getElementById('rule_adj_type').value = r.adjustment_type || 'FIXED';
     document.getElementById('rule_fee').value = r.fee_amount;
     document.getElementById('rule_comm').value = r.distributor_commission || '';
     document.getElementById('rule_is_active').checked = (r.is_active == 1);
+
+    const appCode = r.application_code || '';
+    const sel = document.getElementById('rule_app_code');
+    let found = false;
+    for (let i = 0; i < sel.options.length; i++) {
+        if (sel.options[i].value === appCode) {
+            found = true;
+            break;
+        }
+    }
+
+    if (found || !appCode) {
+        toggleCustomAppCodeMode(false);
+        sel.value = appCode;
+    } else {
+        // Custom Code not found in dropdown -> open custom mode and prefill
+        toggleCustomAppCodeMode(true);
+        document.getElementById('custom_application_code').value = appCode;
+        document.getElementById('custom_code_label').value = r.rule_label || '';
+    }
 
     const btnMulti = document.getElementById('btn_mode_multi');
     if (btnMulti) btnMulti.style.display = 'none';
@@ -876,6 +1261,9 @@ document.addEventListener('DOMContentLoaded', function() {
     if (window.location.hash === '#rateRuleModal' || window.location.hash === '#add-rule' || urlParams.get('open_modal') === 'rateRuleModal') {
         const modal = new bootstrap.Modal(document.getElementById('rateRuleModal'));
         modal.show();
+    } else if (window.location.hash === '#customAppCodeModal' || urlParams.get('open_modal') === 'customAppCodeModal') {
+        const modal = new bootstrap.Modal(document.getElementById('customAppCodeModal'));
+        modal.show();
     }
 
     const rateForm = document.getElementById('rateRuleForm');
@@ -890,6 +1278,17 @@ document.addEventListener('DOMContentLoaded', function() {
                     return false;
                 }
             } else {
+                const isCustomMode = !document.getElementById('customAppCodeBox')?.classList.contains('d-none');
+                const customCodeVal = (document.getElementById('custom_application_code')?.value || '').trim();
+                const codeSel = document.getElementById('rule_app_code');
+
+                if ((isCustomMode || codeSel?.value === '__CUSTOM__') && customCodeVal.length < 2) {
+                    alert('Please enter a valid Custom Application Code prefix (minimum 2 characters).');
+                    document.getElementById('custom_application_code').focus();
+                    e.preventDefault();
+                    return false;
+                }
+
                 const feeInput = document.getElementById('rule_fee');
                 if (!feeInput.value || parseFloat(feeInput.value) < 0) {
                     alert('Please enter a valid rate amount.');
@@ -907,8 +1306,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 const codeSel = document.getElementById('rule_app_code');
                 const distText = distSel?.options[distSel.selectedIndex]?.text?.trim() || 'All Districts';
                 const blkText = blkSel?.options[blkSel.selectedIndex]?.text?.trim() || 'All Blocks';
-                const codeText = codeSel?.value || 'ALL';
-                labelInput.value = `${distText} - ${blkText} (${codeText}) Rate`;
+
+                const isCustom = !document.getElementById('customAppCodeBox')?.classList.contains('d-none');
+                const customCode = (document.getElementById('custom_application_code')?.value || '').trim().toUpperCase();
+                const customTitle = (document.getElementById('custom_code_label')?.value || '').trim();
+                const codeText = (isCustom && customCode) ? customCode : (codeSel?.value || 'ALL');
+
+                if (customTitle) {
+                    labelInput.value = `${distText} - ${blkText} (${customTitle})`;
+                } else {
+                    labelInput.value = `${distText} - ${blkText} (${codeText}) Rate`;
+                }
             }
         });
     }
