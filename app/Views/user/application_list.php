@@ -619,7 +619,20 @@ document.addEventListener('DOMContentLoaded', function () {
 
         document.getElementById('modalDetailsReqNum').textContent = app.app_ref || app.id;
         document.getElementById('modalDetailsFee').textContent = '₹' + Number(app.fee_debited || 0).toFixed(2);
-        document.getElementById('modalDetailsStatus').textContent = app.status;
+        
+        const statusBadgeMap = {
+            'PENDING': 'bg-warning text-dark',
+            'IN_PROCESS': 'bg-primary text-white',
+            'UNDER_REVIEW': 'bg-info text-dark',
+            'APPROVED': 'bg-success text-white',
+            'COMPLETED': 'bg-success text-white',
+            'REJECTED': 'bg-danger text-white'
+        };
+        const statusEl = document.getElementById('modalDetailsStatus');
+        if (statusEl) {
+            statusEl.className = 'badge px-2.5 py-1 ' + (statusBadgeMap[app.status] || 'bg-secondary text-white');
+            statusEl.textContent = app.status === 'IN_PROCESS' ? 'IN PROCESS' : app.status;
+        }
 
         const tbody = document.getElementById('modalDetailsTableBody');
         tbody.innerHTML = '';
@@ -690,14 +703,21 @@ document.addEventListener('DOMContentLoaded', function () {
         const tr = document.createElement('tr');
         const th = document.createElement('th');
         th.style.width = '35%';
+        th.className = 'text-secondary text-uppercase fw-semibold';
+        th.style.fontSize = '0.78rem';
         th.textContent = label;
         const td = document.createElement('td');
+        td.style.fontSize = '0.85rem';
 
-        const strVal = String(val || '');
-        if (strVal.startsWith('/uploads/') || strVal.endsWith('.pdf') || strVal.match(/\.(jpg|jpeg|png)$/i)) {
-            td.innerHTML = `<a href="${strVal}" target="_blank" class="btn btn-sm btn-outline-primary py-0 px-2"><i class="bi bi-file-earmark-arrow-down"></i> View File</a>`;
+        const strVal = String(val ?? '').trim();
+        if (!strVal || strVal === '--' || strVal === 'null' || strVal === 'undefined') {
+            td.innerHTML = '<span class="text-muted">--</span>';
+        } else if (strVal.startsWith('/uploads/') || strVal.endsWith('.pdf') || strVal.match(/\.(jpg|jpeg|png)$/i)) {
+            td.innerHTML = `<a href="${strVal}" target="_blank" class="btn btn-xs btn-outline-primary py-0.5 px-2 rounded-2 fw-semibold"><i class="bi bi-file-earmark-arrow-down me-1"></i> View File</a>`;
+        } else if (strVal.includes('<') && strVal.includes('>')) {
+            td.innerHTML = strVal;
         } else {
-            td.textContent = strVal || '--';
+            td.textContent = strVal;
         }
 
         tr.appendChild(th);
