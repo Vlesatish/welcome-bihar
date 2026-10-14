@@ -6,8 +6,14 @@ class Config
     public static function init(): void
     {
         // Load environment
-        $envPath = dirname(__DIR__, 2) . '/.env';
-        Env::load($envPath);
+        $rootEnv = dirname(__DIR__, 2) . '/.env';
+        $publicEnv = dirname(__DIR__, 2) . '/public/.env';
+
+        if (file_exists($rootEnv)) {
+            Env::load($rootEnv);
+        } elseif (file_exists($publicEnv)) {
+            Env::load($publicEnv);
+        }
 
         // Load Translation & Security Helpers
         require_once dirname(__DIR__) . '/Services/TranslationService.php';
