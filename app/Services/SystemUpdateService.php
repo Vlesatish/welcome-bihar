@@ -73,9 +73,39 @@ class SystemUpdateService
                 $db->exec("ALTER TABLE `users` ADD COLUMN `assigned_block_id` INT NULL AFTER `assigned_district_id`");
             }
 
-            // 3. Ensure required tables exist
+            // 3. Data types columns check (enable_chat, warning_image)
+            $dtCols = $db->query("SHOW COLUMNS FROM `data_types`")->fetchAll(PDO::FETCH_COLUMN);
+            $dtCols = array_map('strtolower', $dtCols);
+            if (!in_array('enable_chat', $dtCols, true)) {
+                $db->exec("ALTER TABLE `data_types` ADD COLUMN `enable_chat` TINYINT(1) NOT NULL DEFAULT 1 AFTER `is_active`");
+            }
+            if (!in_array('warning_image', $dtCols, true)) {
+                $db->exec("ALTER TABLE `data_types` ADD COLUMN `warning_image` VARCHAR(255) NULL AFTER `announcement`");
+            }
+
+            // 4. Ensure required tables exist
             $tables = $db->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
             $tables = array_map('strtolower', $tables);
+
+            // application_chats
+            if (!in_array('application_chats', $tables, true)) {
+                $db->exec("
+                    CREATE TABLE IF NOT EXISTS `application_chats` (
+                        `id` INT AUTO_INCREMENT PRIMARY KEY,
+                        `application_id` INT NOT NULL,
+                        `sender_id` INT NOT NULL,
+                        `sender_name` VARCHAR(150) NOT NULL,
+                        `sender_role` ENUM('ADMIN','OPERATOR','DISTRIBUTOR','RETAILER','USER') NOT NULL,
+                        `message` TEXT NOT NULL,
+                        `attachment_url` VARCHAR(255) NULL,
+                        `is_read` TINYINT(1) NOT NULL DEFAULT 0,
+                        `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        INDEX `idx_app_id` (`application_id`),
+                        INDEX `idx_created` (`created_at`),
+                        CONSTRAINT `fk_chat_app` FOREIGN KEY (`application_id`) REFERENCES `applications`(`id`) ON DELETE CASCADE
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+                ");
+            }
 
             // service_rate_rules
             if (!in_array('service_rate_rules', $tables, true)) {

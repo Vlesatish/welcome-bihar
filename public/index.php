@@ -38,6 +38,7 @@ spl_autoload_register(function ($class) {
 // Initialize Configuration, Environment, and Helpers
 require_once dirname(__DIR__) . '/app/helpers.php';
 \App\Config\Config::init();
+\App\Services\SystemUpdateService::ensureSchema();
 
 // Environment-aware error reporting: log errors securely, suppress browser traces in production
 $isProduction = strtolower(\App\Config\Config::get('APP_ENV', 'development')) === 'production'
