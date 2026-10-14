@@ -489,6 +489,7 @@ try {
             break;
 
         case '/api/blocks':
+        case '/locations/blocks':
             $ctrl = new \App\Controllers\LocationController();
             $ctrl->getBlocks();
             break;

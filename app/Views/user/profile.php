@@ -117,15 +117,18 @@ document.addEventListener('DOMContentLoaded', function () {
             }
 
             blkSelect.disabled = true;
-            fetch('/locations/blocks?district_id=' + encodeURIComponent(distId))
-                .then(res => res.json())
+            fetch('/api/blocks?district_id=' + encodeURIComponent(distId))
+                .then(res => {
+                    if (!res.ok) throw new Error('Failed to load blocks');
+                    return res.json();
+                })
                 .then(blocks => {
                     blkSelect.innerHTML = '<option value="">-- Select Block --</option>';
                     if (Array.isArray(blocks) && blocks.length > 0) {
                         blocks.forEach(b => {
                             const opt = document.createElement('option');
                             opt.value = b.id;
-                            opt.textContent = b.name;
+                            opt.textContent = b.name + (b.name_hi ? ' (' + b.name_hi + ')' : '');
                             if (parseInt(b.id) === currentBlkId) {
                                 opt.selected = true;
                             }

@@ -122,34 +122,52 @@ document.addEventListener('DOMContentLoaded', function () {
     const distSelect = document.getElementById('register_district_id');
     const blkSelect = document.getElementById('register_block_id');
 
+    function loadBlocks(distId) {
+        if (!blkSelect) return;
+        blkSelect.innerHTML = '<option value="">-- Select Block --</option>';
+        if (!distId) {
+            blkSelect.disabled = true;
+            return;
+        }
+
+        blkSelect.disabled = true;
+        blkSelect.innerHTML = '<option value="">Loading blocks...</option>';
+
+        fetch('/api/blocks?district_id=' + encodeURIComponent(distId))
+            .then(res => {
+                if (!res.ok) throw new Error('Failed to load blocks');
+                return res.json();
+            })
+            .then(blocks => {
+                blkSelect.innerHTML = '<option value="">-- Select Block --</option>';
+                if (Array.isArray(blocks) && blocks.length > 0) {
+                    blocks.forEach(b => {
+                        const opt = document.createElement('option');
+                        opt.value = b.id;
+                        opt.textContent = b.name + (b.name_hi ? ' (' + b.name_hi + ')' : '');
+                        blkSelect.appendChild(opt);
+                    });
+                    blkSelect.disabled = false;
+                } else {
+                    blkSelect.innerHTML = '<option value="">-- No Blocks Found --</option>';
+                    blkSelect.disabled = false;
+                }
+            })
+            .catch(err => {
+                console.error('Error fetching blocks:', err);
+                blkSelect.innerHTML = '<option value="">-- Select Block --</option>';
+                blkSelect.disabled = false;
+            });
+    }
+
     if (distSelect && blkSelect) {
         distSelect.addEventListener('change', function () {
-            const distId = this.value;
-            blkSelect.innerHTML = '<option value="">-- Select Block --</option>';
-            if (!distId) {
-                blkSelect.disabled = true;
-                return;
-            }
-
-            blkSelect.disabled = true;
-            fetch('/locations/blocks?district_id=' + encodeURIComponent(distId))
-                .then(res => res.json())
-                .then(blocks => {
-                    blkSelect.innerHTML = '<option value="">-- Select Block --</option>';
-                    if (Array.isArray(blocks) && blocks.length > 0) {
-                        blocks.forEach(b => {
-                            const opt = document.createElement('option');
-                            opt.value = b.id;
-                            opt.textContent = b.name;
-                            blkSelect.appendChild(opt);
-                        });
-                        blkSelect.disabled = false;
-                    }
-                })
-                .catch(() => {
-                    blkSelect.disabled = false;
-                });
+            loadBlocks(this.value);
         });
+
+        if (distSelect.value) {
+            loadBlocks(distSelect.value);
+        }
     }
 });
 </script>
