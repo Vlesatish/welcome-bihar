@@ -57,8 +57,6 @@ class AuthController
         $db = Database::getConnection();
         // Fetch active districts for kiosk registration
         $districts = $db->query("SELECT id, name, name_hi FROM districts WHERE is_active = 1 ORDER BY name ASC")->fetchAll();
-        // Fetch active distributors
-        $distributors = $db->query("SELECT id, name, mobile, center_name FROM users WHERE role = 'DISTRIBUTOR' AND status = 'ACTIVE' ORDER BY name ASC")->fetchAll();
 
         require dirname(__DIR__) . '/Views/auth/register.php';
     }
@@ -80,7 +78,7 @@ class AuthController
         $blockId = !empty($_POST['block_id']) ? (int)$_POST['block_id'] : null;
         $centerAddress = trim($_POST['center_address'] ?? '');
         $profileState = trim($_POST['profile_state'] ?? 'Bihar') ?: 'Bihar';
-        $distributorId = !empty($_POST['distributor_id']) ? (int)$_POST['distributor_id'] : null;
+        $distributorId = null; // Public registration is always direct; distributors add retailers from their panel
 
         if (empty($name) || strlen($mobile) !== 10 || empty($email) || strlen($password) < 6 || empty($districtId)) {
             $_SESSION['flash_error'] = 'Please fill all required registration fields correctly.';

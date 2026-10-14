@@ -87,20 +87,6 @@
                         <input type="text" name="center_address" class="form-control form-control-lg fs-6 py-2 px-3 border rounded-3" placeholder="Shop / Office address, Market, Pincode">
                     </div>
 
-                    <!-- Assign Distributor -->
-                    <div class="col-12">
-                        <label class="form-label small fw-semibold text-secondary">
-                            Distributor
-                        </label>
-                        <select name="distributor_id" class="form-select form-select-lg fs-6 py-2 px-3 border rounded-3">
-                            <option value="">-- Direct (No Distributor) --</option>
-                            <?php foreach ($distributors as $dist): ?>
-                                <option value="<?= $dist['id'] ?>">
-                                    <?= e($dist['name']) ?> (<?= e($dist['center_name'] ?: $dist['mobile']) ?>)
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
 
                     <!-- Password -->
                     <div class="col-12">
