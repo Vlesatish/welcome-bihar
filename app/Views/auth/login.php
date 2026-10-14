@@ -69,7 +69,7 @@
             <div class="text-center pt-2">
                 <span class="text-muted small">Don't have an account?</span>
                 <a href="/register" class="fw-semibold text-primary text-decoration-none small ms-1">
-                    Register New Kiosk
+                    Register Here
                 </a>
             </div>
 

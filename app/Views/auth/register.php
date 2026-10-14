@@ -13,7 +13,7 @@
                      style="width: 56px; height: 56px; background-color: #fef3c7; color: #d97706;">
                     <i class="bi bi-person-plus fs-3"></i>
                 </div>
-                <h1 class="h4 fw-bold text-dark mb-1"><?= e(__('register', 'Register New Kiosk')) ?></h1>
+                <h1 class="h4 fw-bold text-dark mb-1"><?= e(__('register', 'Register Here')) ?></h1>
                 <p class="text-muted small mb-0">Create your CSC / Cyber Cafe Kiosk Account</p>
             </div>
 

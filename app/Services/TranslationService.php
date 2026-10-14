@@ -27,7 +27,7 @@ class TranslationService
         'profile' => 'Profile',
         'logout' => 'Logout',
         'login' => 'Login',
-        'register' => 'Register New Kiosk',
+        'register' => 'Register Here',
         'switch_language' => 'English',
         'current_language' => 'English',
 

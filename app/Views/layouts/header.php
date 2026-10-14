@@ -296,7 +296,7 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
             <div class="d-flex align-items-center gap-2">
                 <?php if ($currentUri === '/login'): ?>
                     <a href="/register" class="btn btn-sm btn-warning rounded-pill px-3 fw-bold shadow-sm">
-                        <i class="bi bi-person-plus-fill me-1"></i> Register New Kiosk
+                        <i class="bi bi-person-plus-fill me-1"></i> Register Here
                     </a>
                 <?php else: ?>
                     <a href="/login" class="btn btn-sm btn-outline-light rounded-pill px-3 fw-semibold">
