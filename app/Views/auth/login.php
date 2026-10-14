@@ -73,37 +73,6 @@
                 </a>
             </div>
 
-            <?php
-            $isProduction = strtolower(\App\Config\Config::get('APP_ENV', 'development')) === 'production'
-                || strtolower(\App\Config\Config::get('APP_DEBUG', 'true')) === 'false';
-            ?>
-            <?php if (!$isProduction): ?>
-                <!-- Subtle Minimal Demo Quick Fill -->
-                <div class="mt-4 pt-3 border-top text-center">
-                    <div class="text-muted small mb-2" style="font-size: 0.72rem; letter-spacing: 0.5px; text-transform: uppercase;">
-                        Quick Demo Fill
-                    </div>
-                    <div class="d-flex flex-wrap justify-content-center gap-1">
-                        <button type="button" class="btn btn-xs btn-outline-secondary rounded-pill px-2 py-1" style="font-size: 0.72rem;"
-                                onclick="fillDemo('admin@welcomebihar.gov.in', 'Welcome@2026', 'Admin')">
-                            Admin
-                        </button>
-                        <button type="button" class="btn btn-xs btn-outline-secondary rounded-pill px-2 py-1" style="font-size: 0.72rem;"
-                                onclick="fillDemo('distributor@welcomebihar.gov.in', 'Welcome@2026', 'Distributor')">
-                            Distributor
-                        </button>
-                        <button type="button" class="btn btn-xs btn-outline-secondary rounded-pill px-2 py-1" style="font-size: 0.72rem;"
-                                onclick="fillDemo('danapur.operator@welcomebihar.gov.in', 'Welcome@2026', 'Operator')">
-                            Operator
-                        </button>
-                        <button type="button" class="btn btn-xs btn-outline-secondary rounded-pill px-2 py-1" style="font-size: 0.72rem;"
-                                onclick="fillDemo('operator@welcomebihar.gov.in', 'Welcome@2026', 'Retailer')">
-                            Retailer
-                        </button>
-                    </div>
-                </div>
-            <?php endif; ?>
-
         </div>
     </div>
 </div>
@@ -121,17 +90,6 @@ function togglePasswordVisibility() {
         icon.classList.replace('bi-eye-slash', 'bi-eye');
     }
 }
-
-<?php if (!$isProduction): ?>
-function fillDemo(email, pass) {
-    const idInput = document.getElementById('login_identifier');
-    const pwdInput = document.getElementById('login_password');
-    if (idInput && pwdInput) {
-        idInput.value = email;
-        pwdInput.value = pass;
-    }
-}
-<?php endif; ?>
 </script>
 
 <?php require dirname(__DIR__) . '/layouts/footer.php'; ?>
