@@ -48,7 +48,11 @@ class AdminController
 
     public function systemUpdate(): void
     {
-        $this->requireAdmin();
+        if (AuthService::role() !== 'ADMIN') {
+            $_SESSION['flash_error'] = 'Access denied. Administrative privilege required.';
+            header('Location: /login');
+            exit;
+        }
 
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
