@@ -53,7 +53,16 @@ class AllApiProvider implements PaymentProviderInterface
         }
         $this->token = $tok;
 
-        $this->mode = strtoupper(!empty($settings['allapi_mode']) ? $settings['allapi_mode'] : ($_ENV['ALLAPI_MODE'] ?? 'LIVE'));
+        // Mode determination: prefer LIVE if either .env or DB sets LIVE
+        $dbMode = strtoupper(trim($settings['allapi_mode'] ?? ''));
+        $envMode = strtoupper(trim($_ENV['ALLAPI_MODE'] ?? ''));
+        if ($envMode === 'LIVE' || $dbMode === 'LIVE') {
+            $this->mode = 'LIVE';
+        } elseif (!empty($dbMode)) {
+            $this->mode = $dbMode;
+        } else {
+            $this->mode = 'LIVE';
+        }
         $this->redirectUrl = !empty($settings['allapi_redirect_url']) ? $settings['allapi_redirect_url'] : ($_ENV['ALLAPI_REDIRECT_URL'] ?? 'https://welcomebihar.in/wallet/passbook');
         $this->timeout = (int)($_ENV['ALLAPI_TIMEOUT_SECONDS'] ?? 15);
     }

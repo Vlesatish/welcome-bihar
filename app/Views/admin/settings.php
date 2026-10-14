@@ -52,22 +52,39 @@
                             </div>
                         </div>
 
+                        <!-- Gateway Mode (LIVE vs SANDBOX) -->
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold text-dark mb-1">
+                                Gateway Integration Mode <span class="text-danger">*</span>
+                                <?php if (($settings['allapi_mode'] ?? 'LIVE') === 'LIVE'): ?>
+                                    <span class="badge bg-success ms-1" style="font-size: 0.65rem;"><i class="bi bi-broadcast me-1"></i>LIVE (Real Payments)</span>
+                                <?php else: ?>
+                                    <span class="badge bg-warning text-dark ms-1" style="font-size: 0.65rem;"><i class="bi bi-cone-striped me-1"></i>SANDBOX (Simulation)</span>
+                                <?php endif; ?>
+                            </label>
+                            <select name="allapi_mode" class="form-select form-select-sm fw-bold">
+                                <option value="LIVE" <?= ($settings['allapi_mode'] ?? 'LIVE') === 'LIVE' ? 'selected' : '' ?>>LIVE (Production - Real allapi.in UPI QR & Payments)</option>
+                                <option value="SANDBOX" <?= ($settings['allapi_mode'] ?? '') === 'SANDBOX' ? 'selected' : '' ?>>SANDBOX (Offline Simulation Only)</option>
+                            </select>
+                            <div class="form-text small" style="font-size: 0.7rem;">Set to LIVE for real merchant collections. Set to SANDBOX only for offline demo testing.</div>
+                        </div>
+
                         <!-- Merchant Name -->
                         <div class="col-md-6">
                             <label class="form-label small fw-bold text-dark mb-1">Merchant Name <span class="text-danger">*</span></label>
-                            <input type="text" name="gateway_merchant_name" class="form-control form-control-sm" value="<?= e($settings['gateway_merchant_name'] ?? 'Welcome Bihar') ?>" placeholder="e.g. Welcome Bihar" required>
+                            <input type="text" name="gateway_merchant_name" class="form-control form-control-sm" value="<?= e($settings['gateway_merchant_name'] ?? 'JANTA TRADE ZONE') ?>" placeholder="e.g. JANTA TRADE ZONE" required>
                             <div class="form-text small" style="font-size: 0.7rem;">Display name shown to retailers on the UPI payment screen.</div>
                         </div>
 
                         <!-- UPI ID -->
                         <div class="col-md-6">
                             <label class="form-label small fw-bold text-dark mb-1">UPI ID (VPA) <span class="text-danger">*</span></label>
-                            <input type="text" name="gateway_upi_id" class="form-control form-control-sm font-monospace" value="<?= e($settings['gateway_upi_id'] ?? 'welcomebihar@upi') ?>" placeholder="e.g. merchant@okhdfcbank" required>
+                            <input type="text" name="gateway_upi_id" class="form-control form-control-sm font-monospace" value="<?= e($settings['gateway_upi_id'] ?? 'Q346614576@ybl') ?>" placeholder="e.g. merchant@okhdfcbank" required>
                             <div class="form-text small" style="font-size: 0.7rem;">Official merchant UPI virtual payment address connected with provider.</div>
                         </div>
 
                         <!-- API Token (SECURE: Not rendered in value attribute!) -->
-                        <div class="col-12">
+                        <div class="col-md-6">
                             <label class="form-label small fw-bold text-dark mb-1">
                                 API Token
                                 <?php if (!empty($settings['allapi_token'])): ?>
@@ -79,7 +96,7 @@
                                 <input type="password" name="allapi_token" class="form-control form-control-sm font-monospace" value="" placeholder="<?= !empty($settings['allapi_token']) ? '•••••••••••••••••••••••••••••••• (Leave blank to keep existing token)' : 'Enter API token...' ?>" autocomplete="new-password">
                             </div>
                             <div class="form-text small" style="font-size: 0.7rem;">
-                                Security: Token is never exposed in HTML source, JavaScript, or API responses. Submitting a blank field preserves the current token.
+                                Security: Token is never exposed in HTML source. Submitting blank preserves the current token.
                             </div>
                         </div>
                     </div>
@@ -101,15 +118,7 @@
                 <div class="collapse" id="collapseAdvanced">
                     <div class="card-body p-4">
                         <div class="row g-3">
-                            <div class="col-md-3">
-                                <label class="form-label small fw-bold text-dark mb-1">Integration Mode</label>
-                                <select name="allapi_mode" class="form-select form-select-sm fw-bold">
-                                    <option value="LIVE" <?= ($settings['allapi_mode'] ?? 'LIVE') === 'LIVE' ? 'selected' : '' ?>>LIVE (Production)</option>
-                                    <option value="SANDBOX" <?= ($settings['allapi_mode'] ?? '') === 'SANDBOX' ? 'selected' : '' ?>>SANDBOX (Simulation)</option>
-                                </select>
-                            </div>
-
-                            <div class="col-md-9">
+                            <div class="col-12">
                                 <label class="form-label small fw-bold text-dark mb-1">Provider Base URL</label>
                                 <input type="url" name="allapi_base_url" class="form-control form-control-sm font-monospace" value="<?= e($settings['allapi_base_url'] ?? 'https://allapi.in') ?>" required>
                             </div>

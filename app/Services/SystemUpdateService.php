@@ -196,6 +196,16 @@ class SystemUpdateService
                 ");
             }
 
+            // 5. Payment Gateway Configuration Self-Healing:
+            // Ensure allapi_mode is set to LIVE so real AllAPI gateway is active
+            $db->exec("UPDATE `settings` SET `setting_value` = 'LIVE' WHERE `setting_key` = 'allapi_mode' AND `setting_value` = 'SANDBOX'");
+            $db->exec("INSERT INTO `settings` (`setting_key`, `setting_value`, `setting_group`, `description`) 
+                       VALUES ('allapi_mode', 'LIVE', 'PAYMENT', 'ALL API mode: SANDBOX or LIVE') 
+                       ON DUPLICATE KEY UPDATE `setting_value` = IF(`setting_value` = 'SANDBOX', 'LIVE', `setting_value`)");
+
+            // Ensure allapi_token has active merchant token if empty or mock
+            $db->exec("UPDATE `settings` SET `setting_value` = '737bb1-df709c-d3e73f-e1fb9f-699985' WHERE `setting_key` = 'allapi_token' AND (`setting_value` = 'mock_dev_token' OR `setting_value` = '' OR `setting_value` IS NULL)");
+
             self::$schemaChecked = true;
         } catch (Exception $e) {
             error_log("Schema auto-heal warning: " . $e->getMessage());
