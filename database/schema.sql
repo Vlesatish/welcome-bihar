@@ -154,8 +154,11 @@ CREATE TABLE IF NOT EXISTS `data_type_fields` (
 CREATE TABLE IF NOT EXISTS `applications` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `app_ref` VARCHAR(64) NOT NULL UNIQUE,
+  `batch_ref` VARCHAR(64) NULL,
   `user_id` INT NOT NULL,
   `distributor_id` INT NULL,
+  `assigned_operator_id` INT NULL,
+  `claimed_at` DATETIME NULL,
   `data_type_id` INT NOT NULL,
   `district_id` INT NOT NULL,
   `block_id` INT NOT NULL,
@@ -164,8 +167,10 @@ CREATE TABLE IF NOT EXISTS `applications` (
   `applicant_identifier` VARCHAR(100) NULL, -- Primary duplicate detection value (e.g. Aadhaar/Ration card)
   `fee_debited` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
   `commission_credited` DECIMAL(12,2) NOT NULL DEFAULT 0.00,
-  `status` ENUM('PENDING', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'COMPLETED') NOT NULL DEFAULT 'PENDING',
+  `status` ENUM('PENDING', 'IN_PROCESS', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'COMPLETED') NOT NULL DEFAULT 'PENDING',
   `is_locked` TINYINT(1) NOT NULL DEFAULT 1, -- Locked after submission
+  `is_refunded` TINYINT(1) NOT NULL DEFAULT 0,
+  `is_commission_paid` TINYINT(1) NOT NULL DEFAULT 0,
   `distributor_reviewed_at` DATETIME NULL,
   `distributor_reviewed_by` INT NULL,
   `final_action_at` DATETIME NULL,
@@ -180,6 +185,8 @@ CREATE TABLE IF NOT EXISTS `applications` (
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX `idx_apps_user` (`user_id`),
   INDEX `idx_apps_distributor` (`distributor_id`),
+  INDEX `idx_apps_assigned_operator` (`assigned_operator_id`),
+  INDEX `idx_apps_batch_ref` (`batch_ref`),
   INDEX `idx_apps_data_type` (`data_type_id`),
   INDEX `idx_apps_district` (`district_id`),
   INDEX `idx_apps_block` (`block_id`),

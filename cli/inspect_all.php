@@ -9,10 +9,14 @@ spl_autoload_register(function ($class) {
     if (file_exists($file)) require $file;
 });
 use App\Config\Database;
+use App\Config\Config;
+Config::init();
 $db = Database::getConnection();
 
-$settings = $db->query("SELECT setting_key, setting_group, LEFT(setting_value, 40) as val FROM settings")->fetchAll(PDO::FETCH_ASSOC);
-echo "Settings:\n";
-foreach ($settings as $s) {
-    echo "  {$s['setting_key']} [{$s['setting_group']}]: {$s['val']}\n";
-}
+$tables = $db->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
+echo "TABLES:\n" . implode(", ", $tables) . "\n\n";
+
+$rows = $db->query("SELECT id, code, name_en, fee_amount, is_active FROM data_types")->fetchAll(PDO::FETCH_ASSOC);
+echo "DATA TYPES:\n";
+print_r($rows);
+
