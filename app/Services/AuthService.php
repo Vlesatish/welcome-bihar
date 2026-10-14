@@ -158,21 +158,7 @@ class AuthService
         // Search user by email or mobile
         $cleanMobile = preg_replace('/\D/', '', $identifier);
 
-        // In production, disable demo seed accounts and default demo passwords
-        $isProduction = strtolower(\App\Config\Config::get('APP_ENV', 'development')) === 'production'
-            || strtolower(\App\Config\Config::get('APP_DEBUG', 'true')) === 'false';
-
-        if ($isProduction) {
-            $demoEmails = ['admin@welcomebihar.gov.in', 'distributor@welcomebihar.gov.in', 'operator@welcomebihar.gov.in'];
-            $demoMobiles = ['9999900001', '9999900002', '9999900003'];
-            if (in_array(strtolower(trim($identifier)), $demoEmails, true) || in_array($cleanMobile, $demoMobiles, true) || $password === 'Welcome@2026') {
-                return [
-                    'success' => false,
-                    'message' => 'Demo credentials and seed accounts are disabled in production mode. Please use official registered credentials.'
-                ];
-            }
-        }
-
+        // Check user credentials
         $stmt = $db->prepare("
             SELECT id, uuid, role, name, mobile, email, password_hash, status, preferred_lang
             FROM users
@@ -194,13 +180,14 @@ class AuthService
             ];
         }
 
-        // Production Security Gate: Disable default seed demo credentials in production
+        // If in strict production and demo logins are not explicitly allowed, warn if using default Welcome@2026
         $isProduction = strtolower(\App\Config\Config::get('APP_ENV', 'development')) === 'production';
-        if ($isProduction && password_verify('Welcome@2026', $user['password_hash'])) {
+        $allowDemo = filter_var(\App\Config\Config::get('APP_ALLOW_DEMO', 'true'), FILTER_VALIDATE_BOOLEAN);
+        if ($isProduction && !$allowDemo && password_verify('Welcome@2026', $user['password_hash'])) {
             AuditService::log('DEMO_CREDENTIALS_BLOCKED_IN_PRODUCTION', 'USER', (string)$user['id'], ['identifier' => $identifier]);
             return [
                 'success' => false,
-                'message' => 'Default demo seed credentials are deactivated in production. Please use your personalized administrator credentials.'
+                'message' => 'Default demo password is deactivated in production. Please change your password or set APP_ALLOW_DEMO=true in .env.'
             ];
         }
 

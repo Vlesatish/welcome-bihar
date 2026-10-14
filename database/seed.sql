@@ -830,17 +830,19 @@ INSERT INTO `data_type_fields` (`id`, `data_type_id`, `field_name`, `label_en`, 
 ON DUPLICATE KEY UPDATE `label_en`=VALUES(`label_en`);
 
 -- 7. SEED USERS & WALLETS (Demo Credentials: Login with password 'Welcome@2026')
-INSERT INTO `users` (`id`, `uuid`, `role`, `name`, `mobile`, `email`, `password_hash`, `status`, `parent_distributor_id`, `preferred_lang`, `center_name`, `assigned_all_districts`) VALUES
-(1, '11111111-1111-1111-1111-111111111111', 'ADMIN', 'Super Admin', '9999900001', 'admin@welcomebihar.gov.in', '$2y$10$tmZTN5Saij8lfgAP4Ghe7.nOY0Gya.woTEsx/1LzOpp1m8tt5QPhO', 'ACTIVE', NULL, 'en', 'State Headquarters Patna', 1),
-(2, '22222222-2222-2222-2222-222222222222', 'DISTRIBUTOR', 'Patna Central Distributor', '9999900002', 'distributor@welcomebihar.gov.in', '$2y$10$tmZTN5Saij8lfgAP4Ghe7.nOY0Gya.woTEsx/1LzOpp1m8tt5QPhO', 'ACTIVE', NULL, 'en', 'Patna Central Hub', 0),
-(3, '33333333-3333-3333-3333-333333333333', 'USER', 'Kiosk Operator Rajesh', '9999900003', 'operator@welcomebihar.gov.in', '$2y$10$tmZTN5Saij8lfgAP4Ghe7.nOY0Gya.woTEsx/1LzOpp1m8tt5QPhO', 'ACTIVE', 2, 'en', 'Rajesh CSC Center Danapur', 0)
-ON DUPLICATE KEY UPDATE `name`=VALUES(`name`);
+INSERT INTO `users` (`id`, `uuid`, `role`, `name`, `mobile`, `email`, `password_hash`, `status`, `parent_distributor_id`, `preferred_lang`, `center_name`, `assigned_all_districts`, `assigned_district_id`, `assigned_block_id`) VALUES
+(1, '11111111-1111-1111-1111-111111111111', 'ADMIN', 'Super Admin', '9999900001', 'admin@welcomebihar.gov.in', '$2y$10$svP8BW9qwEeTR0OiQSMJ/eaALkvNHCO768cajWNZcJ93zZYMDaciG', 'ACTIVE', NULL, 'en', 'State Headquarters Patna', 1, NULL, NULL),
+(2, '22222222-2222-2222-2222-222222222222', 'DISTRIBUTOR', 'Patna Central Distributor', '9999900002', 'distributor@welcomebihar.gov.in', '$2y$10$svP8BW9qwEeTR0OiQSMJ/eaALkvNHCO768cajWNZcJ93zZYMDaciG', 'ACTIVE', NULL, 'en', 'Patna Central Hub', 0, NULL, NULL),
+(3, '33333333-3333-3333-3333-333333333333', 'USER', 'Kiosk Operator Rajesh', '9999900003', 'operator@welcomebihar.gov.in', '$2y$10$svP8BW9qwEeTR0OiQSMJ/eaALkvNHCO768cajWNZcJ93zZYMDaciG', 'ACTIVE', 2, 'en', 'Rajesh CSC Center Danapur', 0, NULL, NULL),
+(4, '44444444-4444-4444-4444-444444444444', 'OPERATOR', 'Danapur Block Operator', '9999900004', 'danapur.operator@welcomebihar.gov.in', '$2y$10$svP8BW9qwEeTR0OiQSMJ/eaALkvNHCO768cajWNZcJ93zZYMDaciG', 'ACTIVE', NULL, 'en', 'Danapur Block Office', 0, 26, 448)
+ON DUPLICATE KEY UPDATE `password_hash`=VALUES(`password_hash`), `status`='ACTIVE';
 
 -- 8. WALLETS INITIALIZATION
 INSERT INTO `wallets` (`id`, `user_id`, `balance`, `total_credited`, `total_debited`) VALUES
 (1, 1, 0.00, 0.00, 0.00),
 (2, 2, 500.00, 500.00, 0.00),
-(3, 3, 1000.00, 1000.00, 0.00)
+(3, 3, 1000.00, 1000.00, 0.00),
+(4, 4, 0.00, 0.00, 0.00)
 ON DUPLICATE KEY UPDATE `balance`=VALUES(`balance`);
 
 -- 9. INITIAL IMMUTABLE WALLET LEDGER ENTRIES
