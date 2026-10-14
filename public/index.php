@@ -176,9 +176,15 @@ try {
             break;
 
         // Admin
+        case '/admin':
         case '/admin/dashboard':
             $ctrl = new \App\Controllers\AdminController();
             $ctrl->dashboard();
+            break;
+
+        case '/admin/system-update':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->systemUpdate();
             break;
 
         case '/admin/applications':

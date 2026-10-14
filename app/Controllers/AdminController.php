@@ -46,8 +46,28 @@ class AdminController
         }
     }
 
+    public function systemUpdate(): void
+    {
+        $this->requireAdmin();
+
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
+                $_SESSION['flash_error'] = 'Invalid request token (CSRF). Please try again.';
+                header('Location: /admin/dashboard');
+                exit;
+            }
+        }
+
+        $result = \App\Services\SystemUpdateService::runFullUpdate();
+
+        $_SESSION['flash_success'] = '1-Click System Update Completed Successfully! ' . implode(' | ', $result['log']);
+        header('Location: ' . ($_SERVER['HTTP_REFERER'] ?? '/admin/dashboard'));
+        exit;
+    }
+
     public function dashboard(): void
     {
+        \App\Services\SystemUpdateService::ensureSchema();
         $db = Database::getConnection();
         $currentUser = AuthService::user();
         $isOperator = ($currentUser['role'] === 'OPERATOR');

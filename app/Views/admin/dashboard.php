@@ -371,6 +371,12 @@
             <i class="bi bi-arrow-clockwise me-1"></i> Refresh
         </button>
         <?php if ($currentUser['role'] === 'ADMIN'): ?>
+            <form method="POST" action="/admin/system-update" class="d-inline" onsubmit="return confirm('Do you want to run 1-Click System & Database Update? This will synchronize all database tables, columns and migrations.')">
+                <?= csrf_field() ?>
+                <button type="submit" class="btn btn-sm btn-dark fw-bold rounded-2 px-3 shadow-2xs" title="Synchronize database schema, columns, and system updates in 1 click">
+                    <i class="bi bi-cloud-arrow-down-fill text-warning me-1"></i> 1-Click Update
+                </button>
+            </form>
             <a href="/admin/service-availability" class="btn btn-sm btn-outline-success fw-bold rounded-2 px-3 shadow-2xs">
                 <i class="bi bi-toggle-on me-1"></i> Service Availability
             </a>

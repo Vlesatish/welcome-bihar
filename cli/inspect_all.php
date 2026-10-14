@@ -16,7 +16,8 @@ $db = Database::getConnection();
 $tables = $db->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
 echo "TABLES:\n" . implode(", ", $tables) . "\n\n";
 
-$rows = $db->query("SELECT id, code, name_en, fee_amount, is_active FROM data_types")->fetchAll(PDO::FETCH_ASSOC);
-echo "DATA TYPES:\n";
-print_r($rows);
+require_once __DIR__ . '/../app/Services/SystemUpdateService.php';
+$res = \App\Services\SystemUpdateService::runFullUpdate();
+echo "SYSTEM UPDATE RESULT:\n";
+print_r($res);
 

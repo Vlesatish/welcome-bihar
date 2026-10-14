@@ -105,6 +105,18 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                     <i class="bi bi-gear"></i>
                     <span>System Settings</span>
                 </a>
+                <div class="px-3 pt-2 pb-1">
+                    <form method="POST" action="/admin/system-update" onsubmit="return confirm('Run 1-Click System & Database Update now? This will synchronize all database columns, tables, and migrations.')">
+                        <?= csrf_field() ?>
+                        <button type="submit" class="btn btn-sm btn-outline-warning w-100 text-start d-flex align-items-center justify-content-between px-2.5 py-1.5 shadow-2xs" style="border-radius: 6px; font-size: 0.76rem; font-weight: 600;">
+                            <span class="d-flex align-items-center gap-2">
+                                <i class="bi bi-cloud-arrow-down-fill text-warning"></i>
+                                <span>1-Click Update</span>
+                            </span>
+                            <span class="badge bg-warning text-dark py-0.5 px-1.5" style="font-size: 0.65rem;">Sync</span>
+                        </button>
+                    </form>
+                </div>
 
             <?php elseif ($currentRole === 'DISTRIBUTOR'): ?>
                 <a class="wb-sidebar-link <?= $currentUri === '/distributor/dashboard' ? 'active' : '' ?>" href="/distributor/dashboard">
