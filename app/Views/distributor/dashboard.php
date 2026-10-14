@@ -11,6 +11,9 @@
         </p>
     </div>
     <div class="col-md-5 text-md-end d-flex gap-2 justify-content-md-end flex-wrap">
+        <a href="/distributor/retailers/new" class="btn btn-success fw-bold shadow-sm d-flex align-items-center gap-1.5" style="background: linear-gradient(135deg, #10b981, #059669); border: none;">
+            <i class="bi bi-person-plus-fill"></i> Add Retailer
+        </a>
         <a href="/distributor/team" class="btn btn-outline-primary fw-semibold">
             <i class="bi bi-people me-1"></i> <?= e(__('team_management')) ?>
         </a>
@@ -40,11 +43,14 @@
     <div class="col-sm-6 col-lg-3">
         <div class="stat-card bg-gradient-purple shadow-sm">
             <i class="bi bi-people stat-icon"></i>
-            <div class="stat-title">Active Team Operators</div>
+            <div class="stat-title">Active Team Operators / Retailers</div>
             <div class="stat-val"><?= $totalTeamMembers ?></div>
-            <div class="mt-2 small opacity-75">
+            <div class="mt-2 small opacity-75 d-flex justify-content-between align-items-center">
                 <a href="/distributor/team" class="text-white text-decoration-none fw-semibold">
                     Manage Team &rarr;
+                </a>
+                <a href="/distributor/retailers/new" class="badge bg-white text-primary text-decoration-none px-2 py-1">
+                    + Add Retailer
                 </a>
             </div>
         </div>
@@ -128,7 +134,7 @@
                                     </a>
                                 </td>
                                 <td>
-                                    <span class="fw-semibold"><?= e($app['dt_name_en'] ?: $app['dt_name_hi']) ?></span>
+                                    <span class="fw-semibold"><?= e($app['dt_name_en'] ?: 'Service') ?></span>
                                 </td>
                                 <td>
                                     <div class="fw-semibold small"><?= e($app['operator_name']) ?></div>

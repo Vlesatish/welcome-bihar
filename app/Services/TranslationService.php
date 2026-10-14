@@ -131,7 +131,23 @@ class TranslationService
         'fee_configuration' => 'Fees & Commission Settings',
         'workflow_settings' => 'Workflow & Verification Rules',
         'provider_settings' => 'ALL API UPI Provider Settings',
-        'distributor_review_toggle' => 'Require Distributor Review Before Admin Final Approval'
+        'distributor_review_toggle' => 'Require Distributor Review Before Admin Final Approval',
+
+        // Block & District Application Pass Service
+        'srv_block_app' => 'Block & District Application Pass Service',
+        'state' => 'State',
+        'application_code' => 'Application Code / Type',
+        'application_number' => 'Full Application Number',
+        'applicant_firm_name' => 'Applicant / Firm Name',
+        'location_rate_rules' => 'Location & Code Rate Rules',
+        'rate_rule_added' => 'Rate rule created successfully',
+        'rate_rule_updated' => 'Rate rule updated successfully',
+        'rate_rule_deleted' => 'Rate rule deleted successfully',
+        'rate_rule_conflict' => 'A rate rule with identical specificity already exists for this service.',
+        'app_code_number_mismatch' => 'Application number format does not match selected application code.',
+        'confirm_application_submission' => 'Confirm Application Submission',
+        'deduction_amount' => 'Wallet Deduction Amount',
+        'rate_breakdown' => 'Applied Rate Breakdown'
     ];
 
     public static function getLocale(): string
@@ -141,7 +157,9 @@ class TranslationService
 
     public static function setLocale(string $lang): void
     {
-        $_SESSION['lang'] = 'en';
+        if (session_status() === PHP_SESSION_ACTIVE || isset($_SESSION)) {
+            $_SESSION['lang'] = 'en';
+        }
     }
 
     public static function trans(string $key, ?string $fallback = null): string
@@ -149,12 +167,17 @@ class TranslationService
         if (isset(self::$dictionary[$key])) {
             $val = self::$dictionary[$key];
             if (is_array($val)) {
-                return $val['en'] ?? $fallback ?? $key;
+                return $val['en'] ?? $fallback ?? ucwords(str_replace('_', ' ', $key));
             }
             return (string)$val;
         }
 
-        return $fallback ?? $key;
+        if ($fallback !== null) {
+            return $fallback;
+        }
+
+        // Humanize key so raw snake_case is never shown
+        return ucwords(str_replace(['_', '-'], ' ', $key));
     }
 }
 

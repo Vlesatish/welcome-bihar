@@ -26,7 +26,7 @@
         <!-- Account Status & Distributor Form -->
         <div class="wb-card mb-4">
             <div class="wb-card-header">
-                <span class="fw-bold"><i class="bi bi-sliders me-2 text-primary"></i>Account Status &amp; Hierarchy</span>
+                <span class="fw-bold"><i class="bi bi-sliders me-2 text-primary"></i>Account Status & Hierarchy</span>
             </div>
             <div class="card-body p-4">
                 <form method="POST" action="/admin/users/update-status">
@@ -56,13 +56,19 @@
                         </div>
                     <?php endif; ?>
 
-                    <div class="form-check form-switch mb-3">
-                        <input class="form-check-input" type="checkbox" name="assigned_all_districts" id="all_dist_switch" value="1"
-                               <?= (int)$targetUser['assigned_all_districts'] === 1 ? 'checked' : '' ?>>
-                        <label class="form-check-label fw-semibold" for="all_dist_switch">
-                            Grant Universal Bihar Access (All 38 Districts &amp; Blocks)
-                        </label>
-                    </div>
+                    <?php if ($targetUser['role'] !== 'OPERATOR'): ?>
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" name="assigned_all_districts" id="all_dist_switch" value="1"
+                                   <?= (int)$targetUser['assigned_all_districts'] === 1 ? 'checked' : '' ?>>
+                            <label class="form-check-label fw-semibold" for="all_dist_switch">
+                                Grant Universal Bihar Access (All 38 Districts & Blocks)
+                            </label>
+                        </div>
+                    <?php else: ?>
+                        <div class="alert alert-info border small py-2 px-3 mb-3">
+                            <i class="bi bi-info-circle me-1"></i> Block Operators are strictly scoped to their assigned District & Block and cannot have universal access.
+                        </div>
+                    <?php endif; ?>
 
                     <button type="submit" class="btn btn-primary fw-semibold">
                         <i class="bi bi-save me-1"></i> Save Account Updates
@@ -74,7 +80,7 @@
         <!-- Location Assignments / Permissions -->
         <div class="wb-card">
             <div class="wb-card-header">
-                <span class="fw-bold"><i class="bi bi-geo-alt-fill me-2 text-danger"></i>Permitted Districts &amp; Blocks</span>
+                <span class="fw-bold"><i class="bi bi-geo-alt-fill me-2 text-danger"></i>Permitted Districts & Blocks</span>
             </div>
             <div class="card-body p-4">
                 <!-- Add Location Permission Form -->

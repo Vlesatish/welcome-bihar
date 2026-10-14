@@ -31,7 +31,7 @@ class Database
                 self::$instance = new PDO($dsn, $user, $pass, $options);
             } catch (PDOException $e) {
                 error_log("Database Connection Failed: " . $e->getMessage());
-                die("<h3>Database connection error. Please check your .env configuration and ensure MySQL is running.</h3>");
+                throw $e;
             }
         }
 

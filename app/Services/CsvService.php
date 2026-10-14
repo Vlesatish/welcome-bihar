@@ -7,8 +7,47 @@ use PDO;
 
 class CsvService
 {
+    public const MAX_IMPORT_ROWS = 5000;
+
     /**
-     * Stream CSV output to browser
+     * Sanitize cell value to prevent formula injection in spreadsheet applications.
+     * Cells starting with =, +, -, @, \t, \r are escaped with a leading single quote,
+     * while preserving Hindi and standard UTF-8 strings.
+     */
+    public static function sanitizeCellValue(mixed $value): string
+    {
+        if ($value === null) {
+            return '';
+        }
+
+        if (is_int($value) || is_float($value)) {
+            return (string)$value;
+        }
+
+        $str = (string)$value;
+        if ($str === '') {
+            return '';
+        }
+
+        // Allow plain unsigned numbers without operators (e.g. "100.50", "0")
+        if (preg_match('/^[0-9]+(\.[0-9]+)?$/', $str)) {
+            return $str;
+        }
+
+        // Check if value (after stripping leading space only) starts with formula trigger characters: =, +, -, @, tab, cr
+        $trimmedSpaces = ltrim($str, " ");
+        if ($trimmedSpaces !== '') {
+            $firstChar = $trimmedSpaces[0];
+            if (in_array($firstChar, ['=', '+', '-', '@', "\t", "\r"], true)) {
+                return "'" . $str;
+            }
+        }
+
+        return $str;
+    }
+
+    /**
+     * Stream CSV output to browser with formula injection protection and UTF-8 BOM
      */
     public static function streamCsv(string $filename, array $headers, iterable $rows): void
     {
@@ -21,10 +60,14 @@ class CsvService
         // Add UTF-8 BOM so Excel opens Hindi characters correctly
         fputs($output, "\xEF\xBB\xBF");
 
-        fputcsv($output, $headers);
+        $sanitizedHeaders = array_map([self::class, 'sanitizeCellValue'], $headers);
+        fputcsv($output, $sanitizedHeaders);
 
         foreach ($rows as $row) {
-            fputcsv($output, $row);
+            if (is_array($row)) {
+                $sanitizedRow = array_map([self::class, 'sanitizeCellValue'], $row);
+                fputcsv($output, $sanitizedRow);
+            }
         }
 
         fclose($output);
@@ -37,8 +80,8 @@ class CsvService
      */
     public static function importLocations(string $filePath): array
     {
-        if (!file_exists($filePath)) {
-            throw new Exception("Uploaded CSV file not found.");
+        if (!file_exists($filePath) || !is_readable($filePath)) {
+            throw new Exception("Uploaded CSV file not found or is not readable.");
         }
 
         $handle = fopen($filePath, 'r');
@@ -56,18 +99,37 @@ class CsvService
         try {
             while (($data = fgetcsv($handle, 2000, ",")) !== false) {
                 $rowNum++;
-                // Skip header row if matches common terms
-                if ($rowNum === 1 && stripos($data[0], 'district') !== false) {
+
+                if ($rowNum > self::MAX_IMPORT_ROWS) {
+                    throw new Exception("CSV file exceeds maximum allowed limit of " . self::MAX_IMPORT_ROWS . " rows.");
+                }
+
+                // Check for blank line
+                if (empty($data) || (count($data) === 1 && $data[0] === null)) {
                     continue;
                 }
 
-                $distName = trim($data[0] ?? '');
-                $distCode = strtoupper(trim($data[1] ?? ''));
-                $blockName = trim($data[2] ?? '');
-                $blockCode = trim($data[3] ?? '');
-                $isActive = isset($data[4]) ? (int)$data[4] : 1;
+                // Skip header row if matches common terms
+                if ($rowNum === 1 && stripos((string)($data[0] ?? ''), 'district') !== false) {
+                    continue;
+                }
 
+                // Validate column count
+                if (count($data) < 1) {
+                    throw new Exception("Malformed CSV record at line {$rowNum}: missing columns.");
+                }
+
+                $distName = trim((string)($data[0] ?? ''));
+                $distCode = strtoupper(trim((string)($data[1] ?? '')));
+                $blockName = trim((string)($data[2] ?? ''));
+                $blockCode = trim((string)($data[3] ?? ''));
+                $isActive = isset($data[4]) && $data[4] !== '' ? (int)$data[4] : 1;
+
+                // Validate malformed condition: block or code given without district name
                 if (empty($distName)) {
+                    if (!empty($blockName) || !empty($distCode)) {
+                        throw new Exception("Malformed CSV row at line {$rowNum}: Block or code provided without District Name.");
+                    }
                     continue;
                 }
 
@@ -113,7 +175,9 @@ class CsvService
                 'total_rows_processed' => $rowNum
             ];
         } catch (Exception $e) {
-            fclose($handle);
+            if (is_resource($handle)) {
+                fclose($handle);
+            }
             if ($db->inTransaction()) {
                 $db->rollBack();
             }

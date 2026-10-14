@@ -26,9 +26,10 @@ interface PaymentProviderInterface
      *
      * @param array $payload Webhook POST payload
      * @param string|null $signature Optional signature or header
+     * @param string|null $rawBody Optional raw HTTP request body
      * @return array [is_valid => bool, order_id => ?string, status => string, provider_txn_id => ?string, utr => ?string, event_id => string]
      */
-    public function validateWebhook(array $payload, ?string $signature = null): array;
+    public function validateWebhook(array $payload, ?string $signature = null, ?string $rawBody = null): array;
 
     /**
      * Service provider metadata and capabilities

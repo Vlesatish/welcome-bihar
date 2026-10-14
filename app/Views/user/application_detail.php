@@ -10,7 +10,7 @@
             <?= e(__('app_reference')) ?>: <span class="text-primary font-monospace"><?= e($app['app_ref']) ?></span>
         </h1>
         <div class="text-muted small">
-            Submitted on <?= date('d M Y, h:i A', strtotime($app['created_at'])) ?> &bull; Service: <strong><?= e($app['dt_name_en'] ?: $app['dt_name_hi']) ?></strong>
+            Submitted on <?= date('d M Y, h:i A', strtotime($app['created_at'])) ?> &bull; Service: <strong><?= e($app['dt_name_en']) ?></strong>
         </div>
     </div>
     <div class="d-flex align-items-center gap-2">
@@ -24,6 +24,51 @@
     </div>
 </div>
 
+<!-- Completed / Result File Banner for User -->
+<?php if (in_array($app['status'], ['COMPLETED', 'APPROVED'], true) || !empty($app['result_file'])): ?>
+    <div class="alert alert-success p-3 mb-4 rounded-3 shadow-sm border-success">
+        <div class="d-flex align-items-center justify-content-between flex-wrap gap-3">
+            <div class="d-flex align-items-center gap-3">
+                <div class="p-3 bg-success text-white rounded-circle">
+                    <i class="bi bi-check2-circle fs-3"></i>
+                </div>
+                <div>
+                    <h5 class="fw-bold mb-1 text-success">Application Approved Successfully!</h5>
+                    <div class="text-dark small">
+                        <?= !empty($app['result_file']) ? 'The requested service certificate / acknowledgement slip has been generated and approved.' : 'Your application has been approved by administration.' ?>
+                    </div>
+                    <?php if (!empty($app['admin_remarks'])): ?>
+                        <div class="small mt-1 text-secondary">
+                            <strong>Official Remarks:</strong> <?= e($app['admin_remarks']) ?>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+            <?php if (!empty($app['result_file'])): ?>
+                <div>
+                    <a href="<?= e($app['result_file']) ?>" target="_blank" download class="btn btn-success fw-bold shadow-sm px-4 py-2">
+                        <i class="bi bi-download me-1"></i> Download Result Document
+                    </a>
+                </div>
+            <?php endif; ?>
+        </div>
+    </div>
+<?php endif; ?>
+
+<!-- Admin Remarks Banner if not completed but remarks exist -->
+<?php if ($app['status'] !== 'COMPLETED' && !empty($app['admin_remarks'])): ?>
+    <div class="alert alert-info p-3 mb-4 rounded-3 shadow-sm border-info">
+        <div class="d-flex align-items-start gap-2">
+            <i class="bi bi-chat-left-dots-fill fs-5 text-primary mt-1"></i>
+            <div>
+                <h6 class="fw-bold mb-1 text-dark">Official Remarks:</h6>
+                <div class="text-dark small"><?= nl2br(e($app['admin_remarks'])) ?></div>
+            </div>
+        </div>
+    </div>
+<?php endif; ?>
+
+<!-- Rejection Reason Banner -->
 <?php if ($app['status'] === 'REJECTED' && !empty($app['rejection_reason'])): ?>
     <div class="alert alert-danger p-3 mb-4 rounded-3 shadow-sm">
         <div class="d-flex align-items-start gap-2">
@@ -40,8 +85,8 @@
     <!-- Left Column: Application Details & Field Values -->
     <div class="col-lg-8">
         <!-- Overview Card -->
-        <div class="wb-card mb-4">
-            <div class="wb-card-header">
+        <div class="wb-card mb-4 shadow-sm">
+            <div class="wb-card-header bg-light">
                 <span class="fw-bold"><i class="bi bi-info-circle me-2 text-primary"></i>Application Summary</span>
                 <span class="badge bg-secondary-subtle text-secondary border">
                     <i class="bi bi-lock-fill me-1"></i> Locked Record
@@ -72,7 +117,7 @@
                         <div class="fs-6 fw-semibold text-dark mt-1"><?= e($app['block_name']) ?></div>
                     </div>
                     <div class="col-sm-6 col-md-4">
-                        <div class="text-muted small text-uppercase fw-semibold"><?= e(__('fee_amount')) ?></div>
+                        <div class="text-muted small text-uppercase fw-semibold">Fee Charged (Debited)</div>
                         <div class="fs-6 fw-bold text-danger mt-1">₹<?= number_format($app['fee_debited'], 2) ?></div>
                     </div>
                 </div>
@@ -80,29 +125,36 @@
         </div>
 
         <!-- Submitted Dynamic Form Fields Card -->
-        <div class="wb-card">
-            <div class="wb-card-header">
-                <span class="fw-bold"><i class="bi bi-card-checklist me-2 text-primary"></i>Submitted Details</span>
+        <div class="wb-card shadow-sm">
+            <div class="wb-card-header bg-light">
+                <span class="fw-bold"><i class="bi bi-card-checklist me-2 text-primary"></i>Submitted Details & Uploaded Documents</span>
             </div>
             <div class="card-body p-0">
-                <table class="table table-bordered table-striped mb-0">
+                <table class="table table-bordered table-striped align-middle mb-0">
                     <thead class="table-light">
                         <tr>
-                            <th style="width: 40%;">Field Label</th>
-                            <th>Submitted Value</th>
+                            <th style="width: 35%;">Field Label</th>
+                            <th>Submitted Value / Document</th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php foreach ($fieldValues as $fv): ?>
                             <tr>
                                 <td class="fw-semibold text-secondary">
-                                    <?= e($fv['label_en'] ?: $fv['label_hi']) ?>
+                                    <?= e($fv['label_en']) ?>
                                 </td>
-                                <td class="fw-bold text-dark">
-                                    <?php if ($fv['field_type'] === 'textarea'): ?>
-                                        <?= nl2br(e($fv['field_value'])) ?>
+                                <td>
+                                    <?php if ($fv['field_type'] === 'file' && !empty($fv['field_value'])): ?>
+                                        <div class="d-flex align-items-center gap-2">
+                                            <a href="<?= e($fv['field_value']) ?>" target="_blank" class="btn btn-sm btn-outline-primary fw-semibold">
+                                                <i class="bi bi-file-earmark-arrow-down me-1"></i> View / Download Document
+                                            </a>
+                                            <span class="small text-muted font-monospace"><?= e(basename($fv['field_value'])) ?></span>
+                                        </div>
+                                    <?php elseif ($fv['field_type'] === 'textarea'): ?>
+                                        <div class="fw-semibold text-dark"><?= nl2br(e($fv['field_value'])) ?></div>
                                     <?php else: ?>
-                                        <?= e($fv['field_value']) ?>
+                                        <div class="fw-bold text-dark"><?= e($fv['field_value'] ?: '-') ?></div>
                                     <?php endif; ?>
                                 </td>
                             </tr>
@@ -115,46 +167,62 @@
 
     <!-- Right Column: Status History & Review Actions -->
     <div class="col-lg-4">
-        <!-- Review Action Box (For Admins and Permitted Distributors) -->
-        <?php if ($canReview): ?>
+        <!-- Review Action Box (For Admins and Permitted Distributors on non-terminal applications) -->
+        <?php if ($canReview && !in_array($app['status'], ['REJECTED', 'COMPLETED'], true)): ?>
             <div class="wb-card border-primary shadow-sm mb-4">
                 <div class="wb-card-header bg-primary text-white">
-                    <span class="fw-bold"><i class="bi bi-check2-circle me-1"></i> Review &amp; Action Panel</span>
+                    <span class="fw-bold"><i class="bi bi-check2-circle me-1"></i> Review & Action Panel</span>
                 </div>
                 <div class="card-body p-3">
-                    <form method="POST" action="/applications/update-status">
+                    <form method="POST" action="/applications/update-status" enctype="multipart/form-data">
                         <?= csrf_field() ?>
                         <input type="hidden" name="application_id" value="<?= $app['id'] ?>">
 
                         <div class="mb-3">
                             <label class="form-label fw-bold small">Select Target Status <span class="text-danger">*</span></label>
-                            <select name="status" id="review_status_select" class="form-select" required onchange="toggleRejectionReason(this.value)">
+                            <select name="status" id="review_status_select" class="form-select" required onchange="handleStatusChange(this.value)">
                                 <option value="">-- Choose Action --</option>
                                 <?php if ($currentUser['role'] === 'ADMIN'): ?>
-                                    <option value="APPROVED" <?= $app['status'] === 'APPROVED' ? 'selected' : '' ?>>Approve</option>
+                                    <?php if ($app['status'] === 'PENDING'): ?>
+                                        <option value="UNDER_REVIEW">Mark Under Review</option>
+                                    <?php endif; ?>
+                                    <option value="APPROVED">Approve (In-Progress)</option>
+                                    <option value="COMPLETED">Complete & Deliver Result</option>
+                                    <option value="REJECTED">Reject (Refund Fee)</option>
+                                <?php elseif ($currentUser['role'] === 'DISTRIBUTOR'): ?>
+                                    <?php if ($app['status'] === 'PENDING'): ?>
+                                        <option value="UNDER_REVIEW">Mark Under Review</option>
+                                    <?php endif; ?>
                                 <?php endif; ?>
-                                <option value="UNDER_REVIEW" <?= $app['status'] === 'UNDER_REVIEW' ? 'selected' : '' ?>>Under Review</option>
-                                <option value="REJECTED" <?= $app['status'] === 'REJECTED' ? 'selected' : '' ?>>Reject</option>
                             </select>
                         </div>
 
+                        <!-- Result Document Upload (Visible when COMPLETED or APPROVED) -->
+                        <div class="mb-3" id="result_upload_group" style="display: none;">
+                            <label class="form-label fw-bold small text-success">
+                                <i class="bi bi-file-earmark-check me-1"></i> Attach Result Document / Certificate (PDF/JPG)
+                            </label>
+                            <input type="file" name="result_file" class="form-control form-control-sm" accept=".pdf,.jpg,.jpeg,.png">
+                            <div class="form-text small">Upload the issued certificate or acknowledgement receipt.</div>
+                        </div>
+
                         <!-- Mandatory Rejection Reason -->
-                        <div class="mb-3" id="rejection_reason_group" style="display: <?= $app['status'] === 'REJECTED' ? 'block' : 'none' ?>;">
+                        <div class="mb-3" id="rejection_reason_group" style="display: none;">
                             <label class="form-label fw-bold small text-danger">
                                 Mandatory Rejection Reason <span class="text-danger">*</span>
                             </label>
                             <textarea name="rejection_reason" id="rejection_reason_input" class="form-control" rows="3"
                                       placeholder="Provide detailed explanation for rejection..."><?= e($app['rejection_reason']) ?></textarea>
-                            <div class="form-text small text-danger">A clear reason is mandatory for rejection audit.</div>
+                            <div class="form-text small text-danger">A clear reason is mandatory for rejection audit & user refund.</div>
                         </div>
 
                         <div class="mb-3">
-                            <label class="form-label fw-bold small">Reviewer Remarks</label>
-                            <textarea name="remarks" class="form-control" rows="2" placeholder="Optional internal note..."><?= e($app['remarks']) ?></textarea>
+                            <label class="form-label fw-bold small">Official Remarks (Visible to User)</label>
+                            <textarea name="admin_remarks" class="form-control" rows="2" placeholder="e.g. Certificate generated successfully, collection available at center."><?= e($app['admin_remarks'] ?: $app['remarks']) ?></textarea>
                         </div>
 
-                        <button type="submit" id="btn-confirm-reject" class="btn btn-primary w-100 fw-bold">
-                            <i class="bi bi-save me-1"></i> Update Status
+                        <button type="submit" id="btn-confirm-action" class="btn btn-primary w-100 fw-bold">
+                            <i class="bi bi-save me-1"></i> Update Status & Notify User
                         </button>
                     </form>
                 </div>
@@ -162,8 +230,8 @@
         <?php endif; ?>
 
         <!-- Submitter Kiosk Info -->
-        <div class="wb-card mb-4">
-            <div class="wb-card-header">
+        <div class="wb-card mb-4 shadow-sm">
+            <div class="wb-card-header bg-light">
                 <span class="fw-bold"><i class="bi bi-person-badge me-2 text-primary"></i>Operator / Submitter Details</span>
             </div>
             <div class="card-body p-3">
@@ -181,8 +249,8 @@
         </div>
 
         <!-- Status History Timeline -->
-        <div class="wb-card">
-            <div class="wb-card-header">
+        <div class="wb-card shadow-sm">
+            <div class="wb-card-header bg-light">
                 <span class="fw-bold"><i class="bi bi-clock-history me-2 text-primary"></i>Status Timeline</span>
             </div>
             <div class="card-body p-3">
@@ -218,15 +286,26 @@
 </div>
 
 <script>
-function toggleRejectionReason(status) {
-    const grp = document.getElementById('rejection_reason_group');
-    if (grp) {
+function handleStatusChange(status) {
+    const rejGrp = document.getElementById('rejection_reason_group');
+    const rejInput = document.getElementById('rejection_reason_input');
+    const resGrp = document.getElementById('result_upload_group');
+
+    if (rejGrp && rejInput) {
         if (status === 'REJECTED') {
-            grp.style.display = 'block';
-            document.getElementById('rejection_reason_input').setAttribute('required', 'required');
+            rejGrp.style.display = 'block';
+            rejInput.setAttribute('required', 'required');
         } else {
-            grp.style.display = 'none';
-            document.getElementById('rejection_reason_input').removeAttribute('required');
+            rejGrp.style.display = 'none';
+            rejInput.removeAttribute('required');
+        }
+    }
+
+    if (resGrp) {
+        if (status === 'COMPLETED' || status === 'APPROVED') {
+            resGrp.style.display = 'block';
+        } else {
+            resGrp.style.display = 'none';
         }
     }
 }

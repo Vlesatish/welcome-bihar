@@ -6,7 +6,7 @@
             <div>
                 <span class="fw-semibold text-dark"><i class="bi bi-shield-check text-warning me-1"></i> Welcome Bihar</span>
                 <span class="mx-2">&bull;</span>
-                <span>District &amp; Block Citizen Services Data Portal</span>
+                <span>District & Block Citizen Services Data Portal</span>
             </div>
             <div>
                 <span>&copy; <?= date('Y') ?> Welcome Bihar. All Rights Reserved.</span>

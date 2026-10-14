@@ -28,14 +28,26 @@ class AuthService
         }
 
         $db = Database::getConnection();
-        $stmt = $db->prepare("SELECT id, uuid, role, name, mobile, email, status, parent_distributor_id, preferred_lang, center_name, assigned_all_districts FROM users WHERE id = ? LIMIT 1");
+        $stmt = $db->prepare("SELECT id, uuid, role, name, mobile, email, status, parent_distributor_id, preferred_lang, center_name, profile_state, profile_district_id, profile_block_id, center_address, assigned_all_districts, assigned_district_id, assigned_block_id FROM users WHERE id = ? LIMIT 1");
         $stmt->execute([self::id()]);
-        return $stmt->fetch() ?: null;
+        $u = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$u) {
+            return null;
+        }
+        if ($u['status'] !== 'ACTIVE') {
+            return null;
+        }
+        return $u;
     }
 
     public static function isAdmin(): bool
     {
         return self::role() === 'ADMIN';
+    }
+
+    public static function isOperator(): bool
+    {
+        return self::role() === 'OPERATOR';
     }
 
     public static function isDistributor(): bool
@@ -46,6 +58,79 @@ class AuthService
     public static function isUser(): bool
     {
         return self::role() === 'USER';
+    }
+
+    /**
+     * Reusable authorization policy for block operators
+     * Verifies:
+     * - User exists
+     * - Role is OPERATOR
+     * - Status is ACTIVE
+     * - District and Block assignments are present
+     * - Application District equals operator District
+     * - Application Block equals operator Block
+     */
+    public static function canOperatorAccessApplication(int $operatorId, int $applicationId): bool
+    {
+        $db = Database::getConnection();
+        $stmt = $db->prepare("SELECT id, role, status, assigned_district_id, assigned_block_id FROM users WHERE id = ? LIMIT 1");
+        $stmt->execute([$operatorId]);
+        $op = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$op || $op['role'] !== 'OPERATOR' || $op['status'] !== 'ACTIVE') {
+            return false;
+        }
+
+        if (empty($op['assigned_district_id']) || empty($op['assigned_block_id'])) {
+            return false;
+        }
+
+        $appStmt = $db->prepare("SELECT id, district_id, block_id FROM applications WHERE id = ? LIMIT 1");
+        $appStmt->execute([$applicationId]);
+        $app = $appStmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$app) {
+            return false;
+        }
+
+        return ((int)$app['district_id'] === (int)$op['assigned_district_id']) &&
+               ((int)$app['block_id'] === (int)$op['assigned_block_id']);
+    }
+
+    /**
+     * General authorization policy across roles
+     */
+    public static function canUserAccessApplication(int $userId, int $applicationId): bool
+    {
+        $db = Database::getConnection();
+        $uStmt = $db->prepare("SELECT id, role, status, assigned_district_id, assigned_block_id FROM users WHERE id = ? LIMIT 1");
+        $uStmt->execute([$userId]);
+        $u = $uStmt->fetch(PDO::FETCH_ASSOC);
+        if (!$u || $u['status'] !== 'ACTIVE') {
+            return false;
+        }
+
+        if ($u['role'] === 'ADMIN') {
+            return true;
+        }
+        if ($u['role'] === 'OPERATOR') {
+            return self::canOperatorAccessApplication($userId, $applicationId);
+        }
+
+        $appStmt = $db->prepare("SELECT id, user_id, distributor_id FROM applications WHERE id = ? LIMIT 1");
+        $appStmt->execute([$applicationId]);
+        $app = $appStmt->fetch(PDO::FETCH_ASSOC);
+        if (!$app) {
+            return false;
+        }
+
+        if ($u['role'] === 'USER') {
+            return (int)$app['user_id'] === $userId;
+        }
+        if ($u['role'] === 'DISTRIBUTOR') {
+            return (int)$app['distributor_id'] === $userId;
+        }
+        return false;
     }
 
     public static function attempt(string $identifier, string $password): array
@@ -72,6 +157,22 @@ class AuthService
 
         // Search user by email or mobile
         $cleanMobile = preg_replace('/\D/', '', $identifier);
+
+        // In production, disable demo seed accounts and default demo passwords
+        $isProduction = strtolower(\App\Config\Config::get('APP_ENV', 'development')) === 'production'
+            || strtolower(\App\Config\Config::get('APP_DEBUG', 'true')) === 'false';
+
+        if ($isProduction) {
+            $demoEmails = ['admin@welcomebihar.gov.in', 'distributor@welcomebihar.gov.in', 'operator@welcomebihar.gov.in'];
+            $demoMobiles = ['9999900001', '9999900002', '9999900003'];
+            if (in_array(strtolower(trim($identifier)), $demoEmails, true) || in_array($cleanMobile, $demoMobiles, true) || $password === 'Welcome@2026') {
+                return [
+                    'success' => false,
+                    'message' => 'Demo credentials and seed accounts are disabled in production mode. Please use official registered credentials.'
+                ];
+            }
+        }
+
         $stmt = $db->prepare("
             SELECT id, uuid, role, name, mobile, email, password_hash, status, preferred_lang
             FROM users
@@ -90,6 +191,16 @@ class AuthService
             return [
                 'success' => false,
                 'message' => __('invalid_credentials', 'Invalid mobile/email or password.')
+            ];
+        }
+
+        // Production Security Gate: Disable default seed demo credentials in production
+        $isProduction = strtolower(\App\Config\Config::get('APP_ENV', 'development')) === 'production';
+        if ($isProduction && password_verify('Welcome@2026', $user['password_hash'])) {
+            AuditService::log('DEMO_CREDENTIALS_BLOCKED_IN_PRODUCTION', 'USER', (string)$user['id'], ['identifier' => $identifier]);
+            return [
+                'success' => false,
+                'message' => 'Default demo seed credentials are deactivated in production. Please use your personalized administrator credentials.'
             ];
         }
 
@@ -113,9 +224,7 @@ class AuthService
         $_SESSION['user_name'] = $user['name'];
         $_SESSION['user_email'] = $user['email'];
         $_SESSION['user_mobile'] = $user['mobile'];
-        if (!empty($user['preferred_lang'])) {
-            $_SESSION['lang'] = $user['preferred_lang'];
-        }
+        $_SESSION['lang'] = 'en';
 
         // Update last login
         $db->prepare("UPDATE users SET last_login_at = NOW() WHERE id = ?")->execute([$user['id']]);
@@ -161,32 +270,25 @@ class AuthService
     public static function canAccessLocation(int $userId, int $districtId, ?int $blockId = null): bool
     {
         $db = Database::getConnection();
-        $stmt = $db->prepare("SELECT role, assigned_all_districts FROM users WHERE id = ?");
+        $stmt = $db->prepare("SELECT role, assigned_all_districts, assigned_district_id, assigned_block_id FROM users WHERE id = ?");
         $stmt->execute([$userId]);
         $u = $stmt->fetch();
         if (!$u) return false;
 
-        // Admin has universal access
-        if ($u['role'] === 'ADMIN' || (int)$u['assigned_all_districts'] === 1) {
+        // USER/RETAILER, ADMIN, and DISTRIBUTOR can access any active location for applications
+        if (in_array($u['role'], ['USER', 'ADMIN', 'DISTRIBUTOR'], true) || (int)$u['assigned_all_districts'] === 1) {
             return true;
         }
 
-        // Check location_permissions table
-        if ($blockId !== null) {
-            $permStmt = $db->prepare("
-                SELECT COUNT(*) FROM location_permissions
-                WHERE user_id = ? AND district_id = ? AND (block_id IS NULL OR block_id = ?)
-            ");
-            $permStmt->execute([$userId, $districtId, $blockId]);
-        } else {
-            $permStmt = $db->prepare("
-                SELECT COUNT(*) FROM location_permissions
-                WHERE user_id = ? AND district_id = ?
-            ");
-            $permStmt->execute([$userId, $districtId]);
+        // OPERATOR is strictly limited to assigned district and block
+        if ($u['role'] === 'OPERATOR') {
+            if (empty($u['assigned_district_id'])) return false;
+            if ((int)$u['assigned_district_id'] !== $districtId) return false;
+            if ($blockId !== null && (int)$u['assigned_block_id'] !== $blockId) return false;
+            return true;
         }
 
-        return ((int)$permStmt->fetchColumn()) > 0;
+        return false;
     }
 }
 

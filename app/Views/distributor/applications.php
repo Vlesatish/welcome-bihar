@@ -41,7 +41,7 @@
                     <option value="">-- All Services --</option>
                     <?php foreach ($dataTypes as $dt): ?>
                         <option value="<?= $dt['id'] ?>" <?= ($dataTypeId ?? 0) === (int)$dt['id'] ? 'selected' : '' ?>>
-                            <?= e($dt['name_en'] ?: $dt['name_hi']) ?>
+                            <?= e($dt['name_en'] ?: 'Service') ?>
                         </option>
                     <?php endforeach; ?>
                 </select>
@@ -91,7 +91,7 @@
                                     </a>
                                 </td>
                                 <td>
-                                    <span class="fw-semibold"><?= e($app['dt_name_en'] ?: $app['dt_name_hi']) ?></span>
+                                    <span class="fw-semibold"><?= e($app['dt_name_en'] ?: 'Service') ?></span>
                                 </td>
                                 <td>
                                     <span class="fw-semibold small"><?= e($app['operator_name']) ?></span>

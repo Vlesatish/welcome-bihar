@@ -6,6 +6,7 @@ use App\Services\AuthService;
 use App\Services\WalletService;
 use App\Services\AllApiProvider;
 use App\Services\AuditService;
+use App\Services\NotificationService;
 use App\Services\CsvService;
 use Exception;
 use PDO;
@@ -61,14 +62,28 @@ class WalletController
         }
 
         $userId = AuthService::id();
+        $db = Database::getConnection();
+
         $balance = WalletService::getBalance($userId);
         $providerInfo = $this->provider->getProviderInfo();
 
-        // Recent topup orders
-        $db = Database::getConnection();
-        $stmt = $db->prepare("SELECT * FROM topup_orders WHERE user_id = ? ORDER BY id DESC LIMIT 5");
+        // Check auto UPI setting
+        $autoUpiSetting = $db->query("SELECT setting_value FROM settings WHERE setting_key = 'gateway_auto_upi'")->fetchColumn();
+        $autoUpiEnabled = ($autoUpiSetting === false || ((string)$autoUpiSetting !== '0' && strtolower((string)$autoUpiSetting) !== 'false'));
+
+        // Recent topup orders (fast instant load from database)
+        $stmt = $db->prepare("SELECT * FROM topup_orders WHERE user_id = ? ORDER BY id DESC LIMIT 15");
         $stmt->execute([$userId]);
         $recentOrders = $stmt->fetchAll();
+
+        // Recent active pending order (< 15 min old) to recover on page reload
+        $pendingStmt = $db->prepare("
+            SELECT * FROM topup_orders 
+            WHERE user_id = ? AND status = 'PENDING' AND expires_at > NOW() AND created_at >= DATE_SUB(NOW(), INTERVAL 15 MINUTE)
+            ORDER BY id DESC LIMIT 1
+        ");
+        $pendingStmt->execute([$userId]);
+        $activePendingOrder = $pendingStmt->fetch();
 
         require dirname(__DIR__) . '/Views/user/topup.php';
     }
@@ -80,7 +95,16 @@ class WalletController
             exit;
         }
 
+        $isAjax = (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest')
+               || (isset($_SERVER['HTTP_ACCEPT']) && strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false)
+               || isset($_POST['ajax']);
+
         if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
+            if ($isAjax) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'message' => 'Invalid CSRF token. Please refresh the page.']);
+                exit;
+            }
             $_SESSION['flash_error'] = 'Invalid CSRF token.';
             header('Location: /wallet/topup');
             exit;
@@ -90,15 +114,61 @@ class WalletController
         $user = AuthService::user();
         $amount = round((float)($_POST['amount'] ?? 0), 2);
 
-        if ($amount < 50 || $amount > 25000) {
-            $_SESSION['flash_error'] = __('min_amount_note', 'Minimum top-up amount is ₹50 and maximum is ₹25,000.');
+        if ($amount < 50 || $amount > 50000) {
+            $msg = __('min_amount_note', 'Minimum top-up amount is ₹50 and maximum is ₹50,000.');
+            if ($isAjax) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'message' => $msg]);
+                exit;
+            }
+            $_SESSION['flash_error'] = $msg;
             header('Location: /wallet/topup');
             exit;
         }
 
         $db = Database::getConnection();
-        // Generate unique internal order ID
-        $orderId = 'ORD-' . date('YmdHis') . '-' . strtoupper(substr(bin2hex(random_bytes(3)), 0, 5));
+
+        // Check if Automatic UPI Gateway is enabled in settings
+        $autoUpiSetting = $db->query("SELECT setting_value FROM settings WHERE setting_key = 'gateway_auto_upi'")->fetchColumn();
+        if ($autoUpiSetting !== false && ((string)$autoUpiSetting === '0' || strtolower((string)$autoUpiSetting) === 'false')) {
+            $msg = 'Automatic UPI payment gateway is currently disabled by administrator. Please use manual bank transfer or contact support.';
+            if ($isAjax) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'message' => $msg]);
+                exit;
+            }
+            $_SESSION['flash_error'] = $msg;
+            header('Location: /wallet/topup');
+            exit;
+        }
+
+        // Idempotency check: Reuse existing active pending order within 60 seconds to avoid duplicates on double-click
+        $recentStmt = $db->prepare("
+            SELECT * FROM topup_orders 
+            WHERE user_id = ? AND amount = ? AND status = 'PENDING' AND expires_at > NOW() AND created_at >= DATE_SUB(NOW(), INTERVAL 60 SECOND)
+            ORDER BY id DESC LIMIT 1
+        ");
+        $recentStmt->execute([$userId, $amount]);
+        $recentPending = $recentStmt->fetch();
+
+        if ($recentPending && !empty($recentPending['qr_image_url'])) {
+            if ($isAjax) {
+                header('Content-Type: application/json');
+                echo json_encode([
+                    'success' => true,
+                    'order_id' => $recentPending['order_id'],
+                    'amount' => (float)$recentPending['amount'],
+                    'qr_image_url' => $recentPending['qr_image_url'],
+                    'payment_url' => $recentPending['payment_url'] ?? null
+                ]);
+                exit;
+            }
+            header('Location: /wallet/topup?open_order=' . urlencode($recentPending['order_id']));
+            exit;
+        }
+
+        // Generate unique clean alphanumeric order ID (No hyphens, strictly compatible with ALLAPI)
+        $orderId = 'ORD' . date('YmdHis') . strtoupper(substr(bin2hex(random_bytes(2)), 0, 4));
 
         // Create pending order row in database BEFORE calling provider
         $ins = $db->prepare("
@@ -122,7 +192,38 @@ class WalletController
 
         $qrResult = $this->provider->createQrPayment($orderId, $amount, $customer);
 
-        // Update order with QR details
+        // Clearly handle QR provider failure - never treat unsuccessful QR as valid payment flow
+        if (empty($qrResult['success']) || empty($qrResult['qr_image_url'])) {
+            $upd = $db->prepare("
+                UPDATE topup_orders
+                SET status = 'FAILED',
+                    raw_init_response = ?,
+                    updated_at = NOW()
+                WHERE id = ?
+            ");
+            $upd->execute([
+                json_encode($qrResult['raw'] ?? ['error' => $qrResult['message'] ?? 'Provider failed to generate QR']),
+                $orderDbId
+            ]);
+
+            AuditService::log('TOPUP_INIT_FAILED', 'TOPUP_ORDER', (string)$orderDbId, [
+                'order_id' => $orderId,
+                'amount' => $amount,
+                'error' => $qrResult['message'] ?? 'Provider error'
+            ], $userId, $user['role']);
+
+            $errMsg = 'Unable to generate UPI payment QR: ' . ($qrResult['message'] ?? 'Service temporarily unavailable') . '. Please try again.';
+            if ($isAjax) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'message' => $errMsg]);
+                exit;
+            }
+            $_SESSION['flash_error'] = $errMsg;
+            header('Location: /wallet/topup');
+            exit;
+        }
+
+        // Update order with confirmed QR details
         $upd = $db->prepare("
             UPDATE topup_orders
             SET provider_txn_id = ?,
@@ -134,7 +235,7 @@ class WalletController
         ");
         $upd->execute([
             $qrResult['provider_txn_id'] ?? null,
-            $qrResult['qr_image_url'] ?? null,
+            $qrResult['qr_image_url'],
             $qrResult['payment_url'] ?? null,
             json_encode($qrResult['raw'] ?? []),
             $orderDbId
@@ -142,7 +243,20 @@ class WalletController
 
         AuditService::log('TOPUP_INITIATED', 'TOPUP_ORDER', (string)$orderDbId, ['order_id' => $orderId, 'amount' => $amount], $userId, $user['role']);
 
-        header('Location: /wallet/topup/pay?order_id=' . $orderId);
+        if ($isAjax) {
+            header('Content-Type: application/json');
+            echo json_encode([
+                'success' => true,
+                'order_id' => $orderId,
+                'amount' => $amount,
+                'qr_image_url' => $qrResult['qr_image_url'],
+                'fixed_uri' => $qrResult['fixed_uri'] ?? null,
+                'payment_url' => $qrResult['payment_url'] ?? null
+            ]);
+            exit;
+        }
+
+        header('Location: /wallet/topup?open_order=' . urlencode($orderId));
         exit;
     }
 
@@ -161,15 +275,99 @@ class WalletController
         $stmt->execute([$orderId, $userId]);
         $order = $stmt->fetch();
 
+        $isAjax = (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest')
+               || (isset($_SERVER['HTTP_ACCEPT']) && strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false)
+               || isset($_GET['ajax']);
+
         if (!$order) {
+            if ($isAjax) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'message' => 'Payment order not found.']);
+                exit;
+            }
             $_SESSION['flash_error'] = 'Payment order not found.';
             header('Location: /wallet/topup');
             exit;
         }
 
-        $providerInfo = $this->provider->getProviderInfo();
+        // If order failed or QR could not be generated, do not display active payment flow
+        if ($order['status'] === 'FAILED' || empty($order['qr_image_url'])) {
+            if ($isAjax) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'message' => 'This payment order failed to generate a valid UPI QR. Please initiate a new recharge.']);
+                exit;
+            }
+            $_SESSION['flash_error'] = 'This payment order failed to generate a valid UPI QR. Please initiate a new recharge.';
+            header('Location: /wallet/topup');
+            exit;
+        }
 
-        require dirname(__DIR__) . '/Views/user/payment_qr.php';
+        // Live check if already paid before serving QR
+        if ($order['status'] === 'PENDING') {
+            try {
+                $statusCheck = $this->provider->checkPaymentStatus($order['order_id']);
+                if (!empty($statusCheck['status']) && $statusCheck['status'] === 'PAID') {
+                    $this->executeOrderCredit(
+                        (int)$order['id'],
+                        $statusCheck['provider_txn_id'] ?? null,
+                        $statusCheck['utr'] ?? null,
+                        $statusCheck['raw'] ?? null,
+                        isset($statusCheck['amount']) ? (float)$statusCheck['amount'] : null,
+                        'INR',
+                        $order['order_id']
+                    );
+                    $order['status'] = 'PAID';
+                }
+            } catch (\Throwable $e) {}
+        }
+
+        // If order already paid, redirect or return paid status
+        if ($order['status'] === 'PAID') {
+            if ($isAjax) {
+                header('Content-Type: application/json');
+                echo json_encode([
+                    'success' => true,
+                    'status' => 'PAID',
+                    'credited' => true,
+                    'amount' => (float)$order['amount'],
+                    'message' => 'Payment confirmed and credited to wallet.'
+                ]);
+                exit;
+            }
+            $_SESSION['flash_info'] = 'This top-up order is already completed and credited.';
+            header('Location: /wallet/topup');
+            exit;
+        }
+
+        if ($isAjax) {
+            $rawInit = !empty($order['raw_init_response']) ? json_decode($order['raw_init_response'], true) : [];
+            $results = $rawInit['results'] ?? [];
+            $upiIntent = is_array($results['upi_intent'] ?? null) ? $results['upi_intent'] : [];
+            $rawUpiUri = $upiIntent['bhim'] ?? $upiIntent['phonepe'] ?? '';
+            $fixedUri = '';
+            if (!empty($rawUpiUri)) {
+                $fixedUri = preg_replace('/&mam=[0-9.]+/i', '', $rawUpiUri);
+                $fixedUri = preg_replace('/&am=[0-9.]+/i', '&am=' . number_format((float)$order['amount'], 2, '.', ''), $fixedUri);
+                if (strpos($fixedUri, 'cu=') === false) {
+                    $fixedUri .= '&cu=INR';
+                }
+            }
+
+            header('Content-Type: application/json');
+            echo json_encode([
+                'success' => true,
+                'order_id' => $order['order_id'],
+                'amount' => (float)$order['amount'],
+                'status' => $order['status'],
+                'qr_image_url' => $order['qr_image_url'],
+                'fixed_uri' => $fixedUri,
+                'payment_url' => $order['payment_url'] ?? null
+            ]);
+            exit;
+        }
+
+        header('Location: /wallet/topup?open_order=' . urlencode($order['order_id']));
+        exit;
     }
 
     /**
@@ -188,8 +386,9 @@ class WalletController
         $userId = AuthService::id();
         $db = Database::getConnection();
 
-        $stmt = $db->prepare("SELECT * FROM topup_orders WHERE order_id = ?");
-        $stmt->execute([$orderId]);
+        $cleanId = preg_replace('/[^a-zA-Z0-9]/', '', $orderId);
+        $stmt = $db->prepare("SELECT * FROM topup_orders WHERE order_id = ? OR REPLACE(order_id, '-', '') = ?");
+        $stmt->execute([$orderId, $cleanId]);
         $order = $stmt->fetch();
 
         if (!$order) {
@@ -203,13 +402,44 @@ class WalletController
             exit;
         }
 
-        // If already marked paid
+        // Release session lock before calling external cURL so parallel requests don't hang!
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+
+        // If already marked terminal status
         if ($order['status'] === 'PAID') {
             echo json_encode([
                 'success' => true,
                 'status' => 'PAID',
                 'credited' => true,
+                'amount' => (float)$order['amount'],
+                'new_balance' => WalletService::getBalance((int)$order['user_id']),
                 'message' => 'Payment confirmed and credited to wallet.'
+            ]);
+            exit;
+        }
+
+        if ($order['status'] === 'FAILED' || $order['status'] === 'EXPIRED') {
+            echo json_encode([
+                'success' => true,
+                'status' => $order['status'],
+                'credited' => false,
+                'amount' => (float)$order['amount'],
+                'message' => 'Payment order is ' . $order['status'] . '.'
+            ]);
+            exit;
+        }
+
+        // Check local expiration
+        if (!empty($order['expires_at']) && strtotime($order['expires_at']) < time()) {
+            $db->prepare("UPDATE topup_orders SET status = 'EXPIRED', updated_at = NOW() WHERE id = ? AND status = 'PENDING'")->execute([(int)$order['id']]);
+            echo json_encode([
+                'success' => true,
+                'status' => 'EXPIRED',
+                'credited' => false,
+                'amount' => (float)$order['amount'],
+                'message' => 'Payment order has expired. Please initiate a new recharge.'
             ]);
             exit;
         }
@@ -225,10 +455,20 @@ class WalletController
                 'success' => true,
                 'status' => 'PAID',
                 'credited' => true,
+                'amount' => (float)$order['amount'],
                 'new_balance' => $creditRes['new_balance'] ?? null,
                 'message' => 'Payment verified! Wallet has been credited.'
             ]);
             exit;
+        }
+
+        if ($statusCheck['status'] === 'FAILED' || $statusCheck['status'] === 'EXPIRED') {
+            $updTerm = $db->prepare("UPDATE topup_orders SET status = ?, raw_status_response = ?, updated_at = NOW() WHERE id = ? AND status = 'PENDING'");
+            $updTerm->execute([
+                $statusCheck['status'],
+                json_encode($statusCheck['raw'] ?? []),
+                (int)$order['id']
+            ]);
         }
 
         echo json_encode([
@@ -236,6 +476,53 @@ class WalletController
             'status' => $statusCheck['status'],
             'credited' => false,
             'message' => $statusCheck['message']
+        ]);
+        exit;
+    }
+
+    /**
+     * Non-blocking background reconciliation for recent pending orders
+     */
+    public function reconcilePending(): void
+    {
+        header('Content-Type: application/json');
+
+        if (!AuthService::check()) {
+            echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+            exit;
+        }
+
+        $userId = AuthService::id();
+        $db = Database::getConnection();
+
+        // Release session lock immediately so other requests are not blocked
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+
+        $reconciled = 0;
+        try {
+            $stmt = $db->prepare("
+                SELECT id, order_id, amount FROM topup_orders 
+                WHERE user_id = ? AND status = 'PENDING' AND created_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
+                ORDER BY id DESC LIMIT 2
+            ");
+            $stmt->execute([$userId]);
+            $pending = $stmt->fetchAll();
+
+            foreach ($pending as $po) {
+                $statusCheck = $this->provider->checkPaymentStatus($po['order_id']);
+                if (!empty($statusCheck['status']) && $statusCheck['status'] === 'PAID') {
+                    $this->executeOrderCredit((int)$po['id'], $statusCheck['provider_txn_id'] ?? null, $statusCheck['utr'] ?? null, $statusCheck['raw'] ?? null);
+                    $reconciled++;
+                }
+            }
+        } catch (\Throwable $e) {}
+
+        echo json_encode([
+            'success' => true,
+            'reconciled' => $reconciled,
+            'new_balance' => $reconciled > 0 ? WalletService::getBalance($userId) : null
         ]);
         exit;
     }
@@ -250,17 +537,45 @@ class WalletController
         $rawInput = file_get_contents('php://input');
         $payload = json_decode($rawInput, true) ?: $_POST;
 
-        $sig = $_SERVER['HTTP_X_ALLAPI_SIGNATURE'] ?? $_SERVER['HTTP_SIGNATURE'] ?? null;
-        $validation = $this->provider->validateWebhook($payload, $sig);
+        $sig = $_SERVER['HTTP_X_ALLAPI_SIGNATURE'] ?? $_SERVER['HTTP_X_SIGNATURE'] ?? $_SERVER['HTTP_SIGNATURE'] ?? null;
+        $validation = $this->provider->validateWebhook($payload, $sig, $rawInput);
 
         if (!$validation['is_valid']) {
-            http_response_code(400);
-            echo json_encode(['success' => false, 'message' => 'Invalid webhook payload']);
+            http_response_code(401);
+            echo json_encode([
+                'success' => false,
+                'message' => $validation['error'] ?? 'Invalid webhook signature or payload'
+            ]);
             exit;
         }
 
         $orderId = $validation['order_id'];
         $db = Database::getConnection();
+
+        // Verify order exists in system before any credit or event logging
+        $stmt = $db->prepare("SELECT id, user_id, amount, status FROM topup_orders WHERE order_id = ?");
+        $stmt->execute([$orderId]);
+        $order = $stmt->fetch();
+
+        if (!$order) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'message' => 'Order not found']);
+            exit;
+        }
+
+        // Validate signed payload amount is present and matches the order amount
+        $payloadAmt = $validation['amount'] ?? null;
+        if ($payloadAmt === null || !is_numeric($payloadAmt)) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'Transaction amount missing in signed webhook payload']);
+            exit;
+        }
+
+        if (abs((float)$payloadAmt - (float)$order['amount']) > 0.01) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'Transaction amount mismatch with order']);
+            exit;
+        }
 
         // Idempotent webhook event logging
         $insEvent = $db->prepare("
@@ -275,16 +590,12 @@ class WalletController
             $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1'
         ]);
 
-        // Find order
-        $stmt = $db->prepare("SELECT id, status FROM topup_orders WHERE order_id = ?");
-        $stmt->execute([$orderId]);
-        $order = $stmt->fetch();
-
-        if ($order && $validation['status'] === 'PAID') {
+        // Credit wallet only after verification and if order is not already paid
+        if ($validation['status'] === 'PAID') {
             $this->executeOrderCredit($order['id'], $validation['provider_txn_id'], $validation['utr'], $payload);
         }
 
-        echo json_encode(['success' => true, 'message' => 'Webhook processed successfully']);
+        echo json_encode(['success' => true, 'message' => 'Webhook verified and processed successfully']);
         exit;
     }
 
@@ -305,7 +616,7 @@ class WalletController
                 throw new Exception("Order not found.");
             }
 
-            if ($order['status'] === 'PAID') {
+            if ($order['status'] === 'PAID' || !empty($order['is_credited'])) {
                 $db->commit();
                 return ['success' => true, 'already_credited' => true];
             }
@@ -329,10 +640,11 @@ class WalletController
                 $userId
             );
 
-            // Update topup order
+            // Update topup order atomically
             $upd = $db->prepare("
                 UPDATE topup_orders
                 SET status = 'PAID',
+                    is_credited = 1,
                     provider_txn_id = COALESCE(?, provider_txn_id),
                     provider_utr = COALESCE(?, provider_utr),
                     credited_at = NOW(),
@@ -353,6 +665,15 @@ class WalletController
                 'provider_txn_id' => $providerTxnId,
                 'utr' => $utr
             ], $userId);
+
+            // In-app notification to user
+            NotificationService::create(
+                $userId,
+                'Payment Credited',
+                "₹" . number_format($amount, 2) . " has been credited to your wallet (Order: {$orderId}).",
+                'SUCCESS',
+                '/wallet/passbook'
+            );
 
             $db->commit();
 

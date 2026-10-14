@@ -77,6 +77,9 @@ class AuthController
         $password = (string)($_POST['password'] ?? '');
         $centerName = trim($_POST['center_name'] ?? '');
         $districtId = (int)($_POST['district_id'] ?? 0);
+        $blockId = !empty($_POST['block_id']) ? (int)$_POST['block_id'] : null;
+        $centerAddress = trim($_POST['center_address'] ?? '');
+        $profileState = trim($_POST['profile_state'] ?? 'Bihar') ?: 'Bihar';
         $distributorId = !empty($_POST['distributor_id']) ? (int)$_POST['distributor_id'] : null;
 
         if (empty($name) || strlen($mobile) !== 10 || empty($email) || strlen($password) < 6 || empty($districtId)) {
@@ -86,6 +89,26 @@ class AuthController
         }
 
         $db = Database::getConnection();
+
+        // Validate district is active
+        $chkDist = $db->prepare("SELECT id FROM districts WHERE id = ? AND is_active = 1 LIMIT 1");
+        $chkDist->execute([$districtId]);
+        if (!$chkDist->fetch()) {
+            $_SESSION['flash_error'] = 'Please select a valid active District.';
+            header('Location: /register');
+            exit;
+        }
+
+        // Validate block belongs to district if provided
+        if ($blockId !== null) {
+            $chkBlk = $db->prepare("SELECT id FROM blocks WHERE id = ? AND district_id = ? AND is_active = 1 LIMIT 1");
+            $chkBlk->execute([$blockId, $districtId]);
+            if (!$chkBlk->fetch()) {
+                $_SESSION['flash_error'] = 'The selected Block does not belong to the selected District.';
+                header('Location: /register');
+                exit;
+            }
+        }
 
         // Check unique mobile or email
         $chk = $db->prepare("SELECT id FROM users WHERE mobile = ? OR email = ? LIMIT 1");
@@ -108,20 +131,34 @@ class AuthController
             $hash = password_hash($password, PASSWORD_BCRYPT);
 
             $ins = $db->prepare("
-                INSERT INTO users (uuid, role, name, mobile, email, password_hash, status, parent_distributor_id, preferred_lang, center_name, created_at)
-                VALUES (?, 'USER', ?, ?, ?, ?, 'ACTIVE', ?, 'hi', ?, NOW())
+                INSERT INTO users (
+                    uuid, role, name, mobile, email, password_hash, status,
+                    parent_distributor_id, preferred_lang, center_name,
+                    profile_state, profile_district_id, profile_block_id, center_address,
+                    created_at
+                ) VALUES (
+                    ?, 'USER', ?, ?, ?, ?, 'ACTIVE',
+                    ?, 'hi', ?,
+                    ?, ?, ?, ?,
+                    NOW()
+                )
             ");
-            $ins->execute([$uuid, $name, $mobile, $email, $hash, $distributorId, $centerName]);
+            $ins->execute([
+                $uuid, $name, $mobile, $email, $hash,
+                $distributorId, $centerName,
+                $profileState, $districtId, $blockId, $centerAddress
+            ]);
             $newUserId = (int)$db->lastInsertId();
-
-            // Grant location permission for selected district
-            $perm = $db->prepare("INSERT INTO location_permissions (user_id, district_id, block_id, created_at) VALUES (?, ?, NULL, NOW())");
-            $perm->execute([$newUserId, $districtId]);
 
             // Initialize user wallet
             WalletService::getOrCreateWallet($newUserId);
 
-            AuditService::log('USER_REGISTER', 'USER', (string)$newUserId, ['name' => $name, 'mobile' => $mobile], $newUserId, 'USER');
+            AuditService::log('USER_REGISTER', 'USER', (string)$newUserId, [
+                'name' => $name,
+                'mobile' => $mobile,
+                'profile_district_id' => $districtId,
+                'profile_block_id' => $blockId
+            ], $newUserId, 'USER');
 
             $db->commit();
 
@@ -136,11 +173,43 @@ class AuthController
         }
     }
 
-    public function switchLang(): void
+
+    /**
+     * Ensure redirect stays on same-site path, preventing open redirect vulnerabilities
+     */
+    public static function sanitizeSameSiteRedirect(string $url): string
     {
-        $referer = $_SERVER['HTTP_REFERER'] ?? '/';
-        header('Location: ' . $referer);
-        exit;
+        // Strip potential header-injection characters
+        $clean = str_replace(["\r", "\n", "\t", "\0"], '', trim($url));
+
+        // Parse URL components
+        $parts = parse_url($clean);
+        if ($parts === false) {
+            return '/';
+        }
+
+        // If an external host is present, verify it matches our current HTTP_HOST
+        if (!empty($parts['host'])) {
+            $allowedHost = $_SERVER['HTTP_HOST'] ?? 'localhost';
+            if (strcasecmp($parts['host'], $allowedHost) !== 0) {
+                return '/';
+            }
+        }
+
+        // Extract path and validate it is a single-slash relative path
+        $path = $parts['path'] ?? '/';
+
+        // Disallow protocol-relative URLs (//example.com) or backslashes (/\example.com)
+        if (!str_starts_with($path, '/') || str_starts_with($path, '//') || str_starts_with($path, '/\\')) {
+            $path = '/';
+        }
+
+        // Append query string if present
+        if (!empty($parts['query'])) {
+            $path .= '?' . $parts['query'];
+        }
+
+        return $path;
     }
 
     public function logout(): void
@@ -153,7 +222,7 @@ class AuthController
     private function redirectBasedOnRole(): void
     {
         $role = AuthService::role();
-        if ($role === 'ADMIN') {
+        if ($role === 'ADMIN' || $role === 'OPERATOR') {
             header('Location: /admin/dashboard');
         } elseif ($role === 'DISTRIBUTOR') {
             header('Location: /distributor/dashboard');

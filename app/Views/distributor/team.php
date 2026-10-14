@@ -2,10 +2,21 @@
 
 <div class="row align-items-center mb-4 g-3">
     <div class="col-md-6">
-        <h1 class="h3 fw-bold mb-1">
-            <i class="bi bi-people text-primary me-2"></i><?= e(__('team_management')) ?>
+        <h1 class="h3 fw-bold mb-1 text-dark d-flex align-items-center gap-2">
+            <span class="d-inline-flex align-items-center justify-content-center rounded-circle" style="width: 36px; height: 36px; background: rgba(37, 99, 235, 0.12); color: #2563eb;">
+                <i class="bi bi-people"></i>
+            </span>
+            <?= e(__('team_management')) ?>
         </h1>
-        <p class="text-muted mb-0">Assigned Kiosk Operators and Field Personnel</p>
+        <p class="text-muted mb-0 small">Assigned Kiosk Operators, Cyber Cafes & Retailers in your network</p>
+    </div>
+    <div class="col-md-6 text-md-end d-flex align-items-center justify-content-md-end gap-2 flex-wrap">
+        <span class="badge bg-light text-secondary border font-monospace px-3 py-2" style="font-size: 0.8rem;">
+            <?= count($team) ?> Retailer<?= count($team) === 1 ? '' : 's' ?>
+        </span>
+        <a href="/distributor/retailers/new" class="btn btn-primary fw-bold shadow-sm d-flex align-items-center gap-1.5 px-3 py-2 rounded-3" style="background: linear-gradient(135deg, #2563eb, #1d4ed8); border: none;">
+            <i class="bi bi-person-plus-fill"></i> Add New Retailer
+        </a>
     </div>
 </div>
 
@@ -13,9 +24,12 @@
     <div class="card-body p-0">
         <?php if (empty($team)): ?>
             <div class="text-center py-5 text-muted">
-                <i class="bi bi-people fs-1 opacity-50"></i>
-                <h5 class="fw-bold mt-2">No Operators Assigned</h5>
-                <p class="small text-muted mb-0">No operators are currently assigned to your distributor account.</p>
+                <i class="bi bi-people fs-1 opacity-50 d-block mb-2"></i>
+                <h5 class="fw-bold mt-2 text-dark">No Retailers Assigned Yet</h5>
+                <p class="small text-muted mb-3">No operators or retailers are currently assigned to your distributor network.</p>
+                <a href="/distributor/retailers/new" class="btn btn-primary fw-bold rounded-pill px-4 py-2 shadow-sm" style="background: linear-gradient(135deg, #2563eb, #1d4ed8); border: none;">
+                    <i class="bi bi-person-plus-fill me-1"></i> Add Your First Retailer
+                </a>
             </div>
         <?php else: ?>
             <div class="table-responsive">
@@ -23,7 +37,7 @@
                     <thead class="table-light">
                         <tr>
                             <th>Operator Name</th>
-                            <th>Contact Mobile &amp; Email</th>
+                            <th>Contact Mobile & Email</th>
                             <th>Center / Shop Name</th>
                             <th>Wallet Balance</th>
                             <th>Total Applications</th>

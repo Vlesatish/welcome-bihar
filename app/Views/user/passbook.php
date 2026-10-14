@@ -6,7 +6,7 @@
         <h1 class="h3 fw-bold mb-1">
             <i class="bi bi-wallet2 text-primary me-2"></i><?= e(__('wallet_passbook')) ?>
         </h1>
-        <p class="text-muted mb-0">Immutable Double-Entry Ledger Passbook &amp; Transaction History</p>
+        <p class="text-muted mb-0">Immutable Double-Entry Ledger Passbook & Transaction History</p>
     </div>
     <div class="col-md-6 text-md-end d-flex gap-2 justify-content-md-end flex-wrap">
         <a href="/wallet/passbook/export-csv?<?= http_build_query($_GET) ?>" class="btn btn-outline-success fw-semibold">
@@ -83,7 +83,7 @@
                     <thead class="table-light">
                         <tr>
                             <th>Txn Reference</th>
-                            <th>Date &amp; Time</th>
+                            <th>Date & Time</th>
                             <th>Description</th>
                             <th>Type</th>
                             <th>Direction</th>

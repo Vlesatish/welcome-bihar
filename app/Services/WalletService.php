@@ -8,29 +8,45 @@ use PDO;
 class WalletService
 {
     /**
-     * Get or create wallet for user
+     * Get or create wallet for user with atomic transaction and row-level locking
      */
     public static function getOrCreateWallet(int $userId): array
     {
         $db = Database::getConnection();
-        $stmt = $db->prepare("SELECT id, user_id, balance, total_credited, total_debited FROM wallets WHERE user_id = ? FOR UPDATE");
-        $stmt->execute([$userId]);
-        $wallet = $stmt->fetch();
-
-        if (!$wallet) {
-            $insert = $db->prepare("INSERT INTO wallets (user_id, balance, total_credited, total_debited, created_at) VALUES (?, 0.00, 0.00, 0.00, NOW())");
-            $insert->execute([$userId]);
-            $walletId = (int)$db->lastInsertId();
-            return [
-                'id' => $walletId,
-                'user_id' => $userId,
-                'balance' => '0.00',
-                'total_credited' => '0.00',
-                'total_debited' => '0.00'
-            ];
+        $inTxn = $db->inTransaction();
+        if (!$inTxn) {
+            $db->beginTransaction();
         }
 
-        return $wallet;
+        try {
+            $stmt = $db->prepare("SELECT id, user_id, balance, total_credited, total_debited FROM wallets WHERE user_id = ? FOR UPDATE");
+            $stmt->execute([$userId]);
+            $wallet = $stmt->fetch();
+
+            if (!$wallet) {
+                // Concurrency-safe insert using ON DUPLICATE KEY UPDATE to prevent race condition crashes
+                $insert = $db->prepare("
+                    INSERT INTO wallets (user_id, balance, total_credited, total_debited, created_at, updated_at)
+                    VALUES (?, 0.00, 0.00, 0.00, NOW(), NOW())
+                    ON DUPLICATE KEY UPDATE updated_at = NOW()
+                ");
+                $insert->execute([$userId]);
+
+                $stmt->execute([$userId]);
+                $wallet = $stmt->fetch();
+            }
+
+            if (!$inTxn) {
+                $db->commit();
+            }
+
+            return $wallet;
+        } catch (Exception $e) {
+            if (!$inTxn && $db->inTransaction()) {
+                $db->rollBack();
+            }
+            throw $e;
+        }
     }
 
     /**
@@ -71,8 +87,12 @@ class WalletService
         }
 
         try {
-            // Check idempotency first
-            $chk = $db->prepare("SELECT id, txn_ref, balance_after FROM wallet_transactions WHERE idempotency_key = ? LIMIT 1");
+            // 1. Lock wallet row FIRST inside active transaction to serialize all operations for this user
+            $wallet = self::getOrCreateWallet($userId);
+            $walletId = (int)$wallet['id'];
+
+            // 2. Check idempotency under lock to prevent double credits
+            $chk = $db->prepare("SELECT id, txn_ref, balance_after FROM wallet_transactions WHERE idempotency_key = ? LIMIT 1 FOR UPDATE");
             $chk->execute([$idempotencyKey]);
             $existing = $chk->fetch();
             if ($existing) {
@@ -85,16 +105,14 @@ class WalletService
                 ];
             }
 
-            // Lock wallet row
-            $wallet = self::getOrCreateWallet($userId);
-            $walletId = (int)$wallet['id'];
+            // Fresh locked balance from wallet row
             $balanceBefore = (float)$wallet['balance'];
             $balanceAfter = round($balanceBefore + $amount, 2);
 
             // Generate unique txn reference
             $txnRef = 'TXN-' . date('YmdHis') . '-' . strtoupper(substr(bin2hex(random_bytes(4)), 0, 6));
 
-            // Update wallet balance
+            // Update wallet balance atomically
             $upd = $db->prepare("
                 UPDATE wallets
                 SET balance = balance + ?,
@@ -196,8 +214,12 @@ class WalletService
         }
 
         try {
-            // Check idempotency first
-            $chk = $db->prepare("SELECT id, txn_ref, balance_after FROM wallet_transactions WHERE idempotency_key = ? LIMIT 1");
+            // 1. Lock wallet row FIRST inside active transaction to serialize all operations for this user
+            $wallet = self::getOrCreateWallet($userId);
+            $walletId = (int)$wallet['id'];
+
+            // 2. Check idempotency under lock to prevent double debits
+            $chk = $db->prepare("SELECT id, txn_ref, balance_after FROM wallet_transactions WHERE idempotency_key = ? LIMIT 1 FOR UPDATE");
             $chk->execute([$idempotencyKey]);
             $existing = $chk->fetch();
             if ($existing) {
@@ -210,9 +232,6 @@ class WalletService
                 ];
             }
 
-            // Lock wallet row
-            $wallet = self::getOrCreateWallet($userId);
-            $walletId = (int)$wallet['id'];
             $balanceBefore = (float)$wallet['balance'];
 
             if ($balanceBefore < $amount) {
@@ -222,7 +241,7 @@ class WalletService
             $balanceAfter = round($balanceBefore - $amount, 2);
             $txnRef = 'TXN-' . date('YmdHis') . '-' . strtoupper(substr(bin2hex(random_bytes(4)), 0, 6));
 
-            // Deduct
+            // Deduct atomically with balance constraint
             $upd = $db->prepare("
                 UPDATE wallets
                 SET balance = balance - ?,

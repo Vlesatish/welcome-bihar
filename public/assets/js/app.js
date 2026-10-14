@@ -77,11 +77,12 @@ document.addEventListener('DOMContentLoaded', function () {
         backdrop.addEventListener('click', closeSidebar);
     }
 
-    // 1. Cascading District -> Block Loader
+    // 1. Cascading District -> Block Loader (for AJAX-driven forms like user permissions)
     const districtSelect = document.getElementById('district_select');
     const blockSelect = document.getElementById('block_select');
 
-    if (districtSelect && blockSelect) {
+    // Skip AJAX cascade if the form handles location cascading via server-side reload (like wizard location-service-form)
+    if (districtSelect && blockSelect && (!districtSelect.form || districtSelect.form.id !== 'location-service-form')) {
         districtSelect.addEventListener('change', function () {
             const districtId = this.value;
             blockSelect.innerHTML = '<option value="">-- Loading blocks... --</option>';
@@ -120,8 +121,8 @@ document.addEventListener('DOMContentLoaded', function () {
                 });
         });
 
-        // Trigger on page load if district is already selected
-        if (districtSelect.value) {
+        // Trigger on page load only if options are not already loaded by server
+        if (districtSelect.value && blockSelect.options.length <= 1) {
             districtSelect.dispatchEvent(new Event('change'));
         }
     }
@@ -137,30 +138,60 @@ document.addEventListener('DOMContentLoaded', function () {
         let isPolling = true;
         let pollCount = 0;
         const maxPolls = 100; // ~5 minutes at 3s intervals
+        let pollInterval = null;
 
-        function checkPaymentStatus() {
-            if (!isPolling && pollCount >= maxPolls) return;
-            pollCount++;
+        function stopPolling() {
+            isPolling = false;
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+        }
+
+        function checkPaymentStatus(isManual = false) {
+            if (!isManual) {
+                if (!isPolling) return;
+
+                if (pollCount >= maxPolls) {
+                    stopPolling();
+                    if (statusBadge) {
+                        statusBadge.className = 'badge bg-warning text-dark p-2 fs-6';
+                        statusBadge.textContent = 'Verification Timeout / Pending';
+                    }
+                    if (statusMessage) {
+                        statusMessage.className = 'alert alert-warning mt-3';
+                        statusMessage.textContent = 'Live payment polling timed out after 5 minutes. If money was deducted from your UPI app, it will be automatically credited upon confirmation or click "Check Status Now" to verify.';
+                    }
+                    return;
+                }
+
+                pollCount++;
+            }
 
             fetch('/wallet/topup/status?order_id=' + encodeURIComponent(orderId))
                 .then(res => res.json())
                 .then(data => {
                     if (data.status === 'PAID') {
-                        isPolling = false;
+                        stopPolling();
                         if (statusBadge) {
                             statusBadge.className = 'badge bg-success p-2 fs-6';
                             statusBadge.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i> Paid &amp; Verified';
                         }
                         if (statusMessage) {
                             statusMessage.className = 'alert alert-success mt-3';
-                            statusMessage.innerHTML = '<strong>' + (data.message || 'Payment confirmed!') + '</strong> Wallet credited. Redirecting to passbook in 2 seconds...';
+                            statusMessage.textContent = '';
+                            const strongEl = document.createElement('strong');
+                            strongEl.textContent = (data.message || 'Payment confirmed!') + ' ';
+                            statusMessage.appendChild(strongEl);
+                            const textNode = document.createTextNode('Wallet credited. Redirecting to passbook in 2 seconds...');
+                            statusMessage.appendChild(textNode);
                         }
-                        // Confetti or highlight and redirect
+                        // Redirect to passbook
                         setTimeout(() => {
                             window.location.href = '/wallet/passbook';
                         }, 2500);
                     } else if (data.status === 'FAILED') {
-                        isPolling = false;
+                        stopPolling();
                         if (statusBadge) {
                             statusBadge.className = 'badge bg-danger p-2 fs-6';
                             statusBadge.textContent = 'Payment Failed';
@@ -171,8 +202,9 @@ document.addEventListener('DOMContentLoaded', function () {
                         }
                     } else {
                         // Still Pending
-                        if (statusMessage && !statusMessage.classList.contains('alert-info')) {
+                        if (statusMessage) {
                             statusMessage.className = 'alert alert-info mt-3';
+                            statusMessage.textContent = (data.message ? data.message + ' - ' : '') + 'Listening for verified merchant payment confirmation...';
                         }
                     }
                 })
@@ -182,11 +214,11 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         // Run poll every 3.5 seconds
-        const pollInterval = setInterval(() => {
+        pollInterval = setInterval(() => {
             if (isPolling) {
-                checkPaymentStatus();
+                checkPaymentStatus(false);
             } else {
-                clearInterval(pollInterval);
+                stopPolling();
             }
         }, 3500);
 
@@ -194,7 +226,7 @@ document.addEventListener('DOMContentLoaded', function () {
             checkBtn.addEventListener('click', function () {
                 this.disabled = true;
                 this.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Checking...';
-                checkPaymentStatus();
+                checkPaymentStatus(true);
                 setTimeout(() => {
                     this.disabled = false;
                     this.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i> Check Live Status';

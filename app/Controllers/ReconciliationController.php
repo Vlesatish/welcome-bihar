@@ -5,6 +5,7 @@ use App\Config\Database;
 use App\Services\AuthService;
 use App\Services\AllApiProvider;
 use App\Services\AuditService;
+use App\Services\NotificationService;
 use App\Services\WalletService;
 use Exception;
 use PDO;
@@ -111,7 +112,15 @@ class ReconciliationController
 
         if ($statusRes['status'] === 'PAID') {
             $walletCtrl = new WalletController();
-            $walletCtrl->executeOrderCredit($order['id'], $statusRes['provider_txn_id'], $statusRes['utr'], $statusRes['raw']);
+            $walletCtrl->executeOrderCredit(
+                (int)$order['id'],
+                $statusRes['provider_txn_id'] ?? null,
+                $statusRes['utr'] ?? null,
+                $statusRes['raw'] ?? null,
+                isset($statusRes['amount']) ? (float)$statusRes['amount'] : null,
+                'INR',
+                $order['order_id']
+            );
             $_SESSION['flash_success'] = "Payment verified with ALL API provider! Order marked PAID and wallet credited.";
         } else {
             $_SESSION['flash_info'] = "Status from provider: " . $statusRes['status'] . " (" . $statusRes['message'] . ")";
@@ -137,13 +146,9 @@ class ReconciliationController
         $utr = trim($_POST['utr'] ?? '');
         $remarks = trim($_POST['remarks'] ?? '');
 
-        $db = Database::getConnection();
-        $stmt = $db->prepare("SELECT * FROM topup_orders WHERE order_id = ?");
-        $stmt->execute([$orderId]);
-        $order = $stmt->fetch();
-
-        if (!$order) {
-            $_SESSION['flash_error'] = 'Order not found.';
+        $allowedActions = ['APPROVE_CREDIT', 'MARK_FAILED'];
+        if (!in_array($action, $allowedActions, true)) {
+            $_SESSION['flash_error'] = 'Invalid reconciliation action requested.';
             header('Location: /admin/reconciliation');
             exit;
         }
@@ -154,40 +159,121 @@ class ReconciliationController
             exit;
         }
 
-        if ($action === 'APPROVE_CREDIT') {
-            if ($order['status'] === 'PAID') {
-                $_SESSION['flash_error'] = 'Order is already marked PAID.';
-                header('Location: /admin/reconciliation');
-                exit;
+        $db = Database::getConnection();
+        $db->beginTransaction();
+
+        try {
+            $stmt = $db->prepare("SELECT * FROM topup_orders WHERE order_id = ? FOR UPDATE");
+            $stmt->execute([$orderId]);
+            $order = $stmt->fetch();
+
+            if (!$order) {
+                throw new Exception('Order not found.');
             }
 
-            $walletCtrl = new WalletController();
-            $walletCtrl->executeOrderCredit($order['id'], 'MANUAL_VERIFIED', $utr, ['manual_by' => AuthService::id(), 'remarks' => $remarks]);
+            $currentStatus = $order['status'];
 
-            $upd = $db->prepare("
-                UPDATE topup_orders
-                SET manual_verified_by = ?,
-                    manual_verified_at = NOW(),
-                    manual_remarks = ?
-                WHERE id = ?
-            ");
-            $upd->execute([AuthService::id(), $remarks, $order['id']]);
+            if ($action === 'APPROVE_CREDIT') {
+                if ($currentStatus === 'PAID' || !empty($order['is_credited'])) {
+                    throw new Exception('Order is already marked PAID and credited.');
+                }
+                if ($currentStatus === 'FAILED' || $currentStatus === 'EXPIRED') {
+                    throw new Exception("Cannot approve a terminal order (Current status: {$currentStatus}).");
+                }
 
-            AuditService::log('TOPUP_MANUAL_APPROVED', 'TOPUP_ORDER', (string)$order['id'], ['order_id' => $orderId, 'utr' => $utr, 'remarks' => $remarks]);
-            $_SESSION['flash_success'] = "Order {$orderId} manually confirmed and wallet credited.";
-        } elseif ($action === 'MARK_FAILED') {
-            $upd = $db->prepare("
-                UPDATE topup_orders
-                SET status = 'FAILED',
-                    manual_verified_by = ?,
-                    manual_verified_at = NOW(),
-                    manual_remarks = ?
-                WHERE id = ?
-            ");
-            $upd->execute([AuthService::id(), $remarks, $order['id']]);
+                // Check for duplicate UTR across existing paid orders
+                if (!empty($utr)) {
+                    $dupCheck = $db->prepare("SELECT id, order_id FROM topup_orders WHERE provider_utr = ? AND status = 'PAID' AND id != ?");
+                    $dupCheck->execute([$utr, $order['id']]);
+                    $dup = $dupCheck->fetch();
+                    if ($dup) {
+                        throw new Exception("UTR '{$utr}' has already been credited for Order {$dup['order_id']}. Duplicate approval rejected.");
+                    }
+                }
 
-            AuditService::log('TOPUP_MANUAL_FAILED', 'TOPUP_ORDER', (string)$order['id'], ['order_id' => $orderId, 'remarks' => $remarks]);
-            $_SESSION['flash_success'] = "Order {$orderId} marked FAILED.";
+                $userId = (int)$order['user_id'];
+                $amount = (float)$order['amount'];
+                $idempotencyKey = "TOPUP_ORDER_{$order['id']}_{$orderId}";
+
+                // Credit wallet inside current transaction
+                WalletService::credit(
+                    $userId,
+                    $amount,
+                    'TOPUP_CREDIT',
+                    'TOPUP_ORDER',
+                    $orderId,
+                    $idempotencyKey,
+                    "Wallet recharge via UPI Scan & Pay (Order: {$orderId})",
+                    "Wallet recharge via UPI Scan & Pay (Order: {$orderId})",
+                    "Manual reconciliation approval | UTR: " . ($utr ?: 'N/A') . " | Remarks: {$remarks}",
+                    AuthService::id()
+                );
+
+                $upd = $db->prepare("
+                    UPDATE topup_orders
+                    SET status = 'PAID',
+                        is_credited = 1,
+                        provider_txn_id = COALESCE(provider_txn_id, 'MANUAL_VERIFIED'),
+                        provider_utr = COALESCE(?, provider_utr),
+                        credited_at = NOW(),
+                        manual_verified_by = ?,
+                        manual_verified_at = NOW(),
+                        manual_remarks = ?,
+                        updated_at = NOW()
+                    WHERE id = ?
+                ");
+                $upd->execute([$utr ?: null, AuthService::id(), $remarks, $order['id']]);
+
+                AuditService::log('TOPUP_MANUAL_APPROVED', 'TOPUP_ORDER', (string)$order['id'], [
+                    'order_id' => $orderId,
+                    'amount' => $amount,
+                    'utr' => $utr,
+                    'remarks' => $remarks
+                ], AuthService::id(), 'ADMIN');
+
+                NotificationService::create(
+                    $userId,
+                    'Payment Approved & Credited',
+                    "₹" . number_format($amount, 2) . " has been credited to your wallet via manual reconciliation (Order: {$orderId}).",
+                    'SUCCESS',
+                    '/wallet/passbook'
+                );
+
+                $db->commit();
+                $_SESSION['flash_success'] = "Order {$orderId} manually confirmed and wallet credited.";
+            } elseif ($action === 'MARK_FAILED') {
+                // Prevent marking paid or already terminal orders as failed
+                if ($currentStatus === 'PAID') {
+                    throw new Exception('Cannot mark a PAID order as failed. Wallet credit was already completed.');
+                }
+                if ($currentStatus === 'FAILED') {
+                    throw new Exception('Order is already in FAILED status.');
+                }
+
+                $upd = $db->prepare("
+                    UPDATE topup_orders
+                    SET status = 'FAILED',
+                        manual_verified_by = ?,
+                        manual_verified_at = NOW(),
+                        manual_remarks = ?,
+                        updated_at = NOW()
+                    WHERE id = ?
+                ");
+                $upd->execute([AuthService::id(), $remarks, $order['id']]);
+
+                AuditService::log('TOPUP_MANUAL_FAILED', 'TOPUP_ORDER', (string)$order['id'], [
+                    'order_id' => $orderId,
+                    'remarks' => $remarks
+                ], AuthService::id(), 'ADMIN');
+
+                $db->commit();
+                $_SESSION['flash_success'] = "Order {$orderId} marked FAILED.";
+            }
+        } catch (Exception $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            $_SESSION['flash_error'] = $e->getMessage();
         }
 
         header('Location: /admin/reconciliation');

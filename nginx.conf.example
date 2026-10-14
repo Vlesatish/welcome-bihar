@@ -1,0 +1,97 @@
+# ========================================================
+# WELCOME BIHAR - PRODUCTION NGINX SERVER CONFIGURATION
+# Place in /etc/nginx/sites-available/welcomebihar and symlink to sites-enabled/
+# ========================================================
+
+# 1. HTTP to HTTPS Redirection
+server {
+    listen 80;
+    listen [::]:80;
+    server_name welcomebihar.example.gov.in;
+
+    # Allow Let's Encrypt ACME challenge
+    location /.well-known/acme-challenge/ {
+        root /var/www/welcome-bihar/public;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# 2. Primary Production HTTPS Server
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name welcomebihar.example.gov.in;
+
+    # Document Root must point strictly to public/
+    root /var/www/welcome-bihar/public;
+    index index.php index.html;
+
+    # SSL / TLS Configuration (Let's Encrypt / Custom CA)
+    ssl_certificate /etc/letsencrypt/live/welcomebihar.example.gov.in/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/welcomebihar.example.gov.in/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384';
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    # Security Headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header Permissions-Policy "geolocation=(), camera=(), microphone=()" always;
+
+    # Maximum file upload size matching application configuration
+    client_max_body_size 10M;
+
+    # Logging
+    access_log /var/log/nginx/welcomebihar_access.log combined;
+    error_log /var/log/nginx/welcomebihar_error.log warn;
+
+    # Static Assets with aggressive browser caching
+    location ~* \.(css|js|jpg|jpeg|png|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 30d;
+        add_header Cache-Control "public, no-transform";
+        access_log off;
+        try_files $uri =404;
+    }
+
+    # Block access to hidden files (.env, .git, etc.)
+    location ~ /\. {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+
+    # Block access to non-public application directories if mistakenly accessible
+    location ~ ^/(app|cli|database|storage)/ {
+        deny all;
+        return 404;
+    }
+
+    # Route all traffic through front controller index.php
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    # PHP-FPM FastCGI Handler
+    location ~ \.php$ {
+        include fastcgi_params;
+        fastcgi_pass unix:/var/run/php/php8.3-fpm.sock; # Adjust PHP version as installed
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_param HTTP_X_FORWARDED_PROTO https;
+        fastcgi_intercept_errors off;
+        fastcgi_buffer_size 16k;
+        fastcgi_buffers 4 16k;
+        fastcgi_connect_timeout 30s;
+        fastcgi_send_timeout 60s;
+        fastcgi_read_timeout 60s;
+    }
+}

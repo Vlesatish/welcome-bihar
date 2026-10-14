@@ -14,7 +14,14 @@ require dirname(__DIR__) . '/app/Config/Database.php';
 $name = $argv[1] ?? 'Super Administrator';
 $mobile = $argv[2] ?? '9999900001';
 $email = $argv[3] ?? 'admin@welcomebihar.gov.in';
-$password = $argv[4] ?? 'Admin@Welcome2026';
+
+// If password is not explicitly supplied as 4th argument, generate a secure random password
+if (!empty($argv[4])) {
+    $password = $argv[4];
+} else {
+    $randomBytes = bin2hex(random_bytes(6));
+    $password = 'Adm!' . ucfirst($randomBytes) . '@26';
+}
 
 $cleanMobile = preg_replace('/\D/', '', $mobile);
 

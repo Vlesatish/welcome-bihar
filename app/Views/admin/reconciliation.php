@@ -4,9 +4,9 @@
 <div class="row align-items-center mb-4 g-3">
     <div class="col-md-6">
         <h1 class="h3 fw-bold mb-1">
-            <i class="bi bi-arrow-left-right text-primary me-2"></i><?= e(__('reconciliation')) ?> &amp; Payment Orders
+            <i class="bi bi-arrow-left-right text-primary me-2"></i><?= e(__('reconciliation')) ?> & Payment Orders
         </h1>
-        <p class="text-muted mb-0">Audit &amp; reconcile top-up orders with ALL API UPI Scan &amp; Pay records</p>
+        <p class="text-muted mb-0">Audit & reconcile top-up orders with UPI Scan & Pay records</p>
     </div>
     <div class="col-md-6 text-md-end">
         <span class="badge bg-light text-dark border p-2">
@@ -18,34 +18,56 @@
 <!-- Summary Cards -->
 <div class="row g-3 mb-4">
     <div class="col-sm-6 col-md-3">
-        <div class="stat-card bg-gradient-dark shadow-sm">
-            <i class="bi bi-list-ol stat-icon"></i>
-            <div class="stat-title">Total Orders</div>
-            <div class="stat-val"><?= (int)($summary['total'] ?? 0) ?></div>
-        </div>
-    </div>
-    <div class="col-sm-6 col-md-3">
-        <div class="stat-card bg-gradient-green shadow-sm">
-            <i class="bi bi-check-circle stat-icon"></i>
-            <div class="stat-title">Paid &amp; Credited</div>
-            <div class="stat-val"><?= (int)($summary['paid_cnt'] ?? 0) ?></div>
-            <div class="mt-2 small opacity-75">
-                Vol: ₹<?= number_format((float)($summary['paid_amount'] ?? 0), 2) ?>
+        <div class="card border-0 shadow-sm rounded-3 p-3 bg-white border-start border-4 border-primary">
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <div class="text-muted small fw-bold text-uppercase" style="font-size: 0.72rem;">Total Orders</div>
+                    <div class="fs-4 fw-bold text-dark mt-1"><?= (int)($summary['total'] ?? 0) ?></div>
+                </div>
+                <div class="rounded-3 bg-primary-subtle text-primary d-flex align-items-center justify-content-center" style="width: 42px; height: 42px;">
+                    <i class="bi bi-list-ol fs-5"></i>
+                </div>
             </div>
         </div>
     </div>
     <div class="col-sm-6 col-md-3">
-        <div class="stat-card bg-gradient-orange shadow-sm">
-            <i class="bi bi-hourglass-split stat-icon"></i>
-            <div class="stat-title">Pending / In Process</div>
-            <div class="stat-val"><?= (int)($summary['pending_cnt'] ?? 0) ?></div>
+        <div class="card border-0 shadow-sm rounded-3 p-3 bg-white border-start border-4 border-success">
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <div class="text-muted small fw-bold text-uppercase" style="font-size: 0.72rem;">Paid & Credited</div>
+                    <div class="fs-4 fw-bold text-success mt-1"><?= (int)($summary['paid_cnt'] ?? 0) ?></div>
+                    <div class="small text-muted" style="font-size: 0.72rem;">Vol: ₹<?= number_format((float)($summary['paid_amount'] ?? 0), 2) ?></div>
+                </div>
+                <div class="rounded-3 bg-success-subtle text-success d-flex align-items-center justify-content-center" style="width: 42px; height: 42px;">
+                    <i class="bi bi-check-circle-fill fs-5"></i>
+                </div>
+            </div>
         </div>
     </div>
     <div class="col-sm-6 col-md-3">
-        <div class="stat-card bg-gradient-danger shadow-sm">
-            <i class="bi bi-x-circle stat-icon"></i>
-            <div class="stat-title">Failed / Expired</div>
-            <div class="stat-val"><?= (int)($summary['failed_cnt'] ?? 0) ?></div>
+        <div class="card border-0 shadow-sm rounded-3 p-3 bg-white border-start border-4 border-warning">
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <div class="text-muted small fw-bold text-uppercase" style="font-size: 0.72rem;">Pending / In Process</div>
+                    <div class="fs-4 fw-bold text-warning-emphasis mt-1"><?= (int)($summary['pending_cnt'] ?? 0) ?></div>
+                </div>
+                <div class="rounded-3 bg-warning-subtle text-warning-emphasis d-flex align-items-center justify-content-center" style="width: 42px; height: 42px;">
+                    <i class="bi bi-hourglass-split fs-5"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6 col-md-3">
+        <div class="card border-0 shadow-sm rounded-3 p-3 bg-white border-start border-4 border-danger">
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <div class="text-muted small fw-bold text-uppercase" style="font-size: 0.72rem;">Failed / Expired</div>
+                    <div class="fs-4 fw-bold text-danger mt-1"><?= (int)($summary['failed_cnt'] ?? 0) ?></div>
+                </div>
+                <div class="rounded-3 bg-danger-subtle text-danger d-flex align-items-center justify-content-center" style="width: 42px; height: 42px;">
+                    <i class="bi bi-x-circle-fill fs-5"></i>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -192,18 +214,24 @@
 
 <!-- Modal: Authorized Manual Verification -->
 <div class="modal fade" id="manualVerifyModal" tabindex="-1">
-    <div class="modal-dialog">
-        <form method="POST" action="/admin/reconciliation/verify" class="modal-content">
+    <div class="modal-dialog modal-dialog-centered">
+        <form method="POST" action="/admin/reconciliation/verify" class="modal-content shadow-lg border-0 rounded-4 overflow-hidden">
             <?= csrf_field() ?>
             <input type="hidden" name="order_id" id="mv_order_id">
 
-            <div class="modal-header bg-warning-subtle">
-                <h5 class="modal-title fw-bold text-warning-emphasis">
-                    <i class="bi bi-shield-exclamation me-1"></i> Authorized Manual Payment Review
-                </h5>
+            <div class="modal-header border-bottom py-3 px-4 bg-white d-flex align-items-center justify-content-between">
+                <div class="d-flex align-items-center gap-2">
+                    <div class="d-inline-flex align-items-center justify-content-center bg-warning-subtle text-warning-emphasis rounded-3" style="width: 38px; height: 38px;">
+                        <i class="bi bi-shield-exclamation fs-5"></i>
+                    </div>
+                    <div>
+                        <h5 class="modal-title fw-bold text-dark mb-0 fs-6">Manual Payment Review</h5>
+                        <div class="text-muted small" style="font-size: 0.74rem;">Authorized administrative reconciliation</div>
+                    </div>
+                </div>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
-            <div class="modal-body">
+            <div class="modal-body p-4">
                 <div class="p-3 bg-light rounded-3 border mb-3">
                     <div class="row g-2 small">
                         <div class="col-6"><strong>Order ID:</strong> <span id="mv_lbl_order_id" class="font-monospace"></span></div>
@@ -213,27 +241,27 @@
                 </div>
 
                 <div class="mb-3">
-                    <label class="form-label fw-semibold">Action <span class="text-danger">*</span></label>
+                    <label class="form-label small fw-bold text-secondary text-uppercase mb-1" style="font-size: 0.72rem; letter-spacing: 0.5px;">Action <span class="text-danger">*</span></label>
                     <select name="action" class="form-select" required>
-                        <option value="APPROVE_CREDIT">APPROVE &amp; Credit Wallet (Confirm Received in Merchant Bank)</option>
+                        <option value="APPROVE_CREDIT">APPROVE & Credit Wallet (Confirm Received in Merchant Bank)</option>
                         <option value="MARK_FAILED">MARK FAILED (Invalid/Expired Payment)</option>
                     </select>
                 </div>
 
                 <div class="mb-3">
-                    <label class="form-label fw-semibold">Bank UTR / Transaction Reference</label>
+                    <label class="form-label small fw-bold text-secondary text-uppercase mb-1" style="font-size: 0.72rem; letter-spacing: 0.5px;">Bank UTR / Transaction Reference</label>
                     <input type="text" name="utr" class="form-control font-monospace" placeholder="12-digit UPI Bank UTR">
                 </div>
 
                 <div class="mb-3">
-                    <label class="form-label fw-semibold">Mandatory Audit Justification <span class="text-danger">*</span></label>
+                    <label class="form-label small fw-bold text-secondary text-uppercase mb-1" style="font-size: 0.72rem; letter-spacing: 0.5px;">Mandatory Audit Justification <span class="text-danger">*</span></label>
                     <textarea name="remarks" class="form-control" rows="3" placeholder="Provide reason and proof verification details for manual reconciliation..." required></textarea>
-                    <div class="form-text small text-danger">Recorded in immutable audit trail.</div>
+                    <div class="form-text small text-danger" style="font-size: 0.7rem;">Recorded permanently in immutable audit trail.</div>
                 </div>
             </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="submit" class="btn btn-warning fw-bold">Submit Reconciliation Decision</button>
+            <div class="modal-footer bg-light border-top py-2.5 px-4 d-flex justify-content-end gap-2">
+                <button type="button" class="btn btn-light border px-3 rounded-2 fw-semibold" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" class="btn btn-warning fw-bold px-4 rounded-2 shadow-sm">Submit Decision</button>
             </div>
         </form>
     </div>

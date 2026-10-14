@@ -22,8 +22,12 @@ class Config
             ini_set('session.cookie_samesite', 'Lax');
             ini_set('session.gc_maxlifetime', (string)($_ENV['SESSION_LIFETIME'] ?? 7200));
 
-            // Set secure session cookie if HTTPS
-            if (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') {
+            // Set secure session cookie if HTTPS or behind HTTPS reverse-proxy
+            $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+                || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower((string)$_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https')
+                || (str_starts_with($_ENV['APP_URL'] ?? '', 'https://'));
+
+            if ($isHttps) {
                 ini_set('session.cookie_secure', '1');
             }
 
@@ -48,7 +52,9 @@ class Config
             return rtrim($appUrl, '/');
         }
 
-        $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https://' : 'http://';
+        $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+            || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower((string)$_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https');
+        $protocol = $isHttps ? 'https://' : 'http://';
         $host = $_SERVER['HTTP_HOST'] ?? 'localhost:8080';
         return $protocol . $host;
     }

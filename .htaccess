@@ -1,0 +1,23 @@
+# ========================================================
+# WELCOME BIHAR - ROOT DIRECTORY SECURITY & ROUTING
+# Protects sensitive system files if DocumentRoot points to repository root
+# ========================================================
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Deny direct HTTP access to sensitive code, config, database, and storage directories
+    RewriteRule ^(\.env|\.git|app|cli|database|storage)(/.*)?$ - [F,L,NC]
+
+    # Forward all other requests to the public/ directory
+    RewriteCond %{REQUEST_URI} !^/public/
+    RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>
+
+# Block access to hidden files (.env, .git, etc.)
+<FilesMatch "^\.">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+Options -Indexes

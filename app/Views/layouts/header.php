@@ -1,10 +1,14 @@
 <?php
 use App\Services\AuthService;
+use App\Services\TranslationService;
 use App\Services\WalletService;
+use App\Services\NotificationService;
 
 $currentUser = AuthService::user();
 $currentRole = $currentUser['role'] ?? null;
 $walletBalance = $currentUser ? WalletService::getBalance($currentUser['id']) : 0.00;
+$unreadNotifsCount = $currentUser ? NotificationService::getUnreadCount($currentUser['id']) : 0;
+$recentNotifs = $currentUser ? NotificationService::getRecent($currentUser['id'], 5) : [];
 $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
 ?>
 <!DOCTYPE html>
@@ -60,22 +64,31 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                     <i class="bi bi-speedometer2"></i>
                     <span>Dashboard</span>
                 </a>
-                <a class="wb-sidebar-link <?= strpos($currentUri, '/applications') === 0 ? 'active' : '' ?>" href="/applications">
+                <a class="wb-sidebar-link <?= (strpos($currentUri, '/admin/applications') === 0 || $currentUri === '/applications') ? 'active' : '' ?>" href="/admin/applications">
                     <i class="bi bi-folder2-open"></i>
                     <span>Applications</span>
                 </a>
                 <a class="wb-sidebar-link <?= strpos($currentUri, '/admin/users') === 0 ? 'active' : '' ?>" href="/admin/users">
                     <i class="bi bi-people"></i>
-                    <span>Users &amp; Operators</span>
+                    <span>Users & Operators</span>
                 </a>
-                <a class="wb-sidebar-link <?= strpos($currentUri, '/admin/data-types') === 0 ? 'active' : '' ?>" href="/admin/data-types">
-                    <i class="bi bi-card-checklist"></i>
-                    <span>Data Types</span>
+                <a class="wb-sidebar-link <?= (strpos($currentUri, '/admin/block-rates') === 0 || strpos($currentUri, '/admin/data-types/rate-rules') === 0) ? 'active' : '' ?>" href="/admin/block-rates">
+                    <i class="bi bi-currency-rupee text-warning"></i>
+                    <span>Block Rates & Pricing</span>
+                </a>
+                <a class="wb-sidebar-link <?= (strpos($currentUri, '/admin/data-types') === 0 && strpos($currentUri, '/admin/data-types/rate-rules') === false) ? 'active' : '' ?>" href="/admin/data-types">
+                    <i class="bi bi-sliders"></i>
+                    <span>Service Management</span>
                 </a>
                 <a class="wb-sidebar-link <?= strpos($currentUri, '/admin/locations') === 0 ? 'active' : '' ?>" href="/admin/locations">
                     <i class="bi bi-geo-alt"></i>
-                    <span>Districts &amp; Blocks</span>
+                    <span>Districts & Blocks</span>
                 </a>
+                <a class="wb-sidebar-link <?= strpos($currentUri, '/admin/service-availability') === 0 ? 'active' : '' ?>" href="/admin/service-availability">
+                    <i class="bi bi-toggle-on text-success"></i>
+                    <span>Service Availability</span>
+                </a>
+
                 <a class="wb-sidebar-link <?= strpos($currentUri, '/admin/reconciliation') === 0 ? 'active' : '' ?>" href="/admin/reconciliation">
                     <i class="bi bi-arrow-left-right"></i>
                     <span>Reconciliation</span>
@@ -83,6 +96,10 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                 <a class="wb-sidebar-link <?= strpos($currentUri, '/admin/audit-logs') === 0 ? 'active' : '' ?>" href="/admin/audit-logs">
                     <i class="bi bi-journal-text"></i>
                     <span>Audit Trail</span>
+                </a>
+                <a class="wb-sidebar-link <?= strpos($currentUri, '/admin/whatsapp') === 0 ? 'active' : '' ?>" href="/admin/whatsapp/logs">
+                    <i class="bi bi-whatsapp text-success"></i>
+                    <span>WhatsApp Delivery</span>
                 </a>
                 <a class="wb-sidebar-link <?= strpos($currentUri, '/admin/settings') === 0 ? 'active' : '' ?>" href="/admin/settings">
                     <i class="bi bi-gear"></i>
@@ -94,9 +111,13 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                     <i class="bi bi-speedometer2"></i>
                     <span>Dashboard</span>
                 </a>
+                <a class="wb-sidebar-link <?= strpos($currentUri, '/distributor/retailers') === 0 ? 'active' : '' ?>" href="/distributor/retailers/new">
+                    <i class="bi bi-person-plus-fill"></i>
+                    <span>Add Retailer</span>
+                </a>
                 <a class="wb-sidebar-link <?= strpos($currentUri, '/distributor/team') === 0 ? 'active' : '' ?>" href="/distributor/team">
                     <i class="bi bi-people"></i>
-                    <span>Team &amp; Scope</span>
+                    <span>Team & Scope</span>
                 </a>
                 <a class="wb-sidebar-link <?= strpos($currentUri, '/distributor/applications') === 0 ? 'active' : '' ?>" href="/distributor/applications">
                     <i class="bi bi-folder2-open"></i>
@@ -105,6 +126,24 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                 <a class="wb-sidebar-link <?= strpos($currentUri, '/wallet/passbook') === 0 ? 'active' : '' ?>" href="/wallet/passbook">
                     <i class="bi bi-wallet2"></i>
                     <span>Wallet Passbook</span>
+                </a>
+
+            <?php elseif ($currentRole === 'OPERATOR'): ?>
+                <a class="wb-sidebar-link <?= $currentUri === '/admin/dashboard' ? 'active' : '' ?>" href="/admin/dashboard">
+                    <i class="bi bi-speedometer2"></i>
+                    <span>Dashboard</span>
+                </a>
+                <a class="wb-sidebar-link <?= (strpos($currentUri, '/admin/applications') === 0 || $currentUri === '/applications') ? 'active' : '' ?>" href="/admin/applications">
+                    <i class="bi bi-folder2-open"></i>
+                    <span>Applications</span>
+                </a>
+                <a class="wb-sidebar-link <?= $currentUri === '/user/profile' ? 'active' : '' ?>" href="/user/profile">
+                    <i class="bi bi-person-gear"></i>
+                    <span>Profile</span>
+                </a>
+                <a class="wb-sidebar-link text-danger" href="/logout">
+                    <i class="bi bi-box-arrow-right"></i>
+                    <span>Logout</span>
                 </a>
 
             <?php elseif ($currentRole === 'USER'): ?>
@@ -116,9 +155,9 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                     <i class="bi bi-plus-circle"></i>
                     <span>New Application</span>
                 </a>
-                <a class="wb-sidebar-link <?= $currentUri === '/applications' ? 'active' : '' ?>" href="/applications">
+                <a class="wb-sidebar-link <?= ($currentUri === '/applications' && $currentUri !== '/applications/new') ? 'active' : '' ?>" href="/applications">
                     <i class="bi bi-file-earmark-text"></i>
-                    <span>My Applications</span>
+                    <span>Application List</span>
                 </a>
                 <a class="wb-sidebar-link <?= $currentUri === '/wallet/passbook' ? 'active' : '' ?>" href="/wallet/passbook">
                     <i class="bi bi-receipt"></i>
@@ -154,14 +193,13 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                 <button class="wb-topbar-toggle" id="wbSidebarToggle" type="button" aria-label="Toggle navigation" title="Toggle Sidebar">
                     <i class="bi bi-list fs-5"></i>
                 </button>
-                <div class="d-none d-md-block text-muted small fw-semibold">
-                    <span>Bihar Unified Citizen Services</span>
-                    <span class="mx-2 text-black-50">&bull;</span>
-                    <span class="text-secondary"><?= e(__('district')) ?> &amp; <?= e(__('block')) ?></span>
+                <div class="d-none d-md-block fw-bold text-dark fs-6">
+                    <span>Welcome Bihar</span>
                 </div>
             </div>
 
             <div class="d-flex align-items-center gap-2">
+
                 <!-- Wallet Balance Badge -->
                 <a href="/wallet/passbook" class="btn btn-sm btn-light border d-flex align-items-center gap-1 rounded-pill px-3 py-1 text-decoration-none shadow-sm" title="Wallet Balance">
                     <i class="bi bi-wallet2 text-success fw-bold"></i>
@@ -175,6 +213,41 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                     </a>
                 <?php endif; ?>
 
+                <!-- Notification Bell Dropdown -->
+                <div class="dropdown">
+                    <button class="btn btn-sm btn-light border rounded-circle p-2 position-relative shadow-sm" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Notifications">
+                        <i class="bi bi-bell-fill text-secondary fs-6"></i>
+                        <?php if ($unreadNotifsCount > 0): ?>
+                            <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger" style="font-size: 0.65rem;">
+                                <?= $unreadNotifsCount > 9 ? '9+' : $unreadNotifsCount ?>
+                            </span>
+                        <?php endif; ?>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end shadow border-0 mt-2 p-0" style="min-width: 300px; max-width: 360px;">
+                        <li class="p-3 bg-light border-bottom d-flex justify-content-between align-items-center">
+                            <span class="fw-bold small text-dark"><i class="bi bi-bell me-1"></i> Notifications</span>
+                            <?php if ($unreadNotifsCount > 0): ?>
+                                <span class="badge bg-primary"><?= $unreadNotifsCount ?> Unread</span>
+                            <?php endif; ?>
+                        </li>
+                        <?php if (empty($recentNotifs)): ?>
+                            <li class="p-3 text-center text-muted small">No notifications yet</li>
+                        <?php else: ?>
+                            <?php foreach ($recentNotifs as $n): ?>
+                                <li>
+                                    <a class="dropdown-item py-2 px-3 border-bottom <?= $n['is_read'] ? 'text-muted' : 'bg-light fw-semibold text-dark' ?>" href="<?= e($n['link'] ?: '#') ?>" style="white-space: normal;">
+                                        <div class="d-flex justify-content-between align-items-center mb-1">
+                                            <span class="small fw-bold text-primary"><?= e($n['title']) ?></span>
+                                            <span class="text-muted" style="font-size: 0.68rem;"><?= date('d M, H:i', strtotime($n['created_at'])) ?></span>
+                                        </div>
+                                        <div class="small text-secondary" style="font-size: 0.78rem;"><?= e($n['message']) ?></div>
+                                    </a>
+                                </li>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </ul>
+                </div>
+
                 <!-- User Dropdown Menu -->
                 <div class="dropdown ms-1">
                     <button class="btn btn-sm btn-light border rounded-pill px-3 py-1 fw-semibold d-flex align-items-center gap-2 shadow-sm" type="button" data-bs-toggle="dropdown">
@@ -184,12 +257,12 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end shadow border-0 mt-2">
                         <li><h6 class="dropdown-header"><?= e($currentUser['email']) ?></h6></li>
-                        <li><a class="dropdown-item" href="/user/profile"><i class="bi bi-person me-2"></i> Profile</a></li>
+                        <li><a class="dropdown-item" href="/user/profile"><i class="bi bi-person me-2"></i> <?= e(__('profile')) ?></a></li>
                         <?php if ($currentRole === 'USER'): ?>
-                            <li><a class="dropdown-item" href="/wallet/topup"><i class="bi bi-qr-code me-2"></i> Top Up Wallet</a></li>
+                            <li><a class="dropdown-item" href="/wallet/topup"><i class="bi bi-qr-code me-2"></i> <?= e(__('topup_wallet')) ?></a></li>
                         <?php endif; ?>
                         <li><hr class="dropdown-divider"></li>
-                        <li><a class="dropdown-item text-danger" href="/logout"><i class="bi bi-box-arrow-right me-2"></i> Logout</a></li>
+                        <li><a class="dropdown-item text-danger" href="/logout"><i class="bi bi-box-arrow-right me-2"></i> <?= e(__('logout')) ?></a></li>
                     </ul>
                 </div>
             </div>
@@ -201,18 +274,30 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
 <?php else: ?>
     <!-- Non-authenticated Layout (Login / Register) -->
     <div class="wb-main-wrapper no-sidebar" id="wbMainWrapper">
-        <header class="wb-public-nav d-flex align-items-center justify-content-between">
-            <a class="wb-brand" href="/">
-                <i class="bi bi-shield-check text-warning fs-3"></i>
-                <span class="fs-4">Welcome Bihar</span>
+        <header class="wb-public-nav d-flex align-items-center justify-content-between px-3 px-md-4 py-2 border-bottom">
+            <a class="wb-brand d-flex align-items-center gap-2 text-decoration-none" href="/">
+                <span class="d-inline-flex align-items-center justify-content-center bg-warning text-dark rounded-circle" style="width: 38px; height: 38px;">
+                    <i class="bi bi-shield-check fs-5"></i>
+                </span>
+                <div>
+                    <span class="fs-5 fw-bold text-white tracking-tight">Welcome Bihar</span>
+                    <span class="d-none d-sm-block text-white-50 small" style="font-size: 0.72rem; letter-spacing: 0.5px;">BIHAR CITIZEN SERVICE PORTAL</span>
+                </div>
             </a>
             <div class="d-flex align-items-center gap-2">
-                <a href="/login" class="btn btn-sm btn-outline-light rounded-pill px-3">Login</a>
-                <a href="/register" class="btn btn-sm btn-warning rounded-pill px-3 fw-bold">Register Kiosk</a>
+                <?php if ($currentUri === '/login'): ?>
+                    <a href="/register" class="btn btn-sm btn-warning rounded-pill px-3 fw-bold shadow-sm">
+                        <i class="bi bi-person-plus-fill me-1"></i> Register New Kiosk
+                    </a>
+                <?php else: ?>
+                    <a href="/login" class="btn btn-sm btn-outline-light rounded-pill px-3 fw-semibold">
+                        <i class="bi bi-box-arrow-in-right me-1"></i> <?= e(__('login')) ?>
+                    </a>
+                <?php endif; ?>
             </div>
         </header>
 
-        <main class="container-fluid px-3 px-lg-4 py-4 flex-grow-1">
+        <main class="<?= in_array($currentUri, ['/login', '/register'], true) ? 'p-0 flex-grow-1 d-flex flex-column w-100' : 'container-fluid px-3 px-lg-4 py-4 flex-grow-1' ?>">
 <?php endif; ?>
 
     <!-- Flash Alerts -->
