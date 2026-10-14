@@ -245,16 +245,64 @@ class SystemUpdateService
             // Ignore
         }
 
-        // 3. Optional Git pull if git is accessible
-        $gitOutput = '';
-        if (function_exists('shell_exec') && !in_array('shell_exec', array_map('trim', explode(',', ini_get('disable_functions'))), true)) {
-            $repoDir = dirname(__DIR__, 2);
-            if (is_dir($repoDir . '/.git')) {
-                $cmd = "cd " . escapeshellarg($repoDir) . " && git pull origin main 2>&1";
-                $gitOutput = @shell_exec($cmd);
-                if (!empty($gitOutput)) {
-                    $log[] = "Git Output: " . trim($gitOutput);
-                    $appliedChanges++;
+        // 3. Automated GitHub Release Puller
+        $repoDir = dirname(__DIR__, 2);
+        $gitPulled = false;
+
+        // Step 3A: Try Git CLI first if .git directory and shell_exec exist
+        if (is_dir($repoDir . '/.git') && function_exists('shell_exec') && !in_array('shell_exec', array_map('trim', explode(',', (string)ini_get('disable_functions'))), true)) {
+            $cmd = "cd " . escapeshellarg($repoDir) . " && git pull origin main 2>&1";
+            $gitOutput = @shell_exec($cmd);
+            if (!empty($gitOutput)) {
+                $log[] = "Git CLI: " . trim($gitOutput);
+                if (stripos($gitOutput, 'Updating') !== false || stripos($gitOutput, 'Already up to date') !== false) {
+                    $gitPulled = true;
+                }
+                $appliedChanges++;
+            }
+        }
+
+        // Step 3B: If Git CLI was not used or failed (standard cPanel shared hosting), download directly from GitHub via HTTP and extract!
+        if (!$gitPulled) {
+            $archiveUrl = 'https://codeload.github.com/Vlesatish/welcome-bihar/tar.gz/refs/heads/main';
+            $ch = curl_init($archiveUrl);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_USERAGENT, 'WelcomeBihar-Portal-Updater');
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+            $archiveData = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($httpCode === 200 && !empty($archiveData)) {
+                $tempTarGz = $repoDir . '/storage/update_' . time() . '.tar.gz';
+                $tempExtractDir = $repoDir . '/storage/update_extracted_' . time();
+                file_put_contents($tempTarGz, $archiveData);
+
+                try {
+                    $phar = new \PharData($tempTarGz);
+                    if (!is_dir($tempExtractDir)) {
+                        mkdir($tempExtractDir, 0777, true);
+                    }
+                    $phar->extractTo($tempExtractDir, null, true);
+
+                    // Find extracted root folder (e.g. welcome-bihar-main)
+                    $subdirs = glob($tempExtractDir . '/*', GLOB_ONLYDIR);
+                    $sourceDir = !empty($subdirs) ? $subdirs[0] : $tempExtractDir;
+
+                    // Copy files recursively, skipping sensitive files
+                    $updatedFileCount = self::copyDirectory($sourceDir, $repoDir, [
+                        '.env', '.git', 'storage', 'public/uploads', 'uploads'
+                    ]);
+
+                    $log[] = "Downloaded and updated {$updatedFileCount} files directly from GitHub.";
+                    $appliedChanges += $updatedFileCount;
+                } catch (\Exception $e) {
+                    $log[] = "GitHub direct download notice: " . $e->getMessage();
+                } finally {
+                    @unlink($tempTarGz);
+                    self::deleteDirectory($tempExtractDir);
                 }
             }
         }
@@ -265,7 +313,59 @@ class SystemUpdateService
             'success' => true,
             'changes' => $appliedChanges,
             'log' => $log,
-            'git_output' => $gitOutput
+            'git_output' => $gitOutput ?? ''
         ];
+    }
+
+    private static function copyDirectory(string $src, string $dst, array $skipPaths = []): int
+    {
+        $count = 0;
+        $dir = opendir($src);
+        if (!$dir) {
+            return 0;
+        }
+
+        @mkdir($dst, 0777, true);
+
+        while (($file = readdir($dir)) !== false) {
+            if ($file === '.' || $file === '..') {
+                continue;
+            }
+
+            $srcFile = $src . '/' . $file;
+            $dstFile = $dst . '/' . $file;
+
+            $skip = false;
+            foreach ($skipPaths as $skipItem) {
+                if ($file === $skipItem) {
+                    $skip = true;
+                    break;
+                }
+            }
+            if ($skip) {
+                continue;
+            }
+
+            if (is_dir($srcFile)) {
+                $count += self::copyDirectory($srcFile, $dstFile, $skipPaths);
+            } else {
+                copy($srcFile, $dstFile);
+                $count++;
+            }
+        }
+        closedir($dir);
+        return $count;
+    }
+
+    private static function deleteDirectory(string $dir): void
+    {
+        if (!is_dir($dir)) {
+            return;
+        }
+        $files = array_diff(scandir($dir), ['.', '..']);
+        foreach ($files as $file) {
+            (is_dir("$dir/$file")) ? self::deleteDirectory("$dir/$file") : @unlink("$dir/$file");
+        }
+        @rmdir($dir);
     }
 }
