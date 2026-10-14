@@ -896,6 +896,46 @@ class WhatsAppNotificationService
                 'attempts' => $attempts
             ]);
 
+            // Auto-transition application from PENDING to IN_PROCESS upon confirmed WhatsApp notification delivery
+            if ($appId > 0) {
+                try {
+                    $chkApp = $db->prepare("SELECT id, status, app_ref FROM applications WHERE id = ? LIMIT 1");
+                    $chkApp->execute([$appId]);
+                    $appRow = $chkApp->fetch(PDO::FETCH_ASSOC);
+
+                    if ($appRow && $appRow['status'] === 'PENDING') {
+                        $updApp = $db->prepare("
+                            UPDATE applications 
+                            SET status = 'IN_PROCESS', 
+                                updated_at = NOW() 
+                            WHERE id = ? AND status = 'PENDING'
+                        ");
+                        $updApp->execute([$appId]);
+
+                        if ($updApp->rowCount() > 0) {
+                            $hist = $db->prepare("
+                                INSERT INTO application_status_history (
+                                    application_id, from_status, to_status, actor_user_id,
+                                    actor_name, actor_role, remarks, created_at
+                                ) VALUES (
+                                    ?, 'PENDING', 'IN_PROCESS', ?,
+                                    'WhatsApp Notification System', 'SYSTEM', 'Auto-transitioned to IN_PROCESS upon confirmed WhatsApp notification sent to operator', NOW()
+                                )
+                            ");
+                            $hist->execute([$appId, $recipientUserId]);
+
+                            AuditService::log('APPLICATION_AUTO_IN_PROCESS', 'APPLICATION', (string)$appId, [
+                                'app_ref' => $appRow['app_ref'],
+                                'outbox_id' => $rowId,
+                                'trigger' => 'WHATSAPP_CONFIRMED_SENT'
+                            ]);
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    error_log("Failed to auto-transition application {$appId} to IN_PROCESS: " . $e->getMessage());
+                }
+            }
+
             return ['status' => 'SENT', 'data' => $json['data'] ?? []];
         }
 

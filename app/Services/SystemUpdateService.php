@@ -215,6 +215,16 @@ class SystemUpdateService
             // Ensure allapi_token has active merchant token if empty or mock
             $db->exec("UPDATE `settings` SET `setting_value` = '737bb1-df709c-d3e73f-e1fb9f-699985' WHERE `setting_key` = 'allapi_token' AND (`setting_value` = 'mock_dev_token' OR `setting_value` = '' OR `setting_value` IS NULL)");
 
+            // Ensure any PENDING applications with confirmed SENT WhatsApp notifications are in IN_PROCESS
+            if (in_array('whatsapp_notification_outbox', $tables, true)) {
+                $db->exec("
+                    UPDATE applications a
+                    JOIN whatsapp_notification_outbox o ON a.id = o.application_id
+                    SET a.status = 'IN_PROCESS', a.updated_at = NOW()
+                    WHERE a.status = 'PENDING' AND o.status = 'SENT'
+                ");
+            }
+
             self::$schemaChecked = true;
         } catch (Exception $e) {
             error_log("Schema auto-heal warning: " . $e->getMessage());
