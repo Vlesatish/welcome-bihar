@@ -291,10 +291,7 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                 <span class="d-inline-flex align-items-center justify-content-center bg-warning text-dark rounded-circle" style="width: 38px; height: 38px;">
                     <i class="bi bi-shield-check fs-5"></i>
                 </span>
-                <div>
-                    <span class="fs-5 fw-bold text-white tracking-tight">Welcome Bihar</span>
-                    <span class="d-none d-sm-block text-white-50 small" style="font-size: 0.72rem; letter-spacing: 0.5px;">BIHAR CITIZEN SERVICE PORTAL</span>
-                </div>
+                <span class="fs-5 fw-bold text-white tracking-tight">Welcome Bihar</span>
             </a>
             <div class="d-flex align-items-center gap-2">
                 <?php if ($currentUri === '/login'): ?>
