@@ -40,25 +40,146 @@ class UserController
         $statStmt->execute([$userId]);
         $stats = $statStmt->fetch();
 
-        // 3. Recent 5 applications
-        $recentStmt = $db->prepare("
-            SELECT a.id, a.app_ref, a.applicant_name, a.applicant_mobile, a.applicant_identifier, a.status, a.fee_debited, a.created_at,
-                   dt.name_en as dt_name_en, dt.name_hi as dt_name_hi,
+        // 3. Filters
+        $districtId = !empty($_GET['district_id']) ? (int)$_GET['district_id'] : 0;
+        $blockId = !empty($_GET['block_id']) ? (int)$_GET['block_id'] : 0;
+        $status = strtoupper(trim($_GET['status'] ?? ''));
+        $appCode = strtoupper(trim($_GET['app_code'] ?? ''));
+        $dateFilter = trim($_GET['date_filter'] ?? $_GET['dateFilter'] ?? '');
+        $search = trim($_GET['search'] ?? '');
+        $page = max(1, (int)($_GET['page'] ?? 1));
+        $limit = 20;
+        $offset = ($page - 1) * $limit;
+
+        $where = ["a.user_id = :user_id"];
+        $params = [':user_id' => $userId];
+
+        if (!empty($districtId)) {
+            $where[] = "a.district_id = :district_id";
+            $params[':district_id'] = $districtId;
+        }
+
+        if (!empty($blockId)) {
+            $where[] = "a.block_id = :block_id";
+            $params[':block_id'] = $blockId;
+        }
+
+        if (!empty($status)) {
+            if ($status === 'COMPLETED' || $status === 'APPROVED') {
+                $where[] = "a.status IN ('COMPLETED', 'APPROVED')";
+            } elseif ($status === 'IN_PROCESS' || $status === 'UNDER_REVIEW') {
+                $where[] = "a.status IN ('IN_PROCESS', 'UNDER_REVIEW')";
+            } else {
+                $where[] = "a.status = :status";
+                $params[':status'] = $status;
+            }
+        }
+
+        if (!empty($appCode)) {
+            $where[] = "(a.applicant_identifier LIKE :app_code_like OR a.application_code = :app_code_exact)";
+            $params[':app_code_like'] = $appCode . '%';
+            $params[':app_code_exact'] = $appCode;
+        }
+
+        if ($dateFilter === 'TODAY') {
+            $where[] = "DATE(a.created_at) = CURDATE()";
+        } elseif ($dateFilter === 'WEEK') {
+            $where[] = "a.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
+        } elseif ($dateFilter === 'MONTH') {
+            $where[] = "a.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
+        }
+
+        if (!empty($search)) {
+            $where[] = "(a.app_ref LIKE :search_ref OR a.applicant_name LIKE :search_name OR a.applicant_mobile LIKE :search_mobile OR a.applicant_identifier LIKE :search_number)";
+            $searchVal = "%{$search}%";
+            $params[':search_ref'] = $searchVal;
+            $params[':search_name'] = $searchVal;
+            $params[':search_mobile'] = $searchVal;
+            $params[':search_number'] = $searchVal;
+        }
+
+        $whereClause = implode(' AND ', $where);
+
+        $cntStmt = $db->prepare("SELECT COUNT(*) FROM applications a WHERE {$whereClause}");
+        $cntStmt->execute($params);
+        $totalRecords = (int)$cntStmt->fetchColumn();
+        $totalPages = ceil($totalRecords / $limit);
+
+        $sql = "
+            SELECT a.id, a.app_ref, a.batch_ref, a.applicant_name, a.applicant_mobile, a.applicant_identifier,
+                   a.status, a.fee_debited, a.commission_credited, a.created_at,
+                   a.result_file, a.is_refunded, a.admin_remarks, a.remarks,
+                   a.district_id, a.block_id, a.application_code, a.assigned_operator_id,
+                   dt.name_en as dt_name_en, dt.name_hi as dt_name_hi, dt.enable_chat,
                    d.name as district_name, d.name_hi as district_name_hi,
                    b.name as block_name, b.name_hi as block_name_hi
             FROM applications a
             JOIN data_types dt ON a.data_type_id = dt.id
             JOIN districts d ON a.district_id = d.id
             JOIN blocks b ON a.block_id = b.id
-            WHERE a.user_id = ?
+            WHERE {$whereClause}
             ORDER BY a.id DESC
-            LIMIT 5
-        ");
-        $recentStmt->execute([$userId]);
-        $recentApplications = $recentStmt->fetchAll();
+            LIMIT {$limit} OFFSET {$offset}
+        ";
+        $stmt = $db->prepare($sql);
+        $stmt->execute($params);
+        $applications = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        // 4. Recent wallet transactions
-        $passbook = WalletService::getPassbook($userId, 5, 0);
+        // Fetch dynamic field values for each application
+        $appIds = array_column($applications, 'id');
+        $fieldValuesByApp = [];
+        if (!empty($appIds)) {
+            $inClause = implode(',', array_map('intval', $appIds));
+            $fvRows = $db->query("
+                SELECT afv.application_id, afv.field_name, afv.field_value, dtf.label_en
+                FROM application_field_values afv
+                LEFT JOIN data_type_fields dtf ON afv.field_id = dtf.id
+                WHERE afv.application_id IN ({$inClause})
+            ")->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($fvRows as $fv) {
+                $fieldValuesByApp[$fv['application_id']][$fv['field_name']] = $fv['field_value'];
+            }
+        }
+        foreach ($applications as &$app) {
+            $fData = $fieldValuesByApp[$app['id']] ?? [];
+            if (!isset($fData['applicant_name'])) $fData['applicant_name'] = $app['applicant_name'];
+            if (!isset($fData['mobile'])) $fData['mobile'] = $app['applicant_mobile'];
+            if (!isset($fData['application_number'])) $fData['application_number'] = $app['applicant_identifier'];
+            if (!isset($fData['district_name'])) $fData['district_name'] = $app['district_name'];
+            if (!isset($fData['block_name'])) $fData['block_name'] = $app['block_name'];
+            $app['formData'] = $fData;
+            $app['requestNumber'] = (string)$app['id'];
+        }
+        unset($app);
+
+        $districts = $db->query("SELECT id, name, name_hi, state FROM districts WHERE is_active = 1 ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+
+        $blocks = [];
+        if ($districtId > 0) {
+            $bStmt = $db->prepare("SELECT id, name, name_hi FROM blocks WHERE district_id = ? AND is_active = 1 ORDER BY name ASC");
+            $bStmt->execute([$districtId]);
+            $blocks = $bStmt->fetchAll(PDO::FETCH_ASSOC);
+        }
+
+        $appCodes = [
+            'BICCO' => 'BICCO',
+            'BCCCO' => 'BCCCO',
+            'BRCCO' => 'BRCCO',
+            'BOBC'  => 'BOBC',
+            'NCLCO' => 'NCLCO',
+            'RTPS'  => 'RTPS',
+            'LABOURCARD' => 'LABOURCARD',
+            'OTHER' => 'OTHER'
+        ];
+        try {
+            $ruleCodes = $db->query("SELECT DISTINCT application_code FROM service_rate_rules WHERE application_code IS NOT NULL AND application_code != '' AND application_code != '*'")->fetchAll(PDO::FETCH_COLUMN);
+            foreach ($ruleCodes as $rc) {
+                $cKey = strtoupper(trim((string)$rc));
+                if (!isset($appCodes[$cKey])) {
+                    $appCodes[$cKey] = $cKey;
+                }
+            }
+        } catch (\Throwable $e) {}
 
         require dirname(__DIR__) . '/Views/user/dashboard.php';
     }
