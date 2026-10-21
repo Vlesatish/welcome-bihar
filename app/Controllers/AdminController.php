@@ -432,8 +432,12 @@ class AdminController
         }
 
         if (!empty($search)) {
-            $where[] = "(u.name LIKE :search OR u.mobile LIKE :search OR u.email LIKE :search OR u.center_name LIKE :search)";
-            $params[':search'] = "%{$search}%";
+            $where[] = "(u.name LIKE :search_name OR u.mobile LIKE :search_mobile OR u.email LIKE :search_email OR u.center_name LIKE :search_center)";
+            $searchVal = "%{$search}%";
+            $params[':search_name'] = $searchVal;
+            $params[':search_mobile'] = $searchVal;
+            $params[':search_email'] = $searchVal;
+            $params[':search_center'] = $searchVal;
         }
 
         $whereClause = implode(' AND ', $where);

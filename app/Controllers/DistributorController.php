@@ -302,8 +302,11 @@ class DistributorController
         }
 
         if (!empty($search)) {
-            $where[] = "(a.app_ref LIKE :search OR a.applicant_name LIKE :search OR a.applicant_mobile LIKE :search)";
-            $params[':search'] = "%{$search}%";
+            $where[] = "(a.app_ref LIKE :search_ref OR a.applicant_name LIKE :search_name OR a.applicant_mobile LIKE :search_mobile)";
+            $searchVal = "%{$search}%";
+            $params[':search_ref'] = $searchVal;
+            $params[':search_name'] = $searchVal;
+            $params[':search_mobile'] = $searchVal;
         }
 
         $whereClause = implode(' AND ', $where);

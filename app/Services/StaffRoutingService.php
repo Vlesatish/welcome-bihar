@@ -243,16 +243,19 @@ class StaffRoutingService
             // Queue WhatsApp to new staff if mobile is valid
             $distName = (string)$db->query("SELECT name FROM districts WHERE id = " . (int)$app['district_id'])->fetchColumn();
             $blkName = (string)$db->query("SELECT name FROM blocks WHERE id = " . (int)$app['block_id'])->fetchColumn();
-
             $waData = [
                 'applicant_name' => $app['applicant_name'],
-                'application_number' => $app['applicant_identifier'] ?: $app['app_ref'],
-                'app_ref' => $app['app_ref'],
+                'application_number' => $app['applicant_identifier'] ?: '',
                 'district_name' => $distName,
-                'block_name' => $blkName,
-                'application_code' => $appCode,
-                'status' => $app['status']
+                'block_name' => $blkName
             ];
+            $afvStmt = $db->prepare("SELECT field_name, field_value FROM application_field_values WHERE application_id = ?");
+            $afvStmt->execute([$applicationId]);
+            foreach ($afvStmt->fetchAll(PDO::FETCH_ASSOC) as $afv) {
+                if (!empty($afv['field_value'])) {
+                    $waData[$afv['field_name']] = $afv['field_value'];
+                }
+            }
 
             WhatsAppNotificationService::queueSubmissionNotification(
                 $applicationId,

@@ -55,9 +55,13 @@
                         <a href="/admin/application-code-forms?code=<?= urlencode($rc['application_code']) ?>" 
                            class="btn btn-sm <?= $isActiveTab ? 'btn-primary fw-bold shadow-xs' : 'btn-outline-secondary' ?> py-1 px-2.5 rounded-2 d-inline-flex align-items-center gap-1.5" style="font-size: 0.78rem;">
                             <span><?= e($rc['application_code']) ?></span>
-                            <span class="badge <?= $isActiveTab ? 'bg-white text-primary' : 'bg-light text-secondary border' ?> rounded-pill" style="font-size: 0.65rem;">
-                                <?= (int)$rc['field_count'] ?> fields
-                            </span>
+                            <?php if (empty($rc['has_core_fields'])): ?>
+                                <span class="badge bg-warning text-dark rounded-pill" style="font-size: 0.62rem;">Incomplete</span>
+                            <?php else: ?>
+                                <span class="badge <?= $isActiveTab ? 'bg-white text-primary' : 'bg-light text-secondary border' ?> rounded-pill" style="font-size: 0.65rem;">
+                                    <?= (int)$rc['field_count'] ?> fields
+                                </span>
+                            <?php endif; ?>
                         </a>
                     <?php endforeach; ?>
                 <?php endif; ?>
@@ -76,6 +80,25 @@
     </div>
 </div>
 
+<?php if (!$hasCoreFields && $selectedCode !== ''): ?>
+    <div class="alert alert-warning py-2.5 px-3 mb-3 d-flex align-items-center justify-content-between flex-wrap gap-2 shadow-2xs rounded-3 border">
+        <div class="d-flex align-items-center gap-2">
+            <i class="bi bi-exclamation-octagon-fill fs-5 text-warning"></i>
+            <div>
+                <strong>Form Incomplete:</strong> Missing active core fields (<code>application_number</code> and <code>applicant_name</code>). This code is not available to retailers.
+            </div>
+        </div>
+        <form method="POST" action="/admin/application-code-forms/init-core" class="m-0">
+            <?= csrf_field() ?>
+            <input type="hidden" name="code" value="<?= e($selectedCode) ?>">
+            <button type="submit" class="btn btn-sm btn-dark fw-bold d-inline-flex align-items-center gap-1 shadow-xs">
+                <i class="bi bi-magic"></i>
+                <span>Initialize Core Fields</span>
+            </button>
+        </form>
+    </div>
+<?php endif; ?>
+
 <!-- CODE SPECIFIC FIELDS TABLE CARD -->
 <div class="card shadow-sm border rounded-3 bg-white mb-4" style="border: 1px solid #e2e8f0;">
     <div class="card-header bg-white py-2.5 px-3 border-bottom d-flex align-items-center justify-content-between flex-wrap gap-2">
@@ -84,6 +107,9 @@
                 Form Fields for <span class="text-primary font-monospace"><?= e($selectedCode) ?></span>
             </span>
             <span class="badge bg-light text-secondary border"><?= count($fields) ?> Fields</span>
+            <?php if (!$hasCoreFields): ?>
+                <span class="badge bg-warning text-dark border">Form Incomplete</span>
+            <?php endif; ?>
         </div>
         <div class="text-muted small" style="font-size: 0.74rem;">
             <i class="bi bi-info-circle me-1"></i>Global code form: Configured fields automatically apply to all blocks for this code.

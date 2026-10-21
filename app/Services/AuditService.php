@@ -24,6 +24,22 @@ class AuditService
 
             $ip = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
             $userAgent = substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 255);
+
+            if (is_array($details)) {
+                $sanitized = [];
+                foreach ($details as $k => $v) {
+                    $kLower = strtolower((string)$k);
+                    if (strpos($kLower, 'aadhaar') !== false || strpos($kLower, 'password') !== false || strpos($kLower, 'token') !== false || strpos($kLower, 'secret') !== false) {
+                        $sanitized[$k] = '[REDACTED]';
+                    } elseif (is_string($v) && preg_match('/^\d{12}$/', $v)) {
+                        $sanitized[$k] = 'XXXXXXXX' . substr($v, -4);
+                    } else {
+                        $sanitized[$k] = $v;
+                    }
+                }
+                $details = $sanitized;
+            }
+
             $detailsJson = $details ? json_encode($details, JSON_UNESCAPED_UNICODE) : null;
 
             $stmt = $db->prepare("

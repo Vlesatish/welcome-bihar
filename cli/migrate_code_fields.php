@@ -3,7 +3,7 @@
  * Migration: Create application_code_fields table and adjust application_field_values
  */
 
-require_once 'f:/code/welcome bihar/app/Config/Database.php';
+require_once dirname(__DIR__) . '/app/Config/Database.php';
 
 $db = \App\Config\Database::getConnection();
 
@@ -32,37 +32,28 @@ $db->exec("
         `is_unique` TINYINT(1) NOT NULL DEFAULT 0,
         `is_active` TINYINT(1) NOT NULL DEFAULT 1,
         `sort_order` INT NOT NULL DEFAULT 0,
-        `created_at` DATETIME NOT NULL,
-        `updated_at` DATETIME NOT NULL,
+        `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         UNIQUE KEY `uniq_code_field` (`data_type_id`, `application_code`, `field_name`),
         KEY `idx_code_active` (`data_type_id`, `application_code`, `is_active`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ");
 echo "[PASS] Table application_code_fields created or verified.\n";
 
-// 2. Adjust application_field_values foreign key if present
+// 2. Adjust application_field_values columns and foreign keys
 try {
-    // Check if fk_app_fvalues_field exists
-    $fkCheck = $db->query("
-        SELECT CONSTRAINT_NAME
-        FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+    $colFieldId = $db->query("
+        SELECT IS_NULLABLE
+        FROM INFORMATION_SCHEMA.COLUMNS
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME = 'application_field_values'
-          AND CONSTRAINT_NAME = 'fk_app_fvalues_field'
+          AND COLUMN_NAME = 'field_id'
     ")->fetchColumn();
 
-    if ($fkCheck) {
-        $db->exec("ALTER TABLE `application_field_values` DROP FOREIGN KEY `fk_app_fvalues_field`");
-        echo "[PASS] Foreign key fk_app_fvalues_field dropped successfully.\n";
+    if ($colFieldId === 'NO') {
+        $db->exec("ALTER TABLE `application_field_values` MODIFY `field_id` INT NULL");
+        echo "[PASS] Column field_id modified to nullable.\n";
     }
-} catch (\Throwable $e) {
-    echo "[INFO] FK check notice: " . $e->getMessage() . "\n";
-}
-
-// 3. Make field_id nullable and add code_field_id if not present
-try {
-    $db->exec("ALTER TABLE `application_field_values` MODIFY `field_id` INT NULL");
-    echo "[PASS] Column field_id modified to nullable.\n";
 } catch (\Throwable $e) {
     echo "[INFO] field_id modify notice: " . $e->getMessage() . "\n";
 }
@@ -80,7 +71,43 @@ if (!$colCheck) {
     echo "[PASS] Column code_field_id added to application_field_values.\n";
 }
 
-// 4. Seed initial code fields for srv_block_app
+// Add foreign key fk_app_fvalues_code_field safely
+try {
+    $fkCodeField = $db->query("
+        SELECT CONSTRAINT_NAME
+        FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'application_field_values'
+          AND CONSTRAINT_NAME = 'fk_app_fvalues_code_field'
+    ")->fetchColumn();
+
+    if (!$fkCodeField) {
+        $db->exec("ALTER TABLE `application_field_values` ADD CONSTRAINT `fk_app_fvalues_code_field` FOREIGN KEY (`code_field_id`) REFERENCES `application_code_fields` (`id`) ON DELETE SET NULL");
+        echo "[PASS] Foreign key fk_app_fvalues_code_field added successfully.\n";
+    }
+} catch (\Throwable $e) {
+    echo "[INFO] Code field FK notice: " . $e->getMessage() . "\n";
+}
+
+// Ensure fk_app_fvalues_field exists with safe delete behaviour
+try {
+    $fkField = $db->query("
+        SELECT CONSTRAINT_NAME
+        FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'application_field_values'
+          AND CONSTRAINT_NAME = 'fk_app_fvalues_field'
+    ")->fetchColumn();
+
+    if (!$fkField) {
+        $db->exec("ALTER TABLE `application_field_values` ADD CONSTRAINT `fk_app_fvalues_field` FOREIGN KEY (`field_id`) REFERENCES `data_type_fields` (`id`) ON DELETE SET NULL");
+        echo "[PASS] Legacy foreign key fk_app_fvalues_field added with ON DELETE SET NULL.\n";
+    }
+} catch (\Throwable $e) {
+    echo "[INFO] Legacy FK notice: " . $e->getMessage() . "\n";
+}
+
+// 3. Seed initial code fields for srv_block_app (Idempotent: seeds ONLY missing records)
 $dtId = (int)($db->query("SELECT id FROM data_types WHERE code = 'srv_block_app'")->fetchColumn() ?: 4);
 
 $seedFields = [
@@ -203,7 +230,7 @@ $seedFields = [
     ]
 ];
 
-// Add default core fields for other active codes (BRCCO, BOBC, NCLCO, OTHER)
+// Add default core fields for other active codes (BRCCO, BOBC, NCLCO, OTHER, RTPS)
 $otherCodes = ['BRCCO', 'BOBC', 'NCLCO', 'OTHER', 'RTPS'];
 foreach ($otherCodes as $oc) {
     $seedFields[] = [
@@ -236,6 +263,12 @@ foreach ($otherCodes as $oc) {
     ];
 }
 
+$checkStmt = $db->prepare("
+    SELECT id FROM `application_code_fields`
+    WHERE `data_type_id` = ? AND `application_code` = UPPER(?) AND `field_name` = ?
+    LIMIT 1
+");
+
 $insStmt = $db->prepare("
     INSERT INTO `application_code_fields` (
         `data_type_id`, `application_code`, `field_name`, `label`, `field_type`,
@@ -248,22 +281,19 @@ $insStmt = $db->prepare("
         ?, ?, ?, ?, 1,
         ?, NOW(), NOW()
     )
-    ON DUPLICATE KEY UPDATE
-        `label` = VALUES(`label`),
-        `field_type` = VALUES(`field_type`),
-        `placeholder` = VALUES(`placeholder`),
-        `help_text` = VALUES(`help_text`),
-        `validation_pattern` = VALUES(`validation_pattern`),
-        `min_length` = VALUES(`min_length`),
-        `max_length` = VALUES(`max_length`),
-        `is_required` = VALUES(`is_required`),
-        `is_unique` = VALUES(`is_unique`),
-        `is_active` = 1,
-        `sort_order` = VALUES(`sort_order`),
-        `updated_at` = NOW()
 ");
 
+$seededCount = 0;
+$skippedCount = 0;
+
 foreach ($seedFields as $sf) {
+    $checkStmt->execute([$dtId, $sf['code'], $sf['field_name']]);
+    if ($checkStmt->fetch()) {
+        // Record exists: preserve all admin modifications, disabled flags, sort orders
+        $skippedCount++;
+        continue;
+    }
+
     $insStmt->execute([
         $dtId,
         strtoupper($sf['code']),
@@ -280,7 +310,8 @@ foreach ($seedFields as $sf) {
         $sf['is_unique'] ?? 0,
         $sf['sort_order'] ?? 1
     ]);
+    $seededCount++;
 }
 
-echo "[PASS] Initial application_code_fields seeded successfully (" . count($seedFields) . " fields).\n";
+echo "[PASS] Migration idempotent run finished: {$seededCount} seeded, {$skippedCount} existing preserved.\n";
 echo "Migration complete!\n";

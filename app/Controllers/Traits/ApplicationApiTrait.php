@@ -257,7 +257,7 @@ public function apiGetRequests(): void
         }
 
         try {
-            $result = ApplicationService::submit($userId, $dataTypeId, $districtId, $blockId, $formData, $_FILES);
+            $result = \App\Services\ApplicationService::submit($userId, $dataTypeId, $districtId, $blockId, $formData, $_FILES);
             $newBalance = \App\Services\WalletService::getBalance($userId);
 
             $reqObject = [
@@ -345,7 +345,7 @@ public function apiGetRequests(): void
         ];
 
         try {
-            $result = ApplicationService::submitBatch($userId, $dataTypeId, $items, $options);
+            $result = \App\Services\ApplicationService::submitBatch($userId, $dataTypeId, $items, $options);
             if (isset($result['price_changed']) && $result['price_changed'] === true) {
                 http_response_code(409);
                 echo json_encode($result);
@@ -442,7 +442,7 @@ public function apiGetRequests(): void
         }
 
         try {
-            $result = ApplicationService::updateStatus(
+            $result = \App\Services\ApplicationService::updateStatus(
                 $appId,
                 $newStatus,
                 $user['id'],
@@ -513,7 +513,7 @@ public function apiGetRequests(): void
             exit;
         }
 
-        $chats = ApplicationService::getChats($appId);
+        $chats = \App\Services\ApplicationService::getChats($appId);
         echo json_encode(['messages' => $chats]);
         exit;
     }
@@ -577,7 +577,7 @@ public function apiGetRequests(): void
         }
 
         try {
-            $chat = ApplicationService::addChat(
+            $chat = \App\Services\ApplicationService::addChat(
                 $appId,
                 $user['id'],
                 $user['name'],

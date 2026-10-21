@@ -330,7 +330,17 @@
                                 <?php
                                     $status = strtoupper($app['status'] ?? 'PENDING');
                                     $appNum = $app['applicant_identifier'] ?: '#' . $app['app_ref'];
-                                    $appJson = htmlspecialchars(json_encode($app), ENT_QUOTES, 'UTF-8');
+                                    $safeApp = $app;
+                                    if (!empty($safeApp['fields']) && is_array($safeApp['fields'])) {
+                                        foreach ($safeApp['fields'] as $fKey => &$fObj) {
+                                            $fnLower = strtolower((string)$fKey);
+                                            if (str_contains($fnLower, 'aadhaar') || $fnLower === 'uid') {
+                                                $fObj['value'] = \App\Services\ApplicationCodeFieldService::maskAadhaar((string)($fObj['value'] ?? ''));
+                                            }
+                                        }
+                                        unset($fObj);
+                                    }
+                                    $appJson = htmlspecialchars(json_encode($safeApp), ENT_QUOTES, 'UTF-8');
                                 ?>
                                 <tr id="row-app-<?= $app['id'] ?>" data-app='<?= $appJson ?>'>
                                     <!-- 1. Application No. (bold and selectable/copyable) -->
@@ -473,7 +483,7 @@
                                                 Details
                                             </button>
                                             <?php if (!$isOperator): ?>
-                                                <button type="button" class="btn btn-xs btn-outline-secondary fw-semibold rounded-2 px-1.5 py-1" onclick="openReassignModal(<?= (int)$app['id'] ?>, <?= (int)$app['district_id'] ?>, <?= (int)$app['block_id'] ?>, '<?= e(addslashes($app['applicant_identifier'] ?: $app['app_ref'])) ?>', <?= (int)($app['assigned_operator_id'] ?? 0) ?>)" title="Reassign Staff Operator">
+                                                <button type="button" class="btn btn-xs btn-outline-secondary fw-semibold rounded-2 px-1.5 py-1" onclick="openReassignModal(<?= (int)$app['id'] ?>, <?= (int)($app['district_id'] ?? 0) ?>, <?= (int)($app['block_id'] ?? 0) ?>, '<?= e(addslashes($app['applicant_identifier'] ?: $app['app_ref'])) ?>', <?= (int)($app['assigned_operator_id'] ?? 0) ?>)" title="Reassign Staff Operator">
                                                     <i class="bi bi-person-gear"></i> Reassign
                                                 </button>
                                             <?php endif; ?>

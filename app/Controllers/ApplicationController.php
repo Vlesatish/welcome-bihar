@@ -426,8 +426,8 @@ class ApplicationController
         }
 
         if (!empty($state)) {
-            $where[] = "(d.state = :state OR EXISTS (SELECT 1 FROM application_field_values afv WHERE afv.application_id = a.id AND afv.field_name = 'state' AND afv.field_value = :state_fv))";
-            $params[':state'] = $state;
+            $where[] = "(d.state = :state_d OR EXISTS (SELECT 1 FROM application_field_values afv WHERE afv.application_id = a.id AND afv.field_name = 'state' AND afv.field_value = :state_fv))";
+            $params[':state_d'] = $state;
             $params[':state_fv'] = $state;
         }
 
@@ -442,9 +442,10 @@ class ApplicationController
         }
 
         if (!empty($appCode)) {
-            $where[] = "(a.applicant_identifier LIKE :app_code_like OR EXISTS (SELECT 1 FROM application_field_values afv WHERE afv.application_id = a.id AND afv.field_name = 'application_code' AND UPPER(afv.field_value) = :app_code))";
+            $where[] = "(a.applicant_identifier LIKE :app_code_like OR a.application_code = :app_code_exact OR EXISTS (SELECT 1 FROM application_field_values afv WHERE afv.application_id = a.id AND afv.field_name = 'application_code' AND UPPER(afv.field_value) = :app_code_fv))";
             $params[':app_code_like'] = $appCode . '%';
-            $params[':app_code'] = $appCode;
+            $params[':app_code_exact'] = $appCode;
+            $params[':app_code_fv'] = $appCode;
         }
 
         $dateFilter = trim($_GET['date_filter'] ?? $_GET['dateFilter'] ?? '');
@@ -456,9 +457,20 @@ class ApplicationController
             $where[] = "a.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
         }
 
+        $assignedOperatorId = !empty($_GET['assigned_operator_id']) ? (int)$_GET['assigned_operator_id'] : 0;
+        if (!empty($assignedOperatorId)) {
+            $where[] = "a.assigned_operator_id = :assigned_operator_id";
+            $params[':assigned_operator_id'] = $assignedOperatorId;
+        }
+
         if (!empty($search)) {
-            $where[] = "(a.app_ref LIKE :search OR a.applicant_name LIKE :search OR a.applicant_mobile LIKE :search OR a.applicant_identifier LIKE :search OR a.batch_ref LIKE :search)";
-            $params[':search'] = "%{$search}%";
+            $where[] = "(a.app_ref LIKE :search_ref OR a.applicant_name LIKE :search_name OR a.applicant_mobile LIKE :search_mobile OR a.applicant_identifier LIKE :search_number OR a.batch_ref LIKE :search_batch)";
+            $searchVal = "%{$search}%";
+            $params[':search_ref'] = $searchVal;
+            $params[':search_name'] = $searchVal;
+            $params[':search_mobile'] = $searchVal;
+            $params[':search_number'] = $searchVal;
+            $params[':search_batch'] = $searchVal;
         }
 
         $whereClause = implode(' AND ', $where);
@@ -474,7 +486,9 @@ class ApplicationController
             SELECT a.id, a.app_ref, a.batch_ref, a.applicant_name, a.applicant_mobile, a.applicant_identifier,
                    a.status, a.fee_debited, a.commission_credited, a.created_at,
                    a.result_file, a.is_refunded, a.admin_remarks, a.remarks,
-                   u.name as operator_name,
+                   a.district_id, a.block_id, a.application_code, a.assigned_operator_id,
+                   u.name as retailer_name, u.name as operator_name,
+                   op.name as assigned_operator_name,
                    dt.name_en as dt_name_en, dt.name_hi as dt_name_hi, dt.enable_chat,
                    d.name as district_name, d.name_hi as district_name_hi, d.state as district_state,
                    b.name as block_name, b.name_hi as block_name_hi
@@ -483,6 +497,7 @@ class ApplicationController
             JOIN data_types dt ON a.data_type_id = dt.id
             JOIN districts d ON a.district_id = d.id
             JOIN blocks b ON a.block_id = b.id
+            LEFT JOIN users op ON a.assigned_operator_id = op.id
             WHERE {$whereClause}
             ORDER BY a.id DESC
             LIMIT {$limit} OFFSET {$offset}
@@ -588,14 +603,17 @@ class ApplicationController
             }
         }
 
-        // Dynamic field values
+        // Dynamic field values (join both code fields and legacy fields safely)
         $fvStmt = $db->prepare("
             SELECT afv.field_name, afv.field_value,
-                   dtf.label_en, dtf.label_hi, dtf.field_type
+                   COALESCE(acf.label, dtf.label_en, afv.field_name) AS label_en,
+                   dtf.label_hi,
+                   COALESCE(acf.field_type, dtf.field_type, 'text') AS field_type
             FROM application_field_values afv
-            JOIN data_type_fields dtf ON afv.field_id = dtf.id
+            LEFT JOIN data_type_fields dtf ON afv.field_id = dtf.id
+            LEFT JOIN application_code_fields acf ON afv.code_field_id = acf.id
             WHERE afv.application_id = ?
-            ORDER BY dtf.sort_order ASC, dtf.id ASC
+            ORDER BY COALESCE(acf.sort_order, dtf.sort_order, 999) ASC, afv.id ASC
         ");
         $fvStmt->execute([$appId]);
         $fieldValues = $fvStmt->fetchAll(PDO::FETCH_ASSOC);
@@ -773,8 +791,8 @@ class ApplicationController
             $params[':data_type_id'] = $dataTypeId;
         }
         if (!empty($state)) {
-            $where[] = "(d.state = :state OR EXISTS (SELECT 1 FROM application_field_values afv WHERE afv.application_id = a.id AND afv.field_name = 'state' AND afv.field_value = :state_fv))";
-            $params[':state'] = $state;
+            $where[] = "(d.state = :state_d OR EXISTS (SELECT 1 FROM application_field_values afv WHERE afv.application_id = a.id AND afv.field_name = 'state' AND afv.field_value = :state_fv))";
+            $params[':state_d'] = $state;
             $params[':state_fv'] = $state;
         }
         if (!empty($districtId)) {
@@ -786,13 +804,18 @@ class ApplicationController
             $params[':block_id'] = $blockId;
         }
         if (!empty($appCode)) {
-            $where[] = "(a.applicant_identifier LIKE :app_code_like OR EXISTS (SELECT 1 FROM application_field_values afv WHERE afv.application_id = a.id AND afv.field_name = 'application_code' AND UPPER(afv.field_value) = :app_code))";
+            $where[] = "(a.applicant_identifier LIKE :app_code_like OR a.application_code = :app_code_exact OR EXISTS (SELECT 1 FROM application_field_values afv WHERE afv.application_id = a.id AND afv.field_name = 'application_code' AND UPPER(afv.field_value) = :app_code_fv))";
             $params[':app_code_like'] = $appCode . '%';
-            $params[':app_code'] = $appCode;
+            $params[':app_code_exact'] = $appCode;
+            $params[':app_code_fv'] = $appCode;
         }
         if (!empty($search)) {
-            $where[] = "(a.app_ref LIKE :search OR a.applicant_name LIKE :search OR a.applicant_mobile LIKE :search OR a.applicant_identifier LIKE :search)";
-            $params[':search'] = "%{$search}%";
+            $where[] = "(a.app_ref LIKE :search_ref OR a.applicant_name LIKE :search_name OR a.applicant_mobile LIKE :search_mobile OR a.applicant_identifier LIKE :search_number)";
+            $searchVal = "%{$search}%";
+            $params[':search_ref'] = $searchVal;
+            $params[':search_name'] = $searchVal;
+            $params[':search_mobile'] = $searchVal;
+            $params[':search_number'] = $searchVal;
         }
 
         $whereClause = implode(' AND ', $where);

@@ -42,8 +42,13 @@ class ReconciliationController
         }
 
         if (!empty($search)) {
-            $where[] = "(t.order_id LIKE :search OR t.provider_txn_id LIKE :search OR t.provider_utr LIKE :search OR u.name LIKE :search OR u.mobile LIKE :search)";
-            $params[':search'] = "%{$search}%";
+            $where[] = "(t.order_id LIKE :search_oid OR t.provider_txn_id LIKE :search_txnid OR t.provider_utr LIKE :search_utr OR u.name LIKE :search_uname OR u.mobile LIKE :search_umobile)";
+            $searchVal = "%{$search}%";
+            $params[':search_oid'] = $searchVal;
+            $params[':search_txnid'] = $searchVal;
+            $params[':search_utr'] = $searchVal;
+            $params[':search_uname'] = $searchVal;
+            $params[':search_umobile'] = $searchVal;
         }
 
         $whereClause = implode(' AND ', $where);

@@ -448,37 +448,71 @@ class WhatsAppNotificationService
     }
 
     /**
-     * Build standard, English-only WhatsApp message for new application
-     * Does NOT include Aadhaar, wallet balance, documents, or sensitive payment details.
+     * Build clean WhatsApp message for application notification.
+     * Strictly includes ONLY: Applicant, Application No, Location, and filled input fields.
+     * Contains NO system boilerplate, NO references, NO status, and NO application codes.
      */
     public static function buildMessage(array $data): string
     {
         $applicantName = trim((string)($data['applicant_name'] ?? 'Applicant'));
         $applicationNumber = trim((string)($data['application_number'] ?? ($data['applicant_identifier'] ?? '')));
-        $appRef = trim((string)($data['app_ref'] ?? ''));
-        $districtName = trim((string)($data['district_name'] ?? 'District'));
-        $blockName = trim((string)($data['block_name'] ?? 'Block'));
-
-        if ($applicationNumber === '') {
-            $applicationNumber = $appRef;
-        }
+        $districtName = trim((string)($data['district_name'] ?? ''));
+        $blockName = trim((string)($data['block_name'] ?? ''));
 
         $lines = [];
-        $lines[] = "Applicant: {$applicantName}";
-        $lines[] = "Application No: {$applicationNumber}";
-        $lines[] = "Location: {$districtName} > {$blockName}";
+        if ($applicantName !== '') {
+            $lines[] = "Applicant: {$applicantName}";
+        }
+        if ($applicationNumber !== '') {
+            $lines[] = "Application No: {$applicationNumber}";
+        }
+        if ($districtName !== '' && $blockName !== '') {
+            $lines[] = "Location: {$districtName} > {$blockName}";
+        } elseif ($districtName !== '') {
+            $lines[] = "Location: {$districtName}";
+        }
 
-        // Include only user-inputted dynamic fields (e.g. Aadhaar No, Registration No)
+        // Keys to strictly exclude (system internals, boilerplate, references, status)
         $skipKeys = [
             'applicant_name', 'application_number', 'applicant_identifier',
             'app_ref', 'district_name', 'block_name', 'application_code',
             'state', 'status', 'assigned_operator_id', 'district_id', 'block_id',
-            'user_id', 'created_at', 'updated_at', 'fields', 'raw_item'
+            'user_id', 'created_at', 'updated_at', 'fields', 'raw_item',
+            'field_values', 'form_data'
         ];
 
+        $handledKeys = [];
+
+        // 1. Process structured fields array if present
+        if (!empty($data['fields']) && is_array($data['fields'])) {
+            foreach ($data['fields'] as $f) {
+                if (!is_array($f)) continue;
+                $fName = strtolower(trim((string)($f['field_name'] ?? '')));
+                $fType = strtolower(trim((string)($f['field_type'] ?? '')));
+                if ($fType === 'file' || in_array($fName, ['applicant_name', 'application_number', 'applicant_identifier'], true)) {
+                    continue;
+                }
+                $valStr = trim((string)($f['field_value'] ?? ''));
+                if ($valStr === '') {
+                    continue;
+                }
+                $handledKeys[$fName] = true;
+
+                if (in_array($fName, ['aadhaar_number', 'aadhaar_no', 'aadhaar', 'uid'], true)) {
+                    $lines[] = "Aadhaar No: {$valStr}";
+                } elseif (in_array($fName, ['registration_number', 'reg_no'], true)) {
+                    $lines[] = "Registration No: {$valStr}";
+                } else {
+                    $label = !empty($f['field_label']) ? trim((string)$f['field_label']) : ucwords(str_replace(['_', '-'], ' ', $fName));
+                    $lines[] = "{$label}: {$valStr}";
+                }
+            }
+        }
+
+        // 2. Process any other input key-values passed in $data
         foreach ($data as $key => $val) {
             $keyLower = strtolower(trim((string)$key));
-            if (in_array($keyLower, $skipKeys, true) || is_array($val) || is_object($val)) {
+            if (isset($handledKeys[$keyLower]) || in_array($keyLower, $skipKeys, true) || is_array($val) || is_object($val)) {
                 continue;
             }
             $valStr = trim((string)$val);
@@ -486,17 +520,17 @@ class WhatsAppNotificationService
                 continue;
             }
 
-            if ($keyLower === 'aadhaar_number' || $keyLower === 'aadhaar_no' || $keyLower === 'aadhaar' || $keyLower === 'uid') {
+            if (in_array($keyLower, ['aadhaar_number', 'aadhaar_no', 'aadhaar', 'uid'], true)) {
                 $lines[] = "Aadhaar No: {$valStr}";
-            } elseif ($keyLower === 'registration_number' || $keyLower === 'registration_no' || $keyLower === 'reg_no') {
+            } elseif (in_array($keyLower, ['registration_number', 'reg_no'], true)) {
                 $lines[] = "Registration No: {$valStr}";
             } else {
-                $label = ucwords(str_replace(['_', '-'], ' ', $keyLower));
+                $label = ucwords(str_replace(['_', '-'], ' ', (string)$key));
                 $lines[] = "{$label}: {$valStr}";
             }
         }
 
-        return implode("\n", $lines);
+        return implode("\n", array_values(array_unique($lines)));
     }
 
     /**
@@ -516,8 +550,8 @@ class WhatsAppNotificationService
     ): array {
         $settings = self::getSettings();
 
-        // Fetch dynamic fields (such as aadhaar_number) for this application if not provided
-        if ($applicationId > 0) {
+        // Fetch dynamic fields from DB if not already supplied
+        if ($applicationId > 0 && empty($appData['fields'])) {
             try {
                 $fStmt = $db->prepare("SELECT field_name, field_value FROM application_field_values WHERE application_id = ?");
                 $fStmt->execute([$applicationId]);
@@ -528,9 +562,7 @@ class WhatsAppNotificationService
                         $appData[$fn] = $fv;
                     }
                 }
-            } catch (\Throwable $e) {
-                // Ignore gracefully
-            }
+            } catch (\Throwable $e) {}
         }
 
         $messageBody = self::buildMessage($appData);

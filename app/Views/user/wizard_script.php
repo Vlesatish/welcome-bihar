@@ -139,6 +139,12 @@ document.addEventListener('DOMContentLoaded', function () {
             clearRowError(tr, 'block');
             clearRowError(tr, 'code');
             resetRowDynamicFields(tr);
+            setRowRate(tr, 0, '—');
+            const codeSelect = tr.querySelector('.row-code');
+            if (codeSelect) {
+                codeSelect.innerHTML = '<option value="">-- Select Block First --</option>';
+                codeSelect.disabled = true;
+            }
             populateBlocksForRow(tr, this.value, null, null);
         });
 
@@ -146,6 +152,12 @@ document.addEventListener('DOMContentLoaded', function () {
             clearRowError(tr, 'block');
             clearRowError(tr, 'code');
             resetRowDynamicFields(tr);
+            setRowRate(tr, 0, '—');
+            const codeSelect = tr.querySelector('.row-code');
+            if (codeSelect) {
+                codeSelect.innerHTML = '<option value="">Loading rates...</option>';
+                codeSelect.disabled = true;
+            }
             populateCodesForRow(tr, districtSelect.value, this.value, null);
         });
 
@@ -159,14 +171,13 @@ document.addEventListener('DOMContentLoaded', function () {
 
             if (codeVal && rate > 0) {
                 setRowRate(tr, rate, '₹' + rate.toFixed(2));
-                numberInput.placeholder = `e.g. ${codeVal}/2026/...`;
+                numberInput.placeholder = (codeVal === 'LABOURCARD') ? 'Application Number' : `e.g. ${codeVal}/2026/...`;
+                loadFieldsForCode(tr, codeVal);
             } else {
                 setRowRate(tr, 0, '—');
                 numberInput.placeholder = 'Application Number';
-            }
-
-            if (codeVal) {
-                loadFieldsForCode(tr, codeVal);
+                const statusEl = tr.querySelector('.row-code-status');
+                if (statusEl) statusEl.innerHTML = '';
             }
 
             validateRowPrefix(tr);
@@ -199,26 +210,41 @@ document.addEventListener('DOMContentLoaded', function () {
         const rowId = tr.id;
         const statusEl = tr.querySelector('.row-code-status');
         const detailsCell = tr.querySelector('.row-details-cell');
+        const districtSelect = tr.querySelector('.row-district');
+        const blockSelect = tr.querySelector('.row-block');
+        const districtId = districtSelect ? districtSelect.value : '';
+        const blockId = blockSelect ? blockSelect.value : '';
 
         statusEl.innerHTML = '<span class="text-primary"><i class="spinner-border spinner-border-sm me-1" style="width: 0.65rem; height: 0.65rem;"></i>Loading form fields...</span>';
         detailsCell.innerHTML = '<span class="spinner-border spinner-border-sm text-primary"></span>';
 
-        if (formFieldsCache[code]) {
-            applyLoadedFields(tr, code, formFieldsCache[code]);
+        if (!districtId || !blockId || !code) {
+            tr.dataset.formConfigured = '0';
+            statusEl.innerHTML = '';
+            detailsCell.innerHTML = '<span class="text-muted small">—</span>';
+            resetRowDynamicFields(tr);
+            updateTotals();
+            return;
+        }
+
+        const cacheKey = districtId + '_' + blockId + '_' + code;
+        if (formFieldsCache[cacheKey]) {
+            applyLoadedFields(tr, code, formFieldsCache[cacheKey]);
             return;
         }
 
         try {
-            const res = await fetch(`/api/application-code-fields?application_code=${encodeURIComponent(code)}`);
+            const res = await fetch(`/api/application-code-fields?district_id=${encodeURIComponent(districtId)}&block_id=${encodeURIComponent(blockId)}&application_code=${encodeURIComponent(code)}`);
             const data = await res.json();
 
-            if (data.success && data.configured && Array.isArray(data.fields) && data.fields.length > 0) {
-                formFieldsCache[code] = data.fields;
+            if (res.ok && data.success && data.configured && Array.isArray(data.fields) && data.fields.length > 0) {
+                formFieldsCache[cacheKey] = data.fields;
                 applyLoadedFields(tr, code, data.fields);
             } else {
                 tr.dataset.formConfigured = '0';
-                statusEl.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle me-1"></i>Application form is not configured for this code.</span>';
-                detailsCell.innerHTML = '<span class="badge bg-danger-subtle text-danger border border-danger">Not Configured</span>';
+                const errMsg = (data && data.error) ? data.error : 'Application form is not configured for this code.';
+                statusEl.innerHTML = `<span class="text-danger"><i class="bi bi-x-circle me-1"></i>${escapeHtml(errMsg)}</span>`;
+                detailsCell.innerHTML = '<span class="badge bg-danger-subtle text-danger border border-danger">Unavailable</span>';
                 window.rowFieldDefs[rowId] = [];
                 window.rowDynamicData[rowId] = {};
                 updateTotals();
@@ -227,6 +253,8 @@ document.addEventListener('DOMContentLoaded', function () {
             statusEl.innerHTML = '<span class="text-danger">Failed to load fields</span>';
             detailsCell.innerHTML = '<span class="text-danger small">—</span>';
             tr.dataset.formConfigured = '0';
+            window.rowFieldDefs[rowId] = [];
+            window.rowDynamicData[rowId] = {};
             updateTotals();
         }
     }

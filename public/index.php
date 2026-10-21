@@ -410,6 +410,11 @@ try {
             $ctrl->reorder();
             break;
 
+        case '/admin/application-code-forms/init-core':
+            $ctrl = new \App\Controllers\ApplicationCodeFieldController();
+            $ctrl->initializeCoreFields();
+            break;
+
         case '/admin/settings':
             $ctrl = new \App\Controllers\SettingsController();
             if ($requestMethod === 'POST') $ctrl->save();

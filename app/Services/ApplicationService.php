@@ -89,159 +89,36 @@ class ApplicationService
         $distributorCommission = (float)$pricing['final_commission'];
         $distributorId = $user['parent_distributor_id'] ? (int)$user['parent_distributor_id'] : null;
 
-        // 4. Fetch Data Type Fields
-        $fStmt = $db->prepare("SELECT * FROM data_type_fields WHERE data_type_id = ? ORDER BY sort_order ASC, id ASC");
-        $fStmt->execute([$dataTypeId]);
-        $fields = $fStmt->fetchAll();
-
-        // 5. Validate Fields & Handle Document Uploads
-        $validatedData = [];
-        $applicantName = '';
-        $applicantMobile = '';
-        $applicantIdentifier = null;
-
-        $uploadDir = dirname(dirname(__DIR__)) . '/public/uploads/documents';
-        if (!is_dir($uploadDir)) {
-            mkdir($uploadDir, 0755, true);
+        $submittedAppCode = strtoupper(trim((string)($submittedValues['application_code'] ?? ($submittedValues['app_code'] ?? ''))));
+        if ($submittedAppCode === '') {
+            $submittedAppCode = 'BICCO';
         }
 
-        foreach ($fields as $field) {
-            $fName = $field['field_name'];
-            $fieldType = $field['field_type'];
-            $val = '';
+        // 4. Validate Submitted Fields using ApplicationCodeFieldService as single validation source
+        $trackedFiles = [];
+        $validationRes = ApplicationCodeFieldService::validateSubmittedFields(
+            $submittedAppCode,
+            $submittedValues,
+            $dataTypeId,
+            $db,
+            $uploadedFiles,
+            $trackedFiles
+        );
 
-            if ($fieldType === 'file') {
-                $file = $uploadedFiles[$fName] ?? null;
-                $hasFile = ($file && isset($file['error']) && $file['error'] === UPLOAD_ERR_OK && $file['size'] > 0);
-
-                if ($field['is_required'] && !$hasFile) {
-                    throw new Exception("Document '{$field['label_en']}' is required.");
-                }
-
-                if ($hasFile) {
-                    // Check file extension
-                    $origExt = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-                    $allowedExts = array_map('trim', explode(',', strtolower($field['file_types'] ?: 'pdf,jpg,jpeg,png')));
-                    $disallowedExts = ['php', 'phtml', 'php3', 'php4', 'php5', 'phps', 'cgi', 'pl', 'exe', 'sh', 'bat', 'cmd', 'js', 'html', 'htm'];
-
-                    if (in_array($origExt, $disallowedExts, true) || !in_array($origExt, $allowedExts, true)) {
-                        throw new Exception("File format '.{$origExt}' not permitted for '{$field['label_en']}'. Allowed: " . implode(', ', $allowedExts));
-                    }
-
-                    // Check file size
-                    $maxSizeMb = (int)($field['max_size_mb'] ?: 2);
-                    $maxSizeBytes = $maxSizeMb * 1024 * 1024;
-                    if ($file['size'] > $maxSizeBytes) {
-                        throw new Exception("File for '{$field['label_en']}' exceeds max allowed size of {$maxSizeMb}MB.");
-                    }
-
-                    // Validate MIME type
-                    $finfo = finfo_open(FILEINFO_MIME_TYPE);
-                    $mime = finfo_file($finfo, $file['tmp_name']);
-                    finfo_close($finfo);
-
-                    $allowedMimes = [
-                        'pdf' => 'application/pdf',
-                        'jpg' => 'image/jpeg',
-                        'jpeg' => 'image/jpeg',
-                        'png' => 'image/png'
-                    ];
-
-                    $safeMime = false;
-                    foreach ($allowedExts as $ext) {
-                        if (isset($allowedMimes[$ext]) && $allowedMimes[$ext] === $mime) {
-                            $safeMime = true;
-                            break;
-                        }
-                    }
-
-                    if (!$safeMime && !str_starts_with($mime, 'image/') && $mime !== 'application/pdf') {
-                        throw new Exception("Invalid file content MIME type for '{$field['label_en']}'.");
-                    }
-
-                    // Store safely
-                    $safeFileName = 'doc_' . date('Ymd_His') . '_' . bin2hex(random_bytes(6)) . '.' . $origExt;
-                    $targetPath = $uploadDir . '/' . $safeFileName;
-
-                    if (!move_uploaded_file($file['tmp_name'], $targetPath)) {
-                        throw new Exception("Failed to upload document for '{$field['label_en']}'. Please try again.");
-                    }
-
-                    $val = '/uploads/documents/' . $safeFileName;
-                }
-            } else {
-                $val = trim((string)($submittedValues[$fName] ?? ''));
-                if ($val === '') {
-                    if (in_array($fName, ['applicant_mobile', 'mobile_no', 'mobile', 'contact_mobile', 'phone'], true)) {
-                        $val = trim((string)($submittedValues['applicant_mobile'] ?? $submittedValues['mobile'] ?? $submittedValues['mobile_no'] ?? $submittedValues['contact_mobile'] ?? ''));
-                    } elseif (in_array($fName, ['applicant_name', 'name', 'full_name'], true)) {
-                        $val = trim((string)($submittedValues['applicant_name'] ?? $submittedValues['name'] ?? $submittedValues['full_name'] ?? ''));
-                    } elseif (in_array($fName, ['application_number', 'application_no', 'app_number'], true)) {
-                        $val = trim((string)($submittedValues['application_number'] ?? $submittedValues['application_no'] ?? $submittedValues['app_number'] ?? ''));
-                    } elseif (in_array($fName, ['application_code', 'app_code'], true)) {
-                        $val = trim((string)($submittedValues['application_code'] ?? $submittedValues['app_code'] ?? ''));
-                    }
-                }
-                if ($fName === 'state' && $val === '') {
-                    if ($districtId > 0) {
-                        $stStmt = $db->prepare("SELECT state FROM districts WHERE id = ?");
-                        $stStmt->execute([$districtId]);
-                        $val = $stStmt->fetchColumn() ?: 'Bihar';
-                    } else {
-                        $val = 'Bihar';
-                    }
-                }
-
-                // Required check
-                if ($field['is_required'] && $val === '') {
-                    throw new Exception("Field '{$field['label_en']}' is required.");
-                }
-
-                // Pattern validation
-                if ($val !== '' && !empty($field['validation_pattern'])) {
-                    $pattern = '~' . str_replace('~', '\~', $field['validation_pattern']) . '~u';
-                    if (!@preg_match($pattern, $val)) {
-                        throw new Exception("Field '{$field['label_en']}' has an invalid format.");
-                    }
-                }
-            }
-
-            // Common field extraction
-            if (in_array($fName, ['applicant_name', 'head_of_family', 'name'], true) && empty($applicantName)) {
-                $applicantName = $val;
-            }
-            if (in_array($fName, ['mobile_no', 'applicant_mobile', 'mobile'], true) && empty($applicantMobile)) {
-                $applicantMobile = $val;
-            }
-            if ($fName === $dataType['duplicate_check_field'] || (!empty($field['is_unique']) && empty($applicantIdentifier))) {
-                $applicantIdentifier = $val;
-            }
-
-            $validatedData[$fName] = [
-                'field_id' => $field['id'],
-                'field_name' => $fName,
-                'value' => $val,
-                'is_unique' => (int)$field['is_unique']
-            ];
-        }
-
-        // Code and Application Number alignment check strictly for Block & District App Pass
-        if ($dataType['code'] === 'srv_block_app') {
-            $appCode = (string)($submittedValues['application_code'] ?? '');
-            $appNum = (string)($submittedValues['application_number'] ?? ($applicantIdentifier ?? ''));
-            self::validateApplicationCodeAndNumber($appCode, $appNum);
-        }
-
-        if (empty($applicantName)) {
-            $applicantName = 'Applicant';
-        }
+        $applicantName = $validationRes['core']['applicant_name'];
+        $applicantIdentifier = $validationRes['core']['application_number'];
+        $applicantMobile = $validationRes['core']['applicant_mobile'];
         if (empty($applicantMobile)) {
-            $applicantMobile = '9999999999';
+            $applicantMobile = !empty($submittedValues['applicant_mobile']) ? trim((string)$submittedValues['applicant_mobile']) : (!empty($user['mobile']) ? $user['mobile'] : '9999999999');
+        }
+
+        // 5. Code and Application Number alignment check strictly for Block & District App Pass
+        if ($dataType['code'] === 'srv_block_app') {
+            self::validateApplicationCodeAndNumber($submittedAppCode, $applicantIdentifier);
         }
 
         // 6. Check Duplicate Entry & Idempotency in this data type
         if (!empty($applicantIdentifier)) {
-            // Rapid duplicate/idempotency check (within 30 seconds)
             $idemStmt = $db->prepare("
                 SELECT id, app_ref FROM applications
                 WHERE user_id = ? AND applicant_identifier = ? AND created_at >= NOW() - INTERVAL 30 SECOND
@@ -292,14 +169,8 @@ class ApplicationService
             $lockStmt->execute([$userId]);
             $lockedBalance = (float)$lockStmt->fetchColumn();
 
-
             if ($feeAmount > 0 && $lockedBalance < $feeAmount) {
                 throw new Exception(__("insufficient_balance", "Insufficient wallet balance (Available: ₹" . number_format($lockedBalance, 2) . ", Required: ₹" . number_format($feeAmount, 2) . "). Please recharge your wallet."));
-            }
-
-            $submittedAppCode = strtoupper(trim((string)($submittedValues['application_code'] ?? ($submittedValues['app_code'] ?? ''))));
-            if (empty($submittedAppCode)) {
-                $submittedAppCode = 'WB-PASS';
             }
 
             $assignedOperatorId = StaffRoutingService::resolveOperatorForApplication($districtId, $blockId, $submittedAppCode, $db);
@@ -354,32 +225,13 @@ class ApplicationService
                 $db
             );
 
-            // Include any additional dynamic fields submitted (e.g. aadhaar_number)
-            $knownFieldNames = array_column($validatedData, 'field_name');
-            $skipSingleKeys = ['csrf_token', 'redirect', 'data_type_id', 'data_type_code', 'district_id', 'block_id'];
-            foreach ($submittedValues as $sKey => $sVal) {
-                if (in_array($sKey, $skipSingleKeys, true) || in_array($sKey, $knownFieldNames, true)) {
-                    continue;
-                }
-                $sValTrim = trim((string)$sVal);
-                if ($sValTrim !== '') {
-                    $validatedData[] = [
-                        'field_id' => null,
-                        'field_name' => $sKey,
-                        'value' => $sValTrim,
-                        'is_unique' => 0
-                    ];
-                    $knownFieldNames[] = $sKey;
-                }
-            }
-
-            // Insert dynamic field values
+            // Insert dynamic field values using code_field_id
             $insVal = $db->prepare("
-                INSERT INTO application_field_values (application_id, field_id, field_name, field_value, created_at)
-                VALUES (?, ?, ?, ?, NOW())
+                INSERT INTO application_field_values (application_id, field_id, code_field_id, field_name, field_value, created_at)
+                VALUES (?, ?, ?, ?, ?, NOW())
             ");
-            foreach ($validatedData as $f) {
-                $insVal->execute([$appId, $f['field_id'], $f['field_name'], $f['value']]);
+            foreach ($validationRes['fields'] as $f) {
+                $insVal->execute([$appId, null, $f['code_field_id'], $f['field_name'], $f['field_value']]);
             }
 
             // Initial status history
@@ -440,31 +292,30 @@ class ApplicationService
             );
 
             // Construct formData object for immediate client rendering without page reload
+            // Construct formData object for immediate client rendering without page reload
             $formDataAssoc = [];
-            foreach ($validatedData as $k => $f) {
-                $formDataAssoc[$k] = $f['value'];
+            foreach ($validationRes['fields'] as $f) {
+                $formDataAssoc[$f['field_name']] = $f['field_value'];
             }
             $distName = (string)$db->query("SELECT name FROM districts WHERE id = {$districtId}")->fetchColumn();
             $blkName = (string)$db->query("SELECT name FROM blocks WHERE id = {$blockId}")->fetchColumn();
             $formDataAssoc['district_name'] = $distName;
             $formDataAssoc['block_name'] = $blkName;
+            $formDataAssoc['applicant_name'] = $applicantName;
+            $formDataAssoc['application_number'] = $applicantIdentifier;
+            $formDataAssoc['mobile'] = $applicantMobile;
 
             $remainingBal = max(0.00, $lockedBalance - $feeAmount);
 
-            // Queue WhatsApp notification to active block operators for this application's district & block
+            // Queue WhatsApp notification (strictly user-filled inputs only)
             $waData = [
                 'applicant_name' => $applicantName,
-                'application_number' => $applicantIdentifier ?: ($submittedValues['application_number'] ?? $appRef),
-                'app_ref' => $appRef,
+                'application_number' => $applicantIdentifier ?: ($submittedValues['application_number'] ?? ''),
                 'district_name' => $distName,
                 'block_name' => $blkName,
-                'application_code' => $submittedAppCode
+                'fields' => $validationRes['fields']
             ];
-            foreach ($validatedData as $vf) {
-                if (empty($waData[$vf['field_name']])) {
-                    $waData[$vf['field_name']] = $vf['value'];
-                }
-            }
+
             WhatsAppNotificationService::queueSubmissionNotification(
                 $appId,
                 $districtId,
@@ -497,10 +348,11 @@ class ApplicationService
                 'created_at' => date('Y-m-d H:i:s'),
                 'message' => __("application_submitted_success", "Application submitted successfully! Reference: ") . $appRef
             ];
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             if ($db->inTransaction()) {
                 $db->rollBack();
             }
+            ApplicationCodeFieldService::cleanupTrackedFiles($trackedFiles);
             throw $e;
         }
     }
@@ -548,11 +400,7 @@ class ApplicationService
 
         $distributorId = $user['parent_distributor_id'] ? (int)$user['parent_distributor_id'] : null;
 
-        // Fetch Data Type Fields
-        $fStmt = $db->prepare("SELECT * FROM data_type_fields WHERE data_type_id = ? ORDER BY sort_order ASC, id ASC");
-        $fStmt->execute([$dataTypeId]);
-        $fields = $fStmt->fetchAll();
-
+        $allBatchTrackedFiles = [];
         $seenBatchIdentifiers = [];
         $preparedItems = [];
         $priceChanges = [];
@@ -565,6 +413,7 @@ class ApplicationService
             $blockId = (int)($item['block_id'] ?? 0);
 
             if ($districtId <= 0 || $blockId <= 0) {
+                ApplicationCodeFieldService::cleanupTrackedFiles($allBatchTrackedFiles);
                 throw new Exception("Row #{$rowNum}: Please select a valid District and Block.");
             }
 
@@ -573,6 +422,7 @@ class ApplicationService
             $dChk->execute([$districtId]);
             $distRow = $dChk->fetch(PDO::FETCH_ASSOC);
             if (!$distRow) {
+                ApplicationCodeFieldService::cleanupTrackedFiles($allBatchTrackedFiles);
                 throw new Exception("Row #{$rowNum}: Selected District does not exist or is inactive.");
             }
 
@@ -581,6 +431,7 @@ class ApplicationService
             $bChk->execute([$blockId, $districtId]);
             $blkRow = $bChk->fetch(PDO::FETCH_ASSOC);
             if (!$blkRow) {
+                ApplicationCodeFieldService::cleanupTrackedFiles($allBatchTrackedFiles);
                 throw new Exception("Row #{$rowNum}: Selected Block does not belong to the selected District or is inactive.");
             }
 
@@ -593,24 +444,53 @@ class ApplicationService
             $sbaChk->execute([$dataTypeId, $districtId, $blockId]);
             $sbaStatus = $sbaChk->fetchColumn();
             if ($sbaStatus !== 'LIVE') {
+                ApplicationCodeFieldService::cleanupTrackedFiles($allBatchTrackedFiles);
                 throw new Exception("Row #{$rowNum}: Service is temporarily unavailable for the selected block ({$blkRow['name']}, {$distRow['name']}).");
-            }
-
-
-            // Normalise & validate submitted fields
-            $applicantName = trim((string)($item['applicant_name'] ?? $item['name'] ?? ''));
-            if ($applicantName === '') {
-                throw new Exception("Row #{$rowNum}: Applicant / Firm Name is required.");
             }
 
             $appCode = strtoupper(trim((string)($item['application_code'] ?? $item['app_code'] ?? '')));
             if ($appCode === '') {
+                ApplicationCodeFieldService::cleanupTrackedFiles($allBatchTrackedFiles);
                 throw new Exception("Row #{$rowNum}: Application Code is required.");
             }
 
-            $appNumber = trim((string)($item['application_number'] ?? $item['app_number'] ?? ''));
-            if ($appNumber === '') {
-                throw new Exception("Row #{$rowNum}: Application Number is required.");
+            // Calculate exact server fee
+            try {
+                $pricing = PricingService::calculatePrice($dataTypeId, $districtId, $blockId, $item);
+                $serverFee = (float)$pricing['final_fee'];
+                $serverCommission = (float)$pricing['final_commission'];
+                if ($serverFee <= 0) {
+                    throw new Exception("No active rate is configured for the selected block and application code.");
+                }
+            } catch (Exception $pe) {
+                ApplicationCodeFieldService::cleanupTrackedFiles($allBatchTrackedFiles);
+                throw new Exception("Row #{$rowNum}: " . $pe->getMessage() . " ({$distRow['name']} > {$blkRow['name']} > {$appCode})");
+            }
+
+            // Validate submitted fields using ApplicationCodeFieldService as single validation source
+            try {
+                $rowFiles = [];
+                if (!empty($_FILES["batch_files_{$idx}"])) {
+                    $rowFiles = $_FILES["batch_files_{$idx}"];
+                }
+                $validationRes = ApplicationCodeFieldService::validateSubmittedFields(
+                    $appCode,
+                    $item,
+                    $dataTypeId,
+                    $db,
+                    $rowFiles,
+                    $allBatchTrackedFiles
+                );
+            } catch (Exception $ve) {
+                ApplicationCodeFieldService::cleanupTrackedFiles($allBatchTrackedFiles);
+                throw new Exception("Row #{$rowNum}: " . $ve->getMessage());
+            }
+
+            $applicantName = $validationRes['core']['applicant_name'];
+            $appNumber = $validationRes['core']['application_number'];
+            $applicantMobile = $validationRes['core']['applicant_mobile'];
+            if (empty($applicantMobile)) {
+                $applicantMobile = !empty($item['applicant_mobile']) ? trim((string)$item['applicant_mobile']) : (!empty($user['mobile']) ? (string)$user['mobile'] : '9999999999');
             }
 
             if ($dataType['code'] === 'srv_block_app') {
@@ -620,6 +500,7 @@ class ApplicationService
             // Intra-batch duplicate check
             $normalisedIdentifier = strtoupper($appNumber);
             if (isset($seenBatchIdentifiers[$normalisedIdentifier])) {
+                ApplicationCodeFieldService::cleanupTrackedFiles($allBatchTrackedFiles);
                 throw new Exception("Row #{$rowNum}: Repeated application number '{$appNumber}' found in the batch (already added at Row #{$seenBatchIdentifiers[$normalisedIdentifier]}). Each application in a batch must be unique.");
             }
             $seenBatchIdentifiers[$normalisedIdentifier] = $rowNum;
@@ -633,6 +514,7 @@ class ApplicationService
             $dupStmt->execute([$dataTypeId, $appNumber]);
             $existing = $dupStmt->fetch();
             if ($existing) {
+                ApplicationCodeFieldService::cleanupTrackedFiles($allBatchTrackedFiles);
                 throw new Exception("Row #{$rowNum}: An active application with number '{$appNumber}' already exists in system (Ref: {$existing['app_ref']}).");
             }
 
@@ -644,19 +526,8 @@ class ApplicationService
             ");
             $idemStmt->execute([$userId, $appNumber]);
             if ($idemStmt->fetch()) {
+                ApplicationCodeFieldService::cleanupTrackedFiles($allBatchTrackedFiles);
                 throw new Exception("Row #{$rowNum}: A request with application number '{$appNumber}' was submitted less than 30 seconds ago. Please wait.");
-            }
-
-            // Calculate exact server fee
-            try {
-                $pricing = PricingService::calculatePrice($dataTypeId, $districtId, $blockId, $item);
-                $serverFee = (float)$pricing['final_fee'];
-                $serverCommission = (float)$pricing['final_commission'];
-                if ($serverFee <= 0) {
-                    throw new Exception("No active rate is configured for the selected block and application code.");
-                }
-            } catch (Exception $pe) {
-                throw new Exception("Row #{$rowNum}: " . $pe->getMessage() . " ({$distRow['name']} > {$blkRow['name']} > {$appCode})");
             }
 
             // Check if client price changed
@@ -672,61 +543,6 @@ class ApplicationService
                 ];
             }
 
-            // Build validated fields array
-            $itemValidatedFields = [];
-            foreach ($fields as $f) {
-                $fName = $f['field_name'];
-                $val = trim((string)($item[$fName] ?? ''));
-                if ($val === '') {
-                    if ($fName === 'applicant_name') $val = $applicantName;
-                    elseif ($fName === 'application_code') $val = $appCode;
-                    elseif ($fName === 'application_number') $val = $appNumber;
-                    elseif ($fName === 'state') $val = trim((string)($item['state'] ?? 'Bihar'));
-                }
-                $itemValidatedFields[] = [
-                    'field_id' => $f['id'],
-                    'field_name' => $fName,
-                    'value' => $val
-                ];
-            }
-
-            // Include any additional dynamic fields (e.g. aadhaar_number, registration_number) from submitted item
-            $knownFields = array_column($itemValidatedFields, 'field_name');
-            $skipKeys = ['district_id', 'block_id', 'client_fee', 'fee', 'row_num', 'csrf_token'];
-            foreach ($item as $iKey => $iVal) {
-                if (in_array($iKey, $skipKeys, true) || in_array($iKey, $knownFields, true)) {
-                    continue;
-                }
-                if ($iKey === 'fields' && is_array($iVal)) {
-                    foreach ($iVal as $fKey => $fVal) {
-                        if (is_scalar($fVal) && !in_array($fKey, $knownFields, true)) {
-                            $fValTrim = trim((string)$fVal);
-                            if ($fValTrim !== '') {
-                                $itemValidatedFields[] = [
-                                    'field_id' => null,
-                                    'field_name' => $fKey,
-                                    'value' => $fValTrim
-                                ];
-                                $knownFields[] = $fKey;
-                            }
-                        }
-                    }
-                    continue;
-                }
-                if (!is_scalar($iVal)) {
-                    continue;
-                }
-                $valTrim = trim((string)$iVal);
-                if ($valTrim !== '') {
-                    $itemValidatedFields[] = [
-                        'field_id' => null,
-                        'field_name' => $iKey,
-                        'value' => $valTrim
-                    ];
-                    $knownFields[] = $iKey;
-                }
-            }
-
             $totalBatchFee += $serverFee;
 
             $preparedItems[] = [
@@ -734,19 +550,20 @@ class ApplicationService
                 'district_id' => $districtId,
                 'block_id' => $blockId,
                 'applicant_name' => $applicantName,
-                'applicant_mobile' => !empty($item['applicant_mobile']) ? trim($item['applicant_mobile']) : (!empty($user['mobile']) ? $user['mobile'] : '9999999999'),
+                'applicant_mobile' => $applicantMobile,
                 'applicant_identifier' => $appNumber,
                 'application_code' => $appCode,
                 'fee' => $serverFee,
                 'commission' => ($distributorId && $serverCommission > 0) ? $serverCommission : 0.00,
                 'rate_note' => $pricing['rate_note'] ?? 'Standard Base Rate',
-                'fields' => $itemValidatedFields,
+                'fields' => $validationRes['fields'],
                 'raw_item' => $item
             ];
         }
 
         // If prices changed and user has not confirmed yet, return re-acceptance required
         if (!empty($priceChanges) && empty($options['accept_price_change'])) {
+            ApplicationCodeFieldService::cleanupTrackedFiles($allBatchTrackedFiles);
             return [
                 'success' => false,
                 'price_changed' => true,
@@ -759,6 +576,7 @@ class ApplicationService
         // Check Wallet Balance before starting transaction
         $currentBalance = WalletService::getBalance($userId);
         if ($totalBatchFee > 0 && $currentBalance < $totalBatchFee) {
+            ApplicationCodeFieldService::cleanupTrackedFiles($allBatchTrackedFiles);
             $shortfall = $totalBatchFee - $currentBalance;
             throw new Exception("Insufficient Wallet Balance! Required: ₹" . number_format($totalBatchFee, 2) . ", Available: ₹" . number_format($currentBalance, 2) . ". Shortfall: ₹" . number_format($shortfall, 2) . ". Please recharge your wallet.");
         }
@@ -796,7 +614,6 @@ class ApplicationService
             $lockStmt->execute([$userId]);
             $lockedBalance = (float)$lockStmt->fetchColumn();
 
-
             if ($totalBatchFee > 0 && $lockedBalance < $totalBatchFee) {
                 $shortfall = $totalBatchFee - $lockedBalance;
                 throw new Exception("Insufficient Wallet Balance! Required: ₹" . number_format($totalBatchFee, 2) . ", Available: ₹" . number_format($lockedBalance, 2) . ". Shortfall: ₹" . number_format($shortfall, 2) . ". Please recharge your wallet.");
@@ -819,8 +636,8 @@ class ApplicationService
             ");
 
             $insVal = $db->prepare("
-                INSERT INTO application_field_values (application_id, field_id, field_name, field_value, created_at)
-                VALUES (?, ?, ?, ?, NOW())
+                INSERT INTO application_field_values (application_id, field_id, code_field_id, field_name, field_value, created_at)
+                VALUES (?, ?, ?, ?, ?, NOW())
             ");
 
             $insHist = $db->prepare("
@@ -879,7 +696,7 @@ class ApplicationService
                 );
 
                 foreach ($prep['fields'] as $f) {
-                    $insVal->execute([$appId, $f['field_id'], $f['field_name'], $f['value']]);
+                    $insVal->execute([$appId, null, $f['code_field_id'], $f['field_name'], $f['field_value']]);
                 }
 
                 $insHist->execute([
@@ -924,18 +741,14 @@ class ApplicationService
                     'isCommissionPaid' => false
                 ];
 
-                // Queue WhatsApp notification directly and only to the assigned operator for this application
+                // Queue WhatsApp notification (strictly user-filled inputs only)
                 $waItemData = [
                     'applicant_name' => $prep['applicant_name'],
                     'application_number' => $prep['applicant_identifier'],
-                    'app_ref' => $appRef,
                     'district_name' => $distName,
                     'block_name' => $blkName,
-                    'application_code' => $prep['application_code']
+                    'fields' => $prep['fields']
                 ];
-                foreach ($prep['fields'] as $pf) {
-                    $waItemData[$pf['field_name']] = $pf['value'];
-                }
                 WhatsAppNotificationService::queueSubmissionNotification(
                     $appId,
                     $prep['district_id'],
@@ -1004,10 +817,11 @@ class ApplicationService
                 'applications' => $createdApplications,
                 'message' => "Successfully submitted " . count($createdApplications) . " applications (Batch #{$batchRef})! Total fee ₹" . number_format($totalBatchFee, 2) . " debited."
             ];
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             if ($db->inTransaction()) {
                 $db->rollBack();
             }
+            ApplicationCodeFieldService::cleanupTrackedFiles($allBatchTrackedFiles);
             throw $e;
         }
     }

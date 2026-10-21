@@ -105,8 +105,15 @@ public function adminApplications(): void
         }
 
         if (!empty($search)) {
-            $where[] = "(a.applicant_identifier LIKE :search OR a.applicant_name LIKE :search OR a.applicant_mobile LIKE :search OR a.app_ref LIKE :search OR a.batch_ref LIKE :search OR u.name LIKE :search OR u.mobile LIKE :search)";
-            $params[':search'] = "%{$search}%";
+            $where[] = "(a.applicant_identifier LIKE :search_number OR a.applicant_name LIKE :search_name OR a.applicant_mobile LIKE :search_mobile OR a.app_ref LIKE :search_ref OR a.batch_ref LIKE :search_batch OR u.name LIKE :search_uname OR u.mobile LIKE :search_umobile)";
+            $searchVal = "%{$search}%";
+            $params[':search_number'] = $searchVal;
+            $params[':search_name'] = $searchVal;
+            $params[':search_mobile'] = $searchVal;
+            $params[':search_ref'] = $searchVal;
+            $params[':search_batch'] = $searchVal;
+            $params[':search_uname'] = $searchVal;
+            $params[':search_umobile'] = $searchVal;
         }
 
         if ($dateFilter === 'TODAY') {
@@ -128,9 +135,9 @@ public function adminApplications(): void
         }
 
         if (!empty($appCode)) {
-            $where[] = "(a.applicant_identifier LIKE :app_code_like OR EXISTS (SELECT 1 FROM application_field_values afv WHERE afv.application_id = a.id AND afv.field_name = 'application_code' AND UPPER(afv.field_value) = :app_code))";
+            $where[] = "(a.applicant_identifier LIKE :app_code_like OR EXISTS (SELECT 1 FROM application_field_values afv WHERE afv.application_id = a.id AND afv.field_name = 'application_code' AND UPPER(afv.field_value) = :app_code_exact))";
             $params[':app_code_like'] = $appCode . '%';
-            $params[':app_code'] = $appCode;
+            $params[':app_code_exact'] = $appCode;
         }
 
         if ($retailerId > 0) {
@@ -165,7 +172,7 @@ public function adminApplications(): void
             SELECT a.id, a.app_ref, a.batch_ref, a.applicant_name, a.applicant_mobile, a.applicant_identifier,
                    a.fee_debited, a.commission_credited, a.status, a.admin_remarks, a.remarks,
                    a.rejection_reason, a.result_file, a.is_refunded, a.is_commission_paid,
-                   a.application_code, a.assigned_operator_id, a.assigned_at, a.assignment_method,
+                   a.district_id, a.block_id, a.application_code, a.assigned_operator_id, a.assigned_at, a.assignment_method,
                    a.created_at, a.updated_at,
                    u.id as retailer_id, u.name as retailer_name, u.mobile as retailer_mobile, u.center_name,
                    d.name as district_name, d.name_hi as district_name_hi,
@@ -193,14 +200,16 @@ public function adminApplications(): void
         if (!empty($appIds)) {
             $inClause = implode(',', array_map('intval', $appIds));
             $fvRows = $db->query("
-                SELECT afv.application_id, afv.field_name, afv.field_value, dtf.label_en
+                SELECT afv.application_id, afv.field_name, afv.field_value, dtf.label_en, acf.label as acf_label
                 FROM application_field_values afv
                 LEFT JOIN data_type_fields dtf ON afv.field_id = dtf.id
+                LEFT JOIN application_code_fields acf ON afv.code_field_id = acf.id
                 WHERE afv.application_id IN ({$inClause})
             ")->fetchAll(PDO::FETCH_ASSOC);
             foreach ($fvRows as $fv) {
+                $lbl = !empty($fv['acf_label']) ? $fv['acf_label'] : (!empty($fv['label_en']) ? $fv['label_en'] : ucwords(str_replace(['_', '-'], ' ', (string)$fv['field_name'])));
                 $fieldValuesByApp[$fv['application_id']][$fv['field_name']] = [
-                    'label' => $fv['label_en'] ?: $fv['field_name'],
+                    'label' => $lbl,
                     'value' => $fv['field_value']
                 ];
             }
@@ -219,14 +228,17 @@ public function adminApplications(): void
         foreach ($applications as &$app) {
             $app['fields'] = $fieldValuesByApp[$app['id']] ?? [];
             $app['history'] = $statusHistoryByApp[$app['id']] ?? [];
-            $app['application_code'] = $app['fields']['application_code']['value'] ?? '';
-            if (empty($app['application_code']) && preg_match('#^([A-Z]{3,6})/#', $app['applicant_identifier'], $cm)) {
+            if (empty($app['application_code'])) {
+                $app['application_code'] = $app['fields']['application_code']['value'] ?? '';
+            }
+            if (empty($app['application_code']) && preg_match('#^([A-Z]{3,6})/#', (string)$app['applicant_identifier'], $cm)) {
                 $app['application_code'] = $cm[1];
             }
             if (empty($app['application_code'])) {
                 $app['application_code'] = 'BICCO';
             }
         }
+        unset($app);
         unset($app);
 
         if ($isOperator) {

@@ -83,12 +83,7 @@ class ApplicationCodeFieldService
             }
         } catch (\Throwable $e) {}
 
-        // Always ensure LABOURCARD is present
-        if (!isset($codeMap['LABOURCARD'])) {
-            $codeMap['LABOURCARD'] = ['application_code' => 'LABOURCARD', 'rule_label' => 'Labour Card / BOCW Registration'];
-        }
-
-        // Add active field counts
+        // Add active field counts and core fields readiness check
         try {
             $counts = $db->query("SELECT application_code, COUNT(*) as cnt FROM application_code_fields WHERE is_active = 1 GROUP BY application_code")->fetchAll(PDO::FETCH_KEY_PAIR);
         } catch (\Throwable $e) {
@@ -98,6 +93,7 @@ class ApplicationCodeFieldService
         $result = [];
         foreach ($codeMap as $code => $info) {
             $info['field_count'] = (int)($counts[$code] ?? 0);
+            $info['has_core_fields'] = self::hasActiveCoreFields($code, $dataTypeId, $db);
             $result[] = $info;
         }
 
@@ -109,7 +105,38 @@ class ApplicationCodeFieldService
     }
 
     /**
-     * Fetch configured fields for an Application Code.
+     * Check if an Application Code has active core fields (application_number and applicant_name)
+     */
+    public static function hasActiveCoreFields(string $code, ?int $dataTypeId = null, ?PDO $db = null): bool
+    {
+        if ($db === null) {
+            $db = Database::getConnection();
+        }
+        $code = strtoupper(trim($code));
+        if ($code === '') {
+            return false;
+        }
+        if ($dataTypeId === null || $dataTypeId <= 0) {
+            $dtStmt = $db->query("SELECT id FROM data_types WHERE code = 'srv_block_app' LIMIT 1");
+            $dataTypeId = (int)($dtStmt->fetchColumn() ?: 4);
+        }
+
+        try {
+            $stmt = $db->prepare("
+                SELECT field_name FROM application_code_fields
+                WHERE data_type_id = ? AND application_code = ? AND is_active = 1
+                  AND field_name IN ('application_number', 'applicant_name')
+            ");
+            $stmt->execute([$dataTypeId, $code]);
+            $names = $stmt->fetchAll(PDO::FETCH_COLUMN);
+            return in_array('application_number', $names, true) && in_array('applicant_name', $names, true);
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Fetch configured fields for an Application Code (strictly read-only, never writes to DB).
      */
     public static function getFieldsForCode(string $code, ?int $dataTypeId = null, bool $activeOnly = false, ?PDO $db = null): array
     {
@@ -140,12 +167,6 @@ class ApplicationCodeFieldService
         $stmt->execute([$dataTypeId, $code]);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        if (empty($rows) && !$activeOnly) {
-            self::ensureCoreFieldsForCode($code, $dataTypeId, $db);
-            $stmt->execute([$dataTypeId, $code]);
-            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        }
-
         foreach ($rows as &$r) {
             $r['options'] = !empty($r['options_json']) ? (json_decode($r['options_json'], true) ?: []) : [];
         }
@@ -155,9 +176,9 @@ class ApplicationCodeFieldService
     }
 
     /**
-     * Ensure baseline core fields (application_number, applicant_name) exist for code.
+     * Explicit Admin Action: Create core fields (application_number, applicant_name) for code.
      */
-    public static function ensureCoreFieldsForCode(string $code, int $dataTypeId, PDO $db): void
+    public static function createCoreFieldsForCode(string $code, int $dataTypeId, PDO $db): void
     {
         $code = strtoupper(trim($code));
         if ($code === '' || $dataTypeId <= 0) return;
@@ -261,7 +282,8 @@ class ApplicationCodeFieldService
         array $submittedValues,
         int $dataTypeId,
         PDO $db,
-        array $uploadedFiles = []
+        array $uploadedFiles = [],
+        array &$trackedFiles = []
     ): array {
         $code = strtoupper(trim($code));
         $fields = self::getFieldsForCode($code, $dataTypeId, true, $db);
@@ -277,6 +299,7 @@ class ApplicationCodeFieldService
             'applicant_mobile' => ''
         ];
 
+        // Maintain an allowlist from active field definitions: only process configured fields
         foreach ($fields as $field) {
             $fName = $field['field_name'];
             $fType = $field['field_type'];
@@ -289,10 +312,12 @@ class ApplicationCodeFieldService
                     throw new Exception("File '{$fLabel}' is required.");
                 }
                 if (!empty($file) && !empty($file['tmp_name']) && $file['error'] === UPLOAD_ERR_OK) {
-                    $savedPath = self::handleSecureFileUpload($file, $field);
+                    $savedPath = self::handleSecureFileUpload($file, $field, $trackedFiles);
                     $validatedData[] = [
                         'code_field_id' => $field['id'],
                         'field_name' => $fName,
+                        'field_label' => $fLabel,
+                        'field_type' => $fType,
                         'field_value' => $savedPath,
                         'is_unique' => (int)$field['is_unique']
                     ];
@@ -361,10 +386,11 @@ class ApplicationCodeFieldService
                 }
 
                 if (!empty($field['validation_pattern'])) {
-                    $pattern = $field['validation_pattern'];
-                    if (strlen($pattern) <= 250) {
-                        $delimPattern = '~' . str_replace('~', '\~', $pattern) . '~u';
-                        if (!@preg_match($delimPattern, $val)) {
+                    $pattern = (string)$field['validation_pattern'];
+                    if (mb_strlen($pattern) <= 255 && mb_strlen($val) <= 1000) {
+                        $delimPattern = '#' . str_replace('#', '\#', $pattern) . '#u';
+                        $matchRes = @preg_match($delimPattern, $val);
+                        if ($matchRes === false || $matchRes === 0) {
                             throw new Exception("Field '{$fLabel}' format is invalid.");
                         }
                     }
@@ -399,6 +425,8 @@ class ApplicationCodeFieldService
             $validatedData[] = [
                 'code_field_id' => $field['id'],
                 'field_name' => $fName,
+                'field_label' => $fLabel,
+                'field_type' => $fType,
                 'field_value' => $val,
                 'is_unique' => (int)$field['is_unique']
             ];
@@ -418,9 +446,9 @@ class ApplicationCodeFieldService
     }
 
     /**
-     * Handle secure file upload with validation.
+     * Handle secure file upload with validation and tracking.
      */
-    private static function handleSecureFileUpload(array $file, array $field): string
+    private static function handleSecureFileUpload(array $file, array $field, array &$trackedFiles = []): string
     {
         $allowedExts = ['pdf', 'jpg', 'jpeg', 'png'];
         if (!empty($field['allowed_file_types'])) {
@@ -433,7 +461,16 @@ class ApplicationCodeFieldService
             throw new Exception("Uploaded file for '{$field['label']}' exceeds the maximum allowed size of {$field['max_file_size_mb']}MB.");
         }
 
-        $origName = $file['name'];
+        $origName = (string)($file['name'] ?? '');
+        $parts = explode('.', $origName);
+        if (count($parts) > 2) {
+            foreach (array_slice($parts, 1, -1) as $intermediateExt) {
+                if (in_array(strtolower($intermediateExt), ['php', 'phtml', 'phar', 'pl', 'py', 'cgi', 'sh', 'exe', 'bat', 'js'], true)) {
+                    throw new Exception("Suspicious filename detected.");
+                }
+            }
+        }
+
         $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
 
         if (!in_array($ext, $allowedExts, true)) {
@@ -466,7 +503,30 @@ class ApplicationCodeFieldService
             throw new Exception("Failed to store uploaded file.");
         }
 
+        // Track stored file for rollback safety
+        $trackedFiles[] = $destPath;
+
         return 'uploads/dynamic_fields/' . date('Y/m') . '/' . $randName;
+    }
+
+    /**
+     * Clean up stored files if a transaction rolls back
+     */
+    public static function cleanupTrackedFiles(array $filePaths): void
+    {
+        $baseDir = realpath(dirname(__DIR__, 2) . '/storage/uploads');
+        foreach ($filePaths as $path) {
+            if (!empty($path) && is_file($path)) {
+                $real = realpath($path);
+                if ($real && $baseDir) {
+                    $normReal = str_replace('\\', '/', $real);
+                    $normBase = str_replace('\\', '/', $baseDir);
+                    if (str_starts_with($normReal, $normBase)) {
+                        @unlink($real);
+                    }
+                }
+            }
+        }
     }
 
     /**

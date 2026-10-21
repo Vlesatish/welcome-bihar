@@ -203,18 +203,51 @@ CREATE TABLE IF NOT EXISTS `applications` (
   CONSTRAINT `fk_apps_block` FOREIGN KEY (`block_id`) REFERENCES `blocks` (`id`) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 8b. APPLICATION CODE FIELDS (Dynamic Form Definitions per Application Code)
+CREATE TABLE IF NOT EXISTS `application_code_fields` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `data_type_id` INT NOT NULL,
+  `application_code` VARCHAR(64) NOT NULL,
+  `field_name` VARCHAR(100) NOT NULL,
+  `label` VARCHAR(150) NOT NULL,
+  `field_type` ENUM('text', 'number', 'mobile', 'aadhaar', 'date', 'select', 'radio', 'textarea', 'file', 'email') NOT NULL DEFAULT 'text',
+  `placeholder` VARCHAR(255) NULL,
+  `help_text` VARCHAR(255) NULL,
+  `options_json` TEXT NULL,
+  `validation_pattern` VARCHAR(255) NULL,
+  `min_length` INT NULL,
+  `max_length` INT NULL,
+  `min_value` DECIMAL(15,2) NULL,
+  `max_value` DECIMAL(15,2) NULL,
+  `allowed_file_types` VARCHAR(150) NULL,
+  `max_file_size_mb` INT NULL,
+  `is_required` TINYINT(1) NOT NULL DEFAULT 1,
+  `is_unique` TINYINT(1) NOT NULL DEFAULT 0,
+  `is_active` TINYINT(1) NOT NULL DEFAULT 1,
+  `sort_order` INT NOT NULL DEFAULT 0,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX `idx_code_fields_dt` (`data_type_id`),
+  INDEX `idx_code_fields_code` (`application_code`),
+  UNIQUE KEY `uk_code_field` (`data_type_id`, `application_code`, `field_name`),
+  CONSTRAINT `fk_code_fields_datatype` FOREIGN KEY (`data_type_id`) REFERENCES `data_types` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 9. APPLICATION FIELD VALUES TABLE
 CREATE TABLE IF NOT EXISTS `application_field_values` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `application_id` INT NOT NULL,
-  `field_id` INT NOT NULL,
+  `field_id` INT NULL,
+  `code_field_id` INT NULL,
   `field_name` VARCHAR(100) NOT NULL,
   `field_value` LONGTEXT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX `idx_app_fvalues_app` (`application_id`),
   INDEX `idx_app_fvalues_field` (`field_id`),
+  INDEX `idx_app_fvalues_code_field` (`code_field_id`),
   CONSTRAINT `fk_app_fvalues_app` FOREIGN KEY (`application_id`) REFERENCES `applications` (`id`) ON DELETE CASCADE,
-  CONSTRAINT `fk_app_fvalues_field` FOREIGN KEY (`field_id`) REFERENCES `data_type_fields` (`id`) ON DELETE CASCADE
+  CONSTRAINT `fk_app_fvalues_field` FOREIGN KEY (`field_id`) REFERENCES `data_type_fields` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_app_fvalues_code_field` FOREIGN KEY (`code_field_id`) REFERENCES `application_code_fields` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 10. APPLICATION STATUS HISTORY (Immutable Audit Trail)

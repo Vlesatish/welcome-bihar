@@ -40,6 +40,11 @@ class AuthService
         return $u;
     }
 
+    public static function getCurrentUser(): ?array
+    {
+        return self::user();
+    }
+
     public static function isAdmin(): bool
     {
         return self::role() === 'ADMIN';
