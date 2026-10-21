@@ -26,26 +26,36 @@ class UserController
         // 1. Current wallet balance
         $balance = WalletService::getBalance($userId);
 
-        // 2. Application statistics for this user
+        // 2. Application statistics for this user (matching Admin dashboard tabs)
         $statStmt = $db->prepare("
             SELECT
                 COUNT(*) as total,
                 SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) as pending,
-                SUM(CASE WHEN status = 'UNDER_REVIEW' THEN 1 ELSE 0 END) as under_review,
-                SUM(CASE WHEN status = 'APPROVED' THEN 1 ELSE 0 END) as approved,
+                SUM(CASE WHEN status IN ('IN_PROCESS', 'UNDER_REVIEW') THEN 1 ELSE 0 END) as in_process,
+                SUM(CASE WHEN status IN ('APPROVED', 'COMPLETED') THEN 1 ELSE 0 END) as approved,
                 SUM(CASE WHEN status = 'REJECTED' THEN 1 ELSE 0 END) as rejected
             FROM applications
             WHERE user_id = ?
         ");
         $statStmt->execute([$userId]);
-        $stats = $statStmt->fetch();
+        $stats = $statStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        $cntAll = (int)($stats['total'] ?? 0);
+        $cntPending = (int)($stats['pending'] ?? 0);
+        $cntInProcess = (int)($stats['in_process'] ?? 0);
+        $cntApproved = (int)($stats['approved'] ?? 0);
+        $cntRejected = (int)($stats['rejected'] ?? 0);
 
         // 3. Filters
+        $currentTab = strtoupper(trim($_GET['status'] ?? 'ALL'));
+        if (!in_array($currentTab, ['ALL', 'PENDING', 'IN_PROCESS', 'APPROVED', 'REJECTED'], true)) {
+            $currentTab = 'ALL';
+        }
+
         $districtId = !empty($_GET['district_id']) ? (int)$_GET['district_id'] : 0;
         $blockId = !empty($_GET['block_id']) ? (int)$_GET['block_id'] : 0;
-        $status = strtoupper(trim($_GET['status'] ?? ''));
         $appCode = strtoupper(trim($_GET['app_code'] ?? ''));
-        $dateFilter = trim($_GET['date_filter'] ?? $_GET['dateFilter'] ?? '');
+        $dateFilter = strtoupper(trim($_GET['date_filter'] ?? $_GET['dateFilter'] ?? 'ALL'));
         $search = trim($_GET['search'] ?? '');
         $page = max(1, (int)($_GET['page'] ?? 1));
         $limit = 20;
@@ -64,15 +74,14 @@ class UserController
             $params[':block_id'] = $blockId;
         }
 
-        if (!empty($status)) {
-            if ($status === 'COMPLETED' || $status === 'APPROVED') {
-                $where[] = "a.status IN ('COMPLETED', 'APPROVED')";
-            } elseif ($status === 'IN_PROCESS' || $status === 'UNDER_REVIEW') {
-                $where[] = "a.status IN ('IN_PROCESS', 'UNDER_REVIEW')";
-            } else {
-                $where[] = "a.status = :status";
-                $params[':status'] = $status;
-            }
+        if ($currentTab === 'PENDING') {
+            $where[] = "a.status = 'PENDING'";
+        } elseif ($currentTab === 'IN_PROCESS') {
+            $where[] = "a.status IN ('IN_PROCESS', 'UNDER_REVIEW')";
+        } elseif ($currentTab === 'APPROVED') {
+            $where[] = "a.status IN ('APPROVED', 'COMPLETED')";
+        } elseif ($currentTab === 'REJECTED') {
+            $where[] = "a.status = 'REJECTED'";
         }
 
         if (!empty($appCode)) {
@@ -180,6 +189,26 @@ class UserController
                 }
             }
         } catch (\Throwable $e) {}
+
+        $selectedDistrictName = '';
+        if ($districtId > 0) {
+            foreach ($districts as $d) {
+                if ((int)$d['id'] === $districtId) {
+                    $selectedDistrictName = $d['name'];
+                    break;
+                }
+            }
+        }
+
+        $selectedBlockName = '';
+        if ($blockId > 0 && !empty($blocks)) {
+            foreach ($blocks as $b) {
+                if ((int)$b['id'] === $blockId) {
+                    $selectedBlockName = $b['name'];
+                    break;
+                }
+            }
+        }
 
         require dirname(__DIR__) . '/Views/user/dashboard.php';
     }

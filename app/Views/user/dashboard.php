@@ -1,557 +1,400 @@
 <?php require dirname(__DIR__) . '/layouts/header.php'; ?>
-<?php
-    $dateFilter = trim($_GET['date_filter'] ?? $_GET['dateFilter'] ?? '');
-?>
-
-<!-- Light Colorful Glassmorphism Dashboard & Application List Styles -->
-<style>
-.wb-glass-dashboard {
-    position: relative;
-    border-radius: 18px;
-    padding: 0.25rem 0;
-}
-/* Subtle ambient background glow mesh to enhance glass refraction */
-.wb-glass-dashboard::before {
-    content: '';
-    position: absolute;
-    top: -10px;
-    left: -10px;
-    right: -10px;
-    bottom: -10px;
-    background: 
-        radial-gradient(circle at 5% 10%, rgba(59, 130, 246, 0.12) 0%, transparent 35%),
-        radial-gradient(circle at 35% 15%, rgba(139, 92, 246, 0.10) 0%, transparent 35%),
-        radial-gradient(circle at 65% 15%, rgba(16, 185, 129, 0.10) 0%, transparent 35%),
-        radial-gradient(circle at 95% 10%, rgba(245, 158, 11, 0.12) 0%, transparent 35%),
-        radial-gradient(circle at 50% 85%, rgba(59, 130, 246, 0.05) 0%, transparent 50%);
-    pointer-events: none;
-    z-index: 0;
-}
-.wb-glass-dashboard > * {
-    position: relative;
-    z-index: 1;
-}
-
-/* Base Glass Stat Card (Clickable & Fresh) */
-.dash-glass-card {
-    border-radius: 16px;
-    padding: 1.25rem 1.35rem;
-    transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
-    position: relative;
-    overflow: hidden;
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    cursor: pointer;
-    user-select: none;
-}
-.dash-glass-card:hover {
-    transform: translateY(-4px);
-}
-.dash-glass-card:active {
-    transform: translateY(-1px) scale(0.99);
-}
-
-/* 1. Wallet Balance - Soft Cyan/Blue Glass */
-.card-glass-blue {
-    background: linear-gradient(135deg, rgba(239, 246, 255, 0.88) 0%, rgba(219, 234, 254, 0.6) 100%);
-    border: 1px solid rgba(191, 219, 254, 0.85);
-    box-shadow: 0 10px 24px -4px rgba(37, 99, 235, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.95);
-}
-.card-glass-blue:hover {
-    border-color: rgba(147, 197, 253, 0.95);
-    box-shadow: 0 14px 30px -4px rgba(37, 99, 235, 0.2), inset 0 1px 0 rgba(255, 255, 255, 1);
-}
-.card-glass-blue .stat-icon-glass {
-    background: rgba(37, 99, 235, 0.14);
-    color: #1d4ed8;
-    border: 1px solid rgba(191, 219, 254, 0.9);
-}
-
-/* 2. Total Applications - Soft Violet/Purple Glass */
-.card-glass-purple {
-    background: linear-gradient(135deg, rgba(245, 243, 255, 0.88) 0%, rgba(237, 233, 254, 0.6) 100%);
-    border: 1px solid rgba(221, 214, 254, 0.85);
-    box-shadow: 0 10px 24px -4px rgba(124, 58, 237, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.95);
-}
-.card-glass-purple:hover {
-    border-color: rgba(196, 181, 253, 0.95);
-    box-shadow: 0 14px 30px -4px rgba(124, 58, 237, 0.2), inset 0 1px 0 rgba(255, 255, 255, 1);
-}
-.card-glass-purple .stat-icon-glass {
-    background: rgba(124, 58, 237, 0.14);
-    color: #6d28d9;
-    border: 1px solid rgba(221, 214, 254, 0.9);
-}
-
-/* 3. Approved - Soft Emerald/Mint Glass */
-.card-glass-emerald {
-    background: linear-gradient(135deg, rgba(236, 253, 245, 0.88) 0%, rgba(209, 250, 229, 0.6) 100%);
-    border: 1px solid rgba(167, 243, 208, 0.85);
-    box-shadow: 0 10px 24px -4px rgba(16, 185, 129, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.95);
-}
-.card-glass-emerald:hover {
-    border-color: rgba(110, 231, 183, 0.95);
-    box-shadow: 0 14px 30px -4px rgba(16, 185, 129, 0.2), inset 0 1px 0 rgba(255, 255, 255, 1);
-}
-.card-glass-emerald .stat-icon-glass {
-    background: rgba(16, 185, 129, 0.14);
-    color: #047857;
-    border: 1px solid rgba(167, 243, 208, 0.9);
-}
-
-/* 4. Pending / Review - Soft Amber/Gold Glass */
-.card-glass-amber {
-    background: linear-gradient(135deg, rgba(255, 251, 235, 0.88) 0%, rgba(254, 243, 199, 0.6) 100%);
-    border: 1px solid rgba(253, 230, 138, 0.85);
-    box-shadow: 0 10px 24px -4px rgba(217, 119, 6, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.95);
-}
-.card-glass-amber:hover {
-    border-color: rgba(252, 211, 77, 0.95);
-    box-shadow: 0 14px 30px -4px rgba(217, 119, 6, 0.2), inset 0 1px 0 rgba(255, 255, 255, 1);
-}
-.card-glass-amber .stat-icon-glass {
-    background: rgba(217, 119, 6, 0.14);
-    color: #b45309;
-    border: 1px solid rgba(253, 230, 138, 0.9);
-}
-
-.stat-icon-glass {
-    width: 42px;
-    height: 42px;
-    border-radius: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.25rem;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-}
-
-.stat-label-text {
-    font-size: 0.72rem;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-    color: #475569;
-}
-.stat-val-text {
-    font-size: 1.55rem;
-    font-weight: 800;
-    line-height: 1.2;
-    letter-spacing: -0.5px;
-}
-
-/* Standalone Filters Card & Controls */
-.filter-label {
-    display: block;
-    font-size: 0.72rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
-    color: #64748b;
-    margin-bottom: 0.25rem;
-    white-space: nowrap;
-}
-.filters-grid {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-end;
-    gap: 0.65rem;
-    width: 100%;
-}
-.filter-col-district {
-    flex: 1 1 145px;
-    min-width: 135px;
-}
-.filter-col-block {
-    flex: 1 1 145px;
-    min-width: 135px;
-}
-.filter-col-code {
-    flex: 0 1 115px;
-    min-width: 105px;
-}
-.filter-col-status {
-    flex: 0 1 130px;
-    min-width: 120px;
-}
-.filter-col-date {
-    flex: 0 1 120px;
-    min-width: 110px;
-}
-.filter-col-search {
-    flex: 2 1 190px;
-    min-width: 160px;
-}
-.filter-col-btn {
-    flex: 0 0 auto;
-}
-.filter-ctrl, .filter-select, .filter-btn {
-    height: 36px !important;
-    font-size: 13px !important;
-    border-radius: 6px !important;
-}
-.filter-ctrl:focus, .filter-select:focus {
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
-}
-.filter-select {
-    padding: 0.25rem 1.6rem 0.25rem 0.65rem !important;
-    font-weight: 500;
-    color: #1e293b;
-    border: 1px solid #cbd5e1;
-    background-color: #ffffff;
-}
-.filter-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0 0.85rem !important;
-    font-weight: 600;
-    white-space: nowrap;
-}
-.chat-window {
-    max-height: 340px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    padding: 0.5rem;
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 0.5rem;
-}
-.chat-msg {
-    max-width: 80%;
-    padding: 0.5rem 0.75rem;
-    border-radius: 0.75rem;
-    font-size: 0.82rem;
-}
-.chat-msg-sent {
-    align-self: flex-end;
-    background: #2563eb;
-    color: #fff;
-    border-bottom-right-radius: 0.2rem;
-}
-.chat-msg-recv {
-    align-self: flex-start;
-    background: #e2e8f0;
-    color: #1e293b;
-    border-bottom-left-radius: 0.2rem;
-}
-.chat-meta {
-    font-size: 0.65rem;
-    margin-top: 0.25rem;
-}
-.btn-xs {
-    padding: 0.25rem 0.6rem;
-    font-size: 0.72rem;
-    line-height: 1.25;
-}
-</style>
+<?php require dirname(__DIR__) . '/admin/dashboard_styles.php'; ?>
 
 <!-- TOAST CONTAINER -->
 <div id="toast-container" class="position-fixed top-0 end-0 p-3" style="z-index: 1080;"></div>
 
-<div class="wb-glass-dashboard">
-    <!-- Quick Light Colorful Glass Stat Cards (Clean, Clickable & Minimal) -->
-    <div class="row g-3 mb-4">
-        <!-- 1. Wallet Balance (Blue Glass) -->
-        <div class="col-sm-6 col-lg-3">
-            <a href="/wallet/passbook" class="dash-glass-card card-glass-blue h-100 text-decoration-none">
-                <div class="d-flex align-items-center justify-content-between mb-2">
-                    <span class="stat-label-text"><?= e(__('wallet_balance')) ?></span>
-                    <div class="stat-icon-glass">
-                        <i class="bi bi-wallet2"></i>
-                    </div>
-                </div>
-                <div class="stat-val-text font-monospace" style="color: #1d4ed8;">₹<?= number_format($balance, 2) ?></div>
-            </a>
-        </div>
+<!-- 1. Executive Clickable Status Cards (Exact match to Admin & Operator Dashboard) -->
+<div class="row g-3 mb-3" id="statusCardsRow">
 
-        <!-- 2. Total Applications (Purple Glass) -->
-        <div class="col-sm-6 col-lg-3">
-            <a href="/user/dashboard" class="dash-glass-card card-glass-purple h-100 text-decoration-none">
-                <div class="d-flex align-items-center justify-content-between mb-2">
-                    <span class="stat-label-text"><?= e(__('applications')) ?></span>
-                    <div class="stat-icon-glass">
-                        <i class="bi bi-files"></i>
+    <!-- Pending -->
+    <div class="col-6 col-md-3">
+        <div class="dashboard-stat-card card-pending <?= $currentTab === 'PENDING' ? 'active-card' : '' ?>" onclick="filterByStatus('PENDING')" id="card-status-pending" title="Click to filter by Pending">
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <span class="stat-card-label" style="color: #b45309;">Pending</span>
+                    <div class="stat-card-count" style="color: #b45309;" id="stat-pending"><?= number_format($cntPending) ?></div>
+                    <div class="stat-card-sub" style="color: #b45309;">
+                        <span class="pulse-dot"></span> Awaiting Action
                     </div>
                 </div>
-                <div class="stat-val-text" style="color: #6d28d9;"><?= number_format((int)($stats['total'] ?? 0)) ?></div>
-            </a>
-        </div>
-
-        <!-- 3. Approved Applications (Emerald Glass) -->
-        <div class="col-sm-6 col-lg-3">
-            <a href="/user/dashboard?status=COMPLETED" class="dash-glass-card card-glass-emerald h-100 text-decoration-none">
-                <div class="d-flex align-items-center justify-content-between mb-2">
-                    <span class="stat-label-text"><?= e(__('status_approved')) ?></span>
-                    <div class="stat-icon-glass">
-                        <i class="bi bi-check2-circle"></i>
-                    </div>
+                <div class="kpi-icon-pill" style="background-color: #fef3c7; color: #b45309; border: 1px solid #fde68a;">
+                    <i class="bi bi-hourglass-split"></i>
                 </div>
-                <div class="stat-val-text" style="color: #047857;"><?= number_format((int)($stats['approved'] ?? 0)) ?></div>
-            </a>
-        </div>
-
-        <!-- 4. Pending & Under Review (Amber Glass) -->
-        <div class="col-sm-6 col-lg-3">
-            <a href="/user/dashboard?status=PENDING" class="dash-glass-card card-glass-amber h-100 text-decoration-none">
-                <div class="d-flex align-items-center justify-content-between mb-2">
-                    <span class="stat-label-text"><?= e(__('status_pending')) ?> / Review</span>
-                    <div class="stat-icon-glass">
-                        <i class="bi bi-clock-history"></i>
-                    </div>
-                </div>
-                <div class="stat-val-text" style="color: #b45309;"><?= number_format((int)($stats['pending'] ?? 0) + (int)($stats['under_review'] ?? 0)) ?></div>
-            </a>
+            </div>
         </div>
     </div>
 
-    <!-- Page Title & Actions -->
-    <div class="row align-items-center mb-3 g-2">
-        <div class="col-md-6">
-            <h1 class="h5 fw-bold mb-0 text-dark d-flex align-items-center gap-2">
-                <i class="bi bi-folder2-open text-primary"></i>
-                <span>Application List</span>
-                <span class="badge bg-primary-subtle text-primary border rounded-pill px-2.5 small"><?= number_format($totalRecords) ?></span>
-            </h1>
+    <!-- In Process -->
+    <div class="col-6 col-md-3">
+        <div class="dashboard-stat-card card-in-process <?= $currentTab === 'IN_PROCESS' ? 'active-card' : '' ?>" onclick="filterByStatus('IN_PROCESS')" id="card-status-in-process" title="Click to filter by In Process">
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <span class="stat-card-label" style="color: #0369a1;">In Process</span>
+                    <div class="stat-card-count" style="color: #0284c7;" id="stat-in-process"><?= number_format($cntInProcess) ?></div>
+                    <div class="stat-card-sub text-info">
+                        <i class="bi bi-arrow-repeat spin-icon"></i> Under Verification
+                    </div>
+                </div>
+                <div class="kpi-icon-pill" style="background-color: #e0f2fe; color: #0284c7; border: 1px solid #bae6fd;">
+                    <i class="bi bi-gear-wide-connected"></i>
+                </div>
+            </div>
         </div>
-        <div class="col-md-6 text-md-end d-flex gap-2 justify-content-md-end flex-wrap">
-            <a href="/applications/export-csv?<?= http_build_query($_GET) ?>" class="btn btn-sm btn-outline-success fw-semibold rounded-pill px-3 shadow-2xs">
+    </div>
+
+    <!-- Approved -->
+    <div class="col-6 col-md-3">
+        <div class="dashboard-stat-card card-approved <?= $currentTab === 'APPROVED' ? 'active-card' : '' ?>" onclick="filterByStatus('APPROVED')" id="card-status-approved" title="Click to filter by Approved">
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <span class="stat-card-label" style="color: #047857;">Approved</span>
+                    <div class="stat-card-count" style="color: #059669;" id="stat-approved"><?= number_format($cntApproved) ?></div>
+                    <div class="stat-card-sub text-success">
+                        <i class="bi bi-check2-circle"></i> Ready & Issued
+                    </div>
+                </div>
+                <div class="kpi-icon-pill" style="background-color: #d1fae5; color: #059669; border: 1px solid #a7f3d0;">
+                    <i class="bi bi-check2-circle"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Rejected -->
+    <div class="col-6 col-md-3">
+        <div class="dashboard-stat-card card-rejected <?= $currentTab === 'REJECTED' ? 'active-card' : '' ?>" onclick="filterByStatus('REJECTED')" id="card-status-rejected" title="Click to filter by Rejected">
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <span class="stat-card-label" style="color: #b91c1c;">Rejected</span>
+                    <div class="stat-card-count" style="color: #dc2626;" id="stat-rejected"><?= number_format($cntRejected) ?></div>
+                    <div class="stat-card-sub text-danger">
+                        <i class="bi bi-x-circle"></i> Returned / Refunded
+                    </div>
+                </div>
+                <div class="kpi-icon-pill" style="background-color: #fee2e2; color: #dc2626; border: 1px solid #fecaca;">
+                    <i class="bi bi-x-circle"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 2. Standalone Filters Card (Exact match to Admin & Operator Dashboard) -->
+<div class="card shadow-sm border rounded-3 bg-white" id="adminFiltersCard" style="border: 1px solid #e2e8f0; margin-bottom: 18px !important;">
+    <div class="card-body p-3">
+        <!-- Card Header: Clean small Filters heading + active filter indicators -->
+        <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2 pb-2 border-bottom">
+            <div class="d-flex align-items-center flex-wrap gap-1.5">
+                <i class="bi bi-funnel-fill text-primary" style="font-size: 0.82rem;"></i>
+                <h2 class="h6 fw-bold mb-0 text-dark" style="font-size: 0.85rem; letter-spacing: 0.2px;">Filters</h2>
+                <?php if ($currentTab !== 'ALL' && !empty($currentTab)): ?>
+                    <span class="badge bg-primary-subtle text-primary-emphasis border border-primary-subtle ms-1" style="font-size: 0.72rem;">
+                        Status: <strong><?= e($currentTab) ?></strong>
+                    </span>
+                <?php endif; ?>
+                <?php if (!empty($selectedDistrictName)): ?>
+                    <span class="badge bg-light text-dark border ms-1" style="font-size: 0.72rem;">
+                        District: <strong><?= e($selectedDistrictName) ?></strong>
+                    </span>
+                <?php endif; ?>
+                <?php if (!empty($selectedBlockName)): ?>
+                    <span class="badge bg-light text-dark border ms-1" style="font-size: 0.72rem;">
+                        Block: <strong><?= e($selectedBlockName) ?></strong>
+                    </span>
+                <?php endif; ?>
+                <?php if (!empty($appCode)): ?>
+                    <span class="badge bg-light text-dark border ms-1" style="font-size: 0.72rem;">
+                        Code: <strong><?= e($appCode) ?></strong>
+                    </span>
+                <?php endif; ?>
+                <?php if ($dateFilter !== 'ALL' && !empty($dateFilter)): ?>
+                    <span class="badge bg-light text-dark border ms-1" style="font-size: 0.72rem;">
+                        Date: <strong><?= e($dateFilter) ?></strong>
+                    </span>
+                <?php endif; ?>
+                <?php if (!empty($search)): ?>
+                    <span class="badge bg-light text-dark border ms-1" style="font-size: 0.72rem;">
+                        Search: <strong>"<?= e($search) ?>"</strong>
+                    </span>
+                <?php endif; ?>
+            </div>
+            <div class="small text-muted" style="font-size: 0.74rem;">
+                Showing <strong><?= (int)$totalRecords ?></strong> applications
+            </div>
+        </div>
+
+        <!-- Filter Controls Form -->
+        <form method="GET" action="/user/dashboard" id="filterForm">
+            <input type="hidden" name="status" id="filterStatusInput" value="<?= e($currentTab) ?>">
+            <input type="hidden" name="page" id="filterPageInput" value="1">
+
+            <div class="admin-filters-grid pt-1">
+                <!-- 1. District -->
+                <div class="filter-col filter-col-district">
+                    <label for="filterDistrict" class="filter-label">District</label>
+                    <select name="district_id" id="filterDistrict" class="form-select form-select-sm filter-select filter-ctrl w-100">
+                        <option value="">All Districts</option>
+                        <?php foreach ($districts as $d): ?>
+                            <option value="<?= $d['id'] ?>" <?= $districtId === (int)$d['id'] ? 'selected' : '' ?>><?= e($d['name']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+
+                <!-- 2. Block -->
+                <div class="filter-col filter-col-block">
+                    <label for="filterBlock" class="filter-label">Block</label>
+                    <select name="block_id" id="filterBlock" class="form-select form-select-sm filter-select filter-ctrl w-100" <?= empty($districtId) ? 'disabled' : '' ?>>
+                        <option value="">All Blocks</option>
+                        <?php foreach ($blocks as $b): ?>
+                            <option value="<?= $b['id'] ?>" <?= $blockId === (int)$b['id'] ? 'selected' : '' ?>><?= e($b['name']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+
+                <!-- 3. Status -->
+                <div class="filter-col filter-col-status">
+                    <label for="filterStatusSelect" class="filter-label">Status</label>
+                    <select name="status" id="filterStatusSelect" class="form-select form-select-sm filter-select filter-ctrl w-100">
+                        <option value="ALL" <?= ($currentTab === 'ALL' || empty($currentTab)) ? 'selected' : '' ?>>All (<?= $cntAll ?>)</option>
+                        <option value="PENDING" <?= $currentTab === 'PENDING' ? 'selected' : '' ?>>Pending (<?= $cntPending ?>)</option>
+                        <option value="IN_PROCESS" <?= $currentTab === 'IN_PROCESS' ? 'selected' : '' ?>>In Process (<?= $cntInProcess ?>)</option>
+                        <option value="APPROVED" <?= $currentTab === 'APPROVED' ? 'selected' : '' ?>>Approved (<?= $cntApproved ?>)</option>
+                        <option value="REJECTED" <?= $currentTab === 'REJECTED' ? 'selected' : '' ?>>Rejected (<?= $cntRejected ?>)</option>
+                    </select>
+                </div>
+
+                <!-- 4. App Code -->
+                <div class="filter-col filter-col-code">
+                    <label for="filterCode" class="filter-label">App Code</label>
+                    <select name="app_code" id="filterCode" class="form-select form-select-sm filter-select filter-ctrl w-100">
+                        <option value="">All Codes</option>
+                        <?php foreach ($appCodes as $cVal => $cLabel): ?>
+                            <option value="<?= e($cVal) ?>" <?= $appCode === $cVal ? 'selected' : '' ?>><?= e($cVal) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+
+                <!-- 5. Date -->
+                <div class="filter-col filter-col-date">
+                    <label for="filterDate" class="filter-label">Date</label>
+                    <select name="date_filter" id="filterDate" class="form-select form-select-sm filter-select filter-ctrl w-100">
+                        <option value="ALL" <?= $dateFilter === 'ALL' ? 'selected' : '' ?>>All Dates</option>
+                        <option value="TODAY" <?= $dateFilter === 'TODAY' ? 'selected' : '' ?>>Today</option>
+                        <option value="WEEK" <?= $dateFilter === 'WEEK' ? 'selected' : '' ?>>Last 7 Days</option>
+                        <option value="MONTH" <?= $dateFilter === 'MONTH' ? 'selected' : '' ?>>Last 30 Days</option>
+                    </select>
+                </div>
+
+                <!-- 6. Search Bar -->
+                <div class="filter-col filter-col-search">
+                    <label for="filterSearch" class="filter-label">Search</label>
+                    <div class="input-group input-group-sm">
+                        <span class="input-group-text bg-light border-end-0 text-muted filter-ctrl" style="border-radius: 6px 0 0 6px !important;"><i class="bi bi-search"></i></span>
+                        <input type="text" name="search" id="filterSearch" value="<?= e($search) ?>" class="form-control border-start-0 ps-0 bg-white filter-ctrl" style="border-radius: 0 6px 6px 0 !important;" placeholder="Search applications...">
+                    </div>
+                </div>
+
+                <!-- 7. Reset Button -->
+                <div class="filter-col filter-col-btn">
+                    <a href="/user/dashboard" class="btn btn-sm btn-outline-danger filter-btn filter-ctrl" title="Reset all filters">
+                        <i class="bi bi-arrow-counterclockwise me-1"></i> Reset
+                    </a>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 3. Applications Stream Table Card (Exact match to Admin & Operator Dashboard) -->
+<div class="card shadow-sm border rounded-3 mb-5 bg-white" id="adminTableCard" style="border: 1px solid #e2e8f0;">
+    <div class="card-header bg-white py-3 px-3.5 border-bottom d-flex align-items-center justify-content-between flex-wrap gap-2">
+        <div class="d-flex align-items-center gap-2">
+            <i class="bi bi-clock-history text-primary"></i>
+            <h2 class="h6 fw-bold mb-0 text-dark">Applications Stream</h2>
+        </div>
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+            <span class="badge bg-light text-secondary border font-monospace"><?= number_format($totalRecords) ?> Records</span>
+            <a href="/applications/export-csv?<?= http_build_query($_GET) ?>" class="btn btn-xs btn-outline-success fw-semibold rounded-pill px-2.5 shadow-2xs">
                 <i class="bi bi-file-earmark-spreadsheet me-1"></i> Export CSV
             </a>
-            <a href="/applications/new" class="btn btn-sm btn-primary fw-bold rounded-pill px-3 shadow-2xs">
+            <a href="/applications/new" class="btn btn-xs btn-primary fw-bold rounded-pill px-3 shadow-2xs">
                 <i class="bi bi-plus-circle me-1"></i> New Application
             </a>
         </div>
     </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0" id="adminRequestsTable">
+            <thead class="table-light text-muted small text-uppercase fw-bold border-bottom" style="font-size: 0.72rem;">
+                <tr>
+                    <th class="ps-3 py-2.5">Order Reference</th>
+                    <th class="py-2.5">Applicant</th>
+                    <th class="py-2.5">Application No.</th>
+                    <th class="py-2.5">Amount</th>
+                    <th class="py-2.5">Status</th>
+                    <th class="py-2.5">Date</th>
+                    <th class="text-end pe-3 py-2.5" style="min-width: 170px;">Action</th>
+                </tr>
+            </thead>
+            <tbody id="adminRequestsTbody">
+                <?php if (empty($applications)): ?>
+                    <tr id="adminNoRequestsRow">
+                        <td colspan="7" class="text-center py-5 text-muted small">
+                            <i class="bi bi-inbox fs-2 d-block opacity-50 mb-1"></i>
+                            No applications found.
+                        </td>
+                    </tr>
+                <?php else: ?>
+                    <?php foreach ($applications as $app): ?>
+                        <?php
+                            $st = strtoupper($app['status'] ?? 'PENDING');
+                            $badgeClass = 'bg-warning-subtle text-warning-emphasis border border-warning-subtle';
+                            $statusLabel = 'PENDING';
+                            if ($st === 'IN_PROCESS' || $st === 'UNDER_REVIEW') {
+                                $badgeClass = 'bg-info-subtle text-info-emphasis border border-info-subtle';
+                                $statusLabel = 'PROCESSING';
+                            } elseif ($st === 'APPROVED' || $st === 'COMPLETED') {
+                                $badgeClass = 'bg-success-subtle text-success border border-success-subtle';
+                                $statusLabel = 'COMPLETED';
+                            } elseif ($st === 'REJECTED') {
+                                $badgeClass = 'bg-danger-subtle text-danger border border-danger-subtle';
+                                $statusLabel = 'REJECTED';
+                            }
 
-    <!-- Search & Filters Card -->
-    <div class="card mb-3 shadow-sm border rounded-3 bg-white" style="border: 1px solid #e2e8f0;">
-        <div class="card-body p-3">
-            <form method="GET" action="/user/dashboard" id="appFilterForm">
-                <div class="filters-grid">
-                    <!-- 1. District -->
-                    <div class="filter-col filter-col-district">
-                        <label for="filter_district_id" class="filter-label">District</label>
-                        <select name="district_id" id="filter_district_id" class="form-select form-select-sm filter-select filter-ctrl w-100">
-                            <option value="">All Districts</option>
-                            <?php foreach ($districts as $d): ?>
-                                <option value="<?= $d['id'] ?>" <?= $districtId === (int)$d['id'] ? 'selected' : '' ?>><?= e($d['name']) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
+                            $f = $app['formData'] ?? [];
+                            $appName = $f['applicant_name'] ?? $app['applicant_name'] ?? 'Applicant';
+                            $appNum = $f['application_number'] ?? $app['applicant_identifier'] ?? 'N/A';
+                            $appJson = htmlspecialchars(json_encode($app), ENT_QUOTES, 'UTF-8');
+                        ?>
+                        <tr class="admin-req-row"
+                            id="app-row-<?= $app['id'] ?>"
+                            data-id="<?= $app['id'] ?>"
+                            data-status="<?= $st ?>"
+                            data-app='<?= $appJson ?>'>
 
-                    <!-- 2. Block -->
-                    <div class="filter-col filter-col-block">
-                        <label for="filter_block_id" class="filter-label">Block</label>
-                        <select name="block_id" id="filter_block_id" class="form-select form-select-sm filter-select filter-ctrl w-100" <?= empty($blocks) && empty($districtId) ? 'disabled' : '' ?>>
-                            <option value="">All Blocks</option>
-                            <?php foreach ($blocks as $b): ?>
-                                <option value="<?= $b['id'] ?>" <?= $blockId === (int)$b['id'] ? 'selected' : '' ?>><?= e($b['name']) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
+                            <!-- 1. Order Reference -->
+                            <td class="ps-3">
+                                <div class="d-inline-flex align-items-center gap-1 px-2 py-0.5 rounded-2 bg-light border font-monospace small fw-bold text-dark">
+                                    <span>#<?= e($app['app_ref'] ?: ('WB-' . $app['id'])) ?></span>
+                                </div>
+                            </td>
 
-                    <!-- 3. Status -->
-                    <div class="filter-col filter-col-status">
-                        <label for="filter_status" class="filter-label">Status</label>
-                        <select name="status" id="filter_status" class="form-select form-select-sm filter-select filter-ctrl w-100">
-                            <option value="">All Statuses</option>
-                            <option value="PENDING" <?= $status === 'PENDING' ? 'selected' : '' ?>>Pending</option>
-                            <option value="IN_PROCESS" <?= in_array($status, ['IN_PROCESS', 'UNDER_REVIEW'], true) ? 'selected' : '' ?>>Processing</option>
-                            <option value="COMPLETED" <?= in_array($status, ['COMPLETED', 'APPROVED'], true) ? 'selected' : '' ?>>Completed</option>
-                            <option value="REJECTED" <?= $status === 'REJECTED' ? 'selected' : '' ?>>Rejected</option>
-                        </select>
-                    </div>
-
-                    <!-- 4. App Code -->
-                    <div class="filter-col filter-col-code">
-                        <label for="filter_app_code" class="filter-label">App Code</label>
-                        <select name="app_code" id="filter_app_code" class="form-select form-select-sm filter-select filter-ctrl w-100">
-                            <option value="">All Codes</option>
-                            <?php foreach ($appCodes as $cVal => $cLabel): ?>
-                                <option value="<?= e($cVal) ?>" <?= $appCode === $cVal ? 'selected' : '' ?>><?= e($cVal) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-
-                    <!-- 5. Date -->
-                    <div class="filter-col filter-col-date">
-                        <label for="filter_date" class="filter-label">Date</label>
-                        <select name="date_filter" id="filter_date" class="form-select form-select-sm filter-select filter-ctrl w-100">
-                            <option value="">All Dates</option>
-                            <option value="TODAY" <?= $dateFilter === 'TODAY' ? 'selected' : '' ?>>Today</option>
-                            <option value="WEEK" <?= $dateFilter === 'WEEK' ? 'selected' : '' ?>>Last 7 Days</option>
-                            <option value="MONTH" <?= $dateFilter === 'MONTH' ? 'selected' : '' ?>>Last 30 Days</option>
-                        </select>
-                    </div>
-
-                    <!-- 6. Search Bar -->
-                    <div class="filter-col filter-col-search">
-                        <label for="filter_search" class="filter-label">Search</label>
-                        <div class="input-group input-group-sm">
-                            <span class="input-group-text bg-light border-end-0 text-muted filter-ctrl" style="border-radius: 6px 0 0 6px !important;"><i class="bi bi-search"></i></span>
-                            <input type="text" name="search" id="filter_search" value="<?= e($search) ?>" class="form-control border-start-0 ps-0 bg-white filter-ctrl" style="border-radius: 0 6px 6px 0 !important;" placeholder="Request #, applicant, ID...">
-                        </div>
-                    </div>
-
-                    <!-- 7. Filter Button -->
-                    <div class="filter-col filter-col-btn">
-                        <button type="submit" class="btn btn-sm btn-primary filter-btn filter-ctrl shadow-2xs">
-                            <i class="bi bi-filter me-1"></i> Filter
-                        </button>
-                    </div>
-
-                    <!-- 8. Reset Button -->
-                    <div class="filter-col filter-col-btn">
-                        <a href="/user/dashboard" class="btn btn-sm btn-outline-danger filter-btn filter-ctrl" title="Reset all filters">
-                            <i class="bi bi-arrow-counterclockwise me-1"></i> Reset
-                        </a>
-                    </div>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- Full-Width Applications Table Card -->
-    <div class="card shadow-sm border rounded-3 bg-white mb-4 overflow-hidden" style="border: 1px solid #e2e8f0;">
-        <div class="card-body p-0">
-            <?php if (empty($applications)): ?>
-                <div class="text-center py-5 text-muted">
-                    <i class="bi bi-inbox fs-2 opacity-50 d-block mb-1"></i>
-                    <h5 class="h6 fw-bold text-dark mb-1">No Applications Found</h5>
-                    <p class="small text-muted mb-3">No matching records found for the applied search criteria.</p>
-                    <div class="d-flex gap-2 justify-content-center">
-                        <a href="/user/dashboard" class="btn btn-sm btn-outline-secondary rounded-pill px-3">Reset Filters</a>
-                        <a href="/applications/new" class="btn btn-sm btn-primary rounded-pill px-3 fw-bold">New Application</a>
-                    </div>
-                </div>
-            <?php else: ?>
-                <div class="table-responsive">
-                    <table class="table table-hover align-middle mb-0">
-                        <thead class="table-light text-muted small text-uppercase fw-bold" style="font-size: 0.72rem;">
-                            <tr>
-                                <th class="ps-3 py-2.5">Order Reference</th>
-                                <th class="py-2.5">Applicant</th>
-                                <th class="py-2.5">Application No.</th>
-                                <th class="py-2.5">Amount</th>
-                                <th class="py-2.5">Status</th>
-                                <th class="py-2.5">Date</th>
-                                <th class="text-end pe-3 py-2.5">Action</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($applications as $app): ?>
-                                <?php
-                                    $status = strtoupper($app['status'] ?? 'PENDING');
-                                    $jsonEscaped = htmlspecialchars(json_encode($app), ENT_QUOTES, 'UTF-8');
-                                ?>
-                                <tr id="app-row-<?= $app['id'] ?>" data-app='<?= $jsonEscaped ?>'>
-                                    <td class="ps-3 font-monospace small fw-bold text-dark">
-                                        #<?= e($app['app_ref']) ?>
-                                    </td>
-
-                                    <td class="fw-bold text-dark">
-                                        <?= e($app['applicant_name']) ?>
-                                    </td>
-
-                                    <td class="font-monospace small fw-semibold text-dark">
-                                        <?= e($app['applicant_identifier'] ?: '—') ?>
-                                    </td>
-
-                                    <td class="fw-bold text-dark">
-                                        ₹<?= number_format($app['fee_debited'], 2) ?>
-                                    </td>
-
-                                    <td>
-                                        <?php if ($status === 'COMPLETED' || $status === 'APPROVED'): ?>
-                                            <span class="badge bg-success-subtle text-success border border-success-subtle px-2 py-1 small fw-bold">
-                                                <i class="bi bi-check-circle-fill me-1"></i>COMPLETED
-                                            </span>
-                                        <?php elseif ($status === 'PENDING'): ?>
-                                            <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle px-2 py-1 small fw-bold">
-                                                <span class="spinner-grow spinner-grow-sm me-1" style="width: 7px; height: 7px;"></span>PENDING
-                                            </span>
-                                        <?php elseif ($status === 'IN_PROCESS' || $status === 'UNDER_REVIEW'): ?>
-                                            <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-2 py-1 small fw-bold">
-                                                <span class="spinner-border spinner-border-sm me-1" style="width: 8px; height: 8px;"></span>PROCESSING
-                                            </span>
-                                        <?php elseif ($status === 'REJECTED'): ?>
-                                            <span class="badge bg-danger-subtle text-danger border border-danger-subtle px-2 py-1 small fw-bold">
-                                                <i class="bi bi-x-circle-fill me-1"></i>REJECTED
-                                            </span>
-                                        <?php else: ?>
-                                            <span class="badge bg-light text-dark border px-2 py-1 small fw-bold">
-                                                <?= e($status) ?>
-                                            </span>
-                                        <?php endif; ?>
-                                    </td>
-
-                                    <td class="small text-muted" style="white-space: nowrap;">
-                                        <?= date('d M, h:i A', strtotime($app['created_at'])) ?>
-                                    </td>
-
-                                    <td class="text-end pe-3">
-                                        <div class="d-inline-flex align-items-center justify-content-end gap-1.5 flex-nowrap">
-                                            <?php if (!empty($app['result_file'])): ?>
-                                                <a href="<?= e($app['result_file']) ?>" target="_blank" download
-                                                   class="btn btn-sm btn-outline-success fw-bold py-0.5 px-2 rounded-2 shadow-2xs"
-                                                   style="font-size: 0.75rem;" title="Download Result">
-                                                    <i class="bi bi-download me-1"></i>Result
-                                                </a>
-                                            <?php endif; ?>
-
-                                            <button type="button"
-                                                    class="btn btn-sm btn-outline-warning fw-bold py-0.5 px-2.5 rounded-2 shadow-2xs"
-                                                    style="font-size: 0.75rem;"
-                                                    onclick="openDetailsModal(<?= $app['id'] ?>)">
-                                                More Details
-                                            </button>
+                            <!-- 2. Applicant Name + Avatar + Location below -->
+                            <td>
+                                <div class="d-flex align-items-center gap-2">
+                                    <div class="avatar-circle flex-shrink-0">
+                                        <?= strtoupper(mb_substr($appName, 0, 1)) ?>
+                                    </div>
+                                    <div class="min-w-0">
+                                        <div class="fw-bold text-dark text-truncate" style="font-size: 0.86rem; max-width: 220px;" title="<?= e($appName) ?>">
+                                            <?= e($appName) ?>
                                         </div>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                </div>
+                                        <div class="text-muted small d-flex align-items-center gap-1 text-truncate" style="font-size: 0.72rem;">
+                                            <span class="text-truncate"><i class="bi bi-geo-alt text-primary opacity-75 me-0.5"></i><?= e($app['district_name'] ?: 'District') ?> &gt; <?= e($app['block_name'] ?: 'Block') ?></span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </td>
 
-                <!-- Pagination -->
-                <?php if ($totalPages > 1): ?>
-                    <div class="card-footer bg-white border-top py-2.5 px-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
-                        <div class="small text-muted" style="font-size: 0.75rem;">
-                            Page <?= $page ?> of <?= $totalPages ?> (Total <?= number_format($totalRecords) ?> records)
-                        </div>
-                        <ul class="pagination pagination-sm mb-0">
-                            <?php if ($page > 1): ?>
-                                <li class="page-item">
-                                    <a class="page-link" href="?<?= http_build_query(array_merge($_GET, ['page' => $page - 1])) ?>">&laquo;</a>
-                                </li>
-                            <?php endif; ?>
+                            <!-- 3. Application No. with Copy Button -->
+                            <td>
+                                <div class="d-inline-flex align-items-center gap-1 font-monospace fw-bold text-dark small">
+                                    <span><?= e($appNum) ?></span>
+                                    <?php if ($appNum !== 'N/A' && !empty($appNum)): ?>
+                                        <button type="button" class="btn btn-xs btn-link p-0 text-muted ms-0.5" onclick="copyText('<?= e($appNum) ?>', this)" title="Copy Application Number">
+                                            <i class="bi bi-clipboard"></i>
+                                        </button>
+                                    <?php endif; ?>
+                                </div>
+                            </td>
 
-                            <?php for ($p = max(1, $page - 2); $p <= min($totalPages, $page + 2); $p++): ?>
-                                <li class="page-item <?= $p === $page ? 'active' : '' ?>">
-                                    <a class="page-link" href="?<?= http_build_query(array_merge($_GET, ['page' => $p])) ?>"><?= $p ?></a>
-                                </li>
-                            <?php endfor; ?>
+                            <!-- 4. Amount -->
+                            <td>
+                                <span class="fw-bold text-dark font-monospace" style="font-size: 0.86rem;">₹<?= number_format($app['fee_debited'], 2) ?></span>
+                            </td>
 
-                            <?php if ($page < $totalPages): ?>
-                                <li class="page-item">
-                                    <a class="page-link" href="?<?= http_build_query(array_merge($_GET, ['page' => $page + 1])) ?>">&raquo;</a>
-                                </li>
-                            <?php endif; ?>
-                        </ul>
-                    </div>
+                            <!-- 5. Status Badge -->
+                            <td>
+                                <span class="status-pill badge <?= $badgeClass ?> fw-bold">
+                                    <?php if ($statusLabel === 'PENDING'): ?>
+                                        <span class="pulse-dot me-1"></span>
+                                    <?php elseif ($statusLabel === 'PROCESSING'): ?>
+                                        <i class="bi bi-arrow-repeat spin-icon me-1"></i>
+                                    <?php elseif ($statusLabel === 'COMPLETED'): ?>
+                                        <i class="bi bi-check2 me-1"></i>
+                                    <?php elseif ($statusLabel === 'REJECTED'): ?>
+                                        <i class="bi bi-x me-1"></i>
+                                    <?php endif; ?>
+                                    <?= $statusLabel ?>
+                                </span>
+                            </td>
+
+                            <!-- 6. Date -->
+                            <td class="nowrap-cell small text-muted" style="font-size: 0.75rem;">
+                                <?= date('d M Y', strtotime($app['created_at'])) ?>
+                                <div class="text-muted" style="font-size: 0.68rem;"><?= date('h:i A', strtotime($app['created_at'])) ?></div>
+                            </td>
+
+                            <!-- 7. Action -->
+                            <td class="text-end pe-3">
+                                <div class="d-inline-flex align-items-center justify-content-end gap-1.5 flex-nowrap">
+                                    <?php if (!empty($app['result_file'])): ?>
+                                        <a href="<?= e($app['result_file']) ?>" target="_blank" download
+                                           class="btn btn-xs btn-outline-success fw-bold rounded-2 shadow-2xs"
+                                           title="Download Result Document">
+                                            <i class="bi bi-download"></i>
+                                        </a>
+                                    <?php endif; ?>
+
+                                    <button type="button"
+                                            class="btn btn-xs btn-more-details fw-bold rounded-2 px-2.5 shadow-2xs"
+                                            onclick="openDetailsModal(<?= $app['id'] ?>)">
+                                        More Details
+                                    </button>
+
+                                    <button type="button"
+                                            class="btn btn-xs btn-outline-primary btn-chat-icon rounded-2 shadow-2xs"
+                                            title="Chat with Operator"
+                                            onclick="openChatModal(<?= $app['id'] ?>)">
+                                        <i class="bi bi-chat-dots-fill"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
                 <?php endif; ?>
-            <?php endif; ?>
-        </div>
+            </tbody>
+        </table>
     </div>
-</div><!-- /wb-glass-dashboard -->
+
+    <!-- Pagination -->
+    <?php if ($totalPages > 1): ?>
+        <div class="card-footer bg-white border-top py-2.5 px-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div class="small text-muted" style="font-size: 0.75rem;">
+                Page <?= $page ?> of <?= $totalPages ?> (Total <?= number_format($totalRecords) ?> records)
+            </div>
+            <ul class="pagination pagination-sm mb-0">
+                <?php if ($page > 1): ?>
+                    <li class="page-item">
+                        <a class="page-link" href="?<?= http_build_query(array_merge($_GET, ['page' => $page - 1])) ?>">&laquo;</a>
+                    </li>
+                <?php endif; ?>
+
+                <?php for ($p = max(1, $page - 2); $p <= min($totalPages, $page + 2); $p++): ?>
+                    <li class="page-item <?= $p === $page ? 'active' : '' ?>">
+                        <a class="page-link" href="?<?= http_build_query(array_merge($_GET, ['page' => $p])) ?>"><?= $p ?></a>
+                    </li>
+                <?php endfor; ?>
+
+                <?php if ($page < $totalPages): ?>
+                    <li class="page-item">
+                        <a class="page-link" href="?<?= http_build_query(array_merge($_GET, ['page' => $page + 1])) ?>">&raquo;</a>
+                    </li>
+                <?php endif; ?>
+            </ul>
+        </div>
+    <?php endif; ?>
+</div>
 
 <!-- ================= MODALS: DETAILS, RECEIPT, CHAT, LIGHTBOX ================= -->
 
@@ -702,16 +545,33 @@
 </div>
 
 <script>
+// Filter by Clicking Executive KPI Status Card (Exact match to Admin & Operator)
+function filterByStatus(status) {
+    const statusInput = document.getElementById('filterStatusInput');
+    const form = document.getElementById('filterForm');
+    if (!statusInput || !form) return;
+    
+    // Toggle: clicking same card again resets to ALL
+    if (statusInput.value === status) {
+        statusInput.value = 'ALL';
+    } else {
+        statusInput.value = status;
+    }
+    document.getElementById('filterPageInput').value = '1';
+    form.submit();
+}
+
 document.addEventListener('DOMContentLoaded', function () {
     // Dynamic District -> Block cascade
-    const distSelect = document.getElementById('filter_district_id');
-    const blkSelect = document.getElementById('filter_block_id');
+    const distSelect = document.getElementById('filterDistrict');
+    const blkSelect = document.getElementById('filterBlock');
     if (distSelect && blkSelect) {
         distSelect.addEventListener('change', function () {
             const distId = this.value;
             if (!distId) {
-                blkSelect.innerHTML = '<option value="">-- All Blocks --</option>';
+                blkSelect.innerHTML = '<option value="">All Blocks</option>';
                 blkSelect.disabled = true;
+                document.getElementById('filterForm').submit();
                 return;
             }
             blkSelect.innerHTML = '<option value="">Loading blocks...</option>';
@@ -719,7 +579,7 @@ document.addEventListener('DOMContentLoaded', function () {
             fetch('/api/blocks?district_id=' + encodeURIComponent(distId))
                 .then(res => res.json())
                 .then(data => {
-                    blkSelect.innerHTML = '<option value="">-- All Blocks --</option>';
+                    blkSelect.innerHTML = '<option value="">All Blocks</option>';
                     if (Array.isArray(data) && data.length > 0) {
                         data.forEach(b => {
                             const opt = document.createElement('option');
@@ -728,16 +588,27 @@ document.addEventListener('DOMContentLoaded', function () {
                             blkSelect.appendChild(opt);
                         });
                         blkSelect.disabled = false;
-                    } else {
-                        blkSelect.disabled = false;
                     }
+                    document.getElementById('filterForm').submit();
                 })
                 .catch(() => {
-                    blkSelect.innerHTML = '<option value="">-- All Blocks --</option>';
+                    blkSelect.innerHTML = '<option value="">All Blocks</option>';
                     blkSelect.disabled = false;
+                    document.getElementById('filterForm').submit();
                 });
         });
     }
+
+    // Auto-submit dropdown filters on change
+    ['filterBlock', 'filterStatusSelect', 'filterCode', 'filterDate'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('change', () => {
+                document.getElementById('filterPageInput').value = '1';
+                document.getElementById('filterForm').submit();
+            });
+        }
+    });
 
     // Details Modal Handler
     window.openDetailsModal = function (appId) {
@@ -801,7 +672,7 @@ document.addEventListener('DOMContentLoaded', function () {
         addDetailRow(tbody, 'APPLICATION NUMBER', `
             <div class="d-inline-flex align-items-center gap-1 font-monospace fw-bold">
                 <span>${app.applicant_identifier || '--'}</span>
-                ${app.applicant_identifier ? `<button type="button" class="btn btn-xs btn-link p-0 text-muted ms-1" onclick="copyText('${app.applicant_identifier}', this)"><i class="bi bi-copy"></i> Copy</button>` : ''}
+                ${app.applicant_identifier ? `<button type="button" class="btn btn-xs btn-link p-0 text-muted ms-1" onclick="copyText('${app.applicant_identifier}', this)"><i class="bi bi-clipboard"></i> Copy</button>` : ''}
             </div>
         `);
         if (f.application_code) addDetailRow(tbody, 'SERVICE / APP CODE', `<span class="badge bg-light text-primary border font-monospace fw-bold">${f.application_code}</span>`);
