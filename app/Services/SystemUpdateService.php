@@ -252,6 +252,26 @@ class SystemUpdateService
                 ");
             }
 
+            // application_assignment_history
+            if (!in_array('application_assignment_history', $tables, true)) {
+                $db->exec("
+                    CREATE TABLE IF NOT EXISTS `application_assignment_history` (
+                        `id` INT AUTO_INCREMENT PRIMARY KEY,
+                        `application_id` INT NOT NULL,
+                        `previous_operator_id` INT NULL,
+                        `new_operator_id` INT NULL,
+                        `application_code` VARCHAR(64) NOT NULL,
+                        `assigned_by` INT NULL,
+                        `assignment_type` ENUM('AUTO', 'MANUAL', 'REASSIGN') NOT NULL DEFAULT 'AUTO',
+                        `reason` TEXT NULL,
+                        `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        INDEX `idx_aah_app_id` (`application_id`),
+                        INDEX `idx_aah_new_op` (`new_operator_id`),
+                        INDEX `idx_aah_prev_op` (`previous_operator_id`)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+                ");
+            }
+
             // application_code_fields
             if (!in_array('application_code_fields', $tables, true)) {
                 $db->exec("

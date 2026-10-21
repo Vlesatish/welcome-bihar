@@ -42,6 +42,18 @@ class StaffRoutingService
 
         // Query eligible active operators with load counter and atomic row lock
         // Order by active load (PENDING + IN_PROCESS) ASC, then tie-break by least recently assigned, then ID
+        $hasHistoryTable = true;
+        try {
+            $chkTable = $db->query("SHOW TABLES LIKE 'application_assignment_history'")->fetch();
+            $hasHistoryTable = !empty($chkTable);
+        } catch (\Throwable $e) {
+            $hasHistoryTable = false;
+        }
+
+        $lastSeqSql = $hasHistoryTable
+            ? "(SELECT COALESCE(MAX(aah.id), 0) FROM application_assignment_history aah WHERE aah.new_operator_id = u.id)"
+            : "0";
+
         $stmt = $db->prepare("
             SELECT oaca.operator_user_id,
                    (
@@ -50,11 +62,7 @@ class StaffRoutingService
                        WHERE a.assigned_operator_id = u.id
                          AND a.status IN ('PENDING', 'IN_PROCESS')
                    ) AS active_load,
-                   (
-                       SELECT COALESCE(MAX(aah.id), 0)
-                       FROM application_assignment_history aah
-                       WHERE aah.new_operator_id = u.id
-                   ) AS last_assignment_seq
+                   {$lastSeqSql} AS last_assignment_seq
             FROM operator_application_code_assignments oaca
             JOIN users u ON oaca.operator_user_id = u.id
             WHERE oaca.district_id = ?
@@ -125,24 +133,28 @@ class StaffRoutingService
         ]);
 
         // 2. Insert into application_assignment_history
-        $insHist = $db->prepare("
-            INSERT INTO application_assignment_history (
-                application_id, previous_operator_id, new_operator_id, application_code,
-                assigned_by, assignment_type, reason, created_at
-            ) VALUES (
-                ?, ?, ?, ?,
-                ?, ?, ?, NOW()
-            )
-        ");
-        $insHist->execute([
-            $applicationId,
-            $prevOpId,
-            $operatorId,
-            $code,
-            $assignedBy,
-            $assignmentType,
-            $reason
-        ]);
+        try {
+            $insHist = $db->prepare("
+                INSERT INTO application_assignment_history (
+                    application_id, previous_operator_id, new_operator_id, application_code,
+                    assigned_by, assignment_type, reason, created_at
+                ) VALUES (
+                    ?, ?, ?, ?,
+                    ?, ?, ?, NOW()
+                )
+            ");
+            $insHist->execute([
+                $applicationId,
+                $prevOpId,
+                $operatorId,
+                $code,
+                $assignedBy,
+                $assignmentType,
+                $reason
+            ]);
+        } catch (\Throwable $e) {
+            error_log("Assignment history notice: " . $e->getMessage());
+        }
 
         // 3. Audit log
         $auditEvent = 'APPLICATION_AUTO_ASSIGNED';

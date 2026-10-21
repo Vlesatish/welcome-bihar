@@ -64,6 +64,10 @@ echo "  table operator_application_code_assignments exists: " . (!empty($oacaTab
 $acfTable = $db->query("SHOW TABLES LIKE 'application_code_fields'")->fetchAll();
 echo "  table application_code_fields exists: " . (!empty($acfTable) ? "PASS [OK]" : "FAIL [MISSING]") . "\n";
 
+// Check application_assignment_history table
+$aahTable = $db->query("SHOW TABLES LIKE 'application_assignment_history'")->fetchAll();
+echo "  table application_assignment_history exists: " . (!empty($aahTable) ? "PASS [OK]" : "FAIL [MISSING]") . "\n";
+
 // 3. Admin Controller Method Test
 echo "\n3. Testing AdminController::systemUpdate() simulation...\n";
 if (session_status() === PHP_SESSION_NONE) session_start();
