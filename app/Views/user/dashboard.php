@@ -4,12 +4,36 @@
 <!-- TOAST CONTAINER -->
 <div id="toast-container" class="position-fixed top-0 end-0 p-3" style="z-index: 1080;"></div>
 
+<!-- Global filter helper (callable immediately on card click) -->
+<script>
+window.filterByStatus = function (st) {
+    const form = document.getElementById('filterForm');
+    const statusSelect = document.getElementById('filterStatusSelect');
+    const pageInput = document.getElementById('filterPageInput');
+    if (pageInput) pageInput.value = '1';
+
+    const currentSt = statusSelect ? statusSelect.value : 'ALL';
+    const targetSt = (currentSt === st) ? 'ALL' : st;
+
+    if (statusSelect) statusSelect.value = targetSt;
+    if (form) {
+        form.submit();
+    } else {
+        window.location.href = '/user/dashboard' + (targetSt !== 'ALL' ? '?status=' + encodeURIComponent(targetSt) : '');
+    }
+};
+</script>
+
 <!-- 1. Executive Clickable Status Cards (Exact match to Admin & Operator Dashboard) -->
 <div class="row g-3 mb-3" id="statusCardsRow">
 
     <!-- Pending -->
     <div class="col-6 col-md-3">
-        <div class="dashboard-stat-card card-pending <?= $currentTab === 'PENDING' ? 'active-card' : '' ?>" onclick="filterByStatus('PENDING')" id="card-status-pending" title="Click to filter by Pending">
+        <a href="/user/dashboard?status=<?= $currentTab === 'PENDING' ? 'ALL' : 'PENDING' ?>"
+           class="dashboard-stat-card card-pending text-decoration-none d-block <?= $currentTab === 'PENDING' ? 'active-card' : '' ?>"
+           onclick="filterByStatus('PENDING'); return false;"
+           id="card-status-pending"
+           title="Click to filter by Pending">
             <div class="d-flex align-items-center justify-content-between">
                 <div>
                     <span class="stat-card-label" style="color: #b45309;">Pending</span>
@@ -22,12 +46,16 @@
                     <i class="bi bi-hourglass-split"></i>
                 </div>
             </div>
-        </div>
+        </a>
     </div>
 
     <!-- In Process -->
     <div class="col-6 col-md-3">
-        <div class="dashboard-stat-card card-in-process <?= $currentTab === 'IN_PROCESS' ? 'active-card' : '' ?>" onclick="filterByStatus('IN_PROCESS')" id="card-status-in-process" title="Click to filter by In Process">
+        <a href="/user/dashboard?status=<?= $currentTab === 'IN_PROCESS' ? 'ALL' : 'IN_PROCESS' ?>"
+           class="dashboard-stat-card card-in-process text-decoration-none d-block <?= $currentTab === 'IN_PROCESS' ? 'active-card' : '' ?>"
+           onclick="filterByStatus('IN_PROCESS'); return false;"
+           id="card-status-in-process"
+           title="Click to filter by In Process">
             <div class="d-flex align-items-center justify-content-between">
                 <div>
                     <span class="stat-card-label" style="color: #0369a1;">In Process</span>
@@ -40,12 +68,16 @@
                     <i class="bi bi-gear-wide-connected"></i>
                 </div>
             </div>
-        </div>
+        </a>
     </div>
 
     <!-- Approved -->
     <div class="col-6 col-md-3">
-        <div class="dashboard-stat-card card-approved <?= $currentTab === 'APPROVED' ? 'active-card' : '' ?>" onclick="filterByStatus('APPROVED')" id="card-status-approved" title="Click to filter by Approved">
+        <a href="/user/dashboard?status=<?= $currentTab === 'APPROVED' ? 'ALL' : 'APPROVED' ?>"
+           class="dashboard-stat-card card-approved text-decoration-none d-block <?= $currentTab === 'APPROVED' ? 'active-card' : '' ?>"
+           onclick="filterByStatus('APPROVED'); return false;"
+           id="card-status-approved"
+           title="Click to filter by Approved">
             <div class="d-flex align-items-center justify-content-between">
                 <div>
                     <span class="stat-card-label" style="color: #047857;">Approved</span>
@@ -58,12 +90,16 @@
                     <i class="bi bi-check2-circle"></i>
                 </div>
             </div>
-        </div>
+        </a>
     </div>
 
     <!-- Rejected -->
     <div class="col-6 col-md-3">
-        <div class="dashboard-stat-card card-rejected <?= $currentTab === 'REJECTED' ? 'active-card' : '' ?>" onclick="filterByStatus('REJECTED')" id="card-status-rejected" title="Click to filter by Rejected">
+        <a href="/user/dashboard?status=<?= $currentTab === 'REJECTED' ? 'ALL' : 'REJECTED' ?>"
+           class="dashboard-stat-card card-rejected text-decoration-none d-block <?= $currentTab === 'REJECTED' ? 'active-card' : '' ?>"
+           onclick="filterByStatus('REJECTED'); return false;"
+           id="card-status-rejected"
+           title="Click to filter by Rejected">
             <div class="d-flex align-items-center justify-content-between">
                 <div>
                     <span class="stat-card-label" style="color: #b91c1c;">Rejected</span>
@@ -76,7 +112,7 @@
                     <i class="bi bi-x-circle"></i>
                 </div>
             </div>
-        </div>
+        </a>
     </div>
 </div>
 
@@ -126,7 +162,6 @@
 
         <!-- Filter Controls Form -->
         <form method="GET" action="/user/dashboard" id="filterForm">
-            <input type="hidden" name="status" id="filterStatusInput" value="<?= e($currentTab) ?>">
             <input type="hidden" name="page" id="filterPageInput" value="1">
 
             <div class="admin-filters-grid pt-1">
@@ -545,22 +580,6 @@
 </div>
 
 <script>
-// Filter by Clicking Executive KPI Status Card (Exact match to Admin & Operator)
-function filterByStatus(status) {
-    const statusInput = document.getElementById('filterStatusInput');
-    const form = document.getElementById('filterForm');
-    if (!statusInput || !form) return;
-    
-    // Toggle: clicking same card again resets to ALL
-    if (statusInput.value === status) {
-        statusInput.value = 'ALL';
-    } else {
-        statusInput.value = status;
-    }
-    document.getElementById('filterPageInput').value = '1';
-    form.submit();
-}
-
 document.addEventListener('DOMContentLoaded', function () {
     // Dynamic District -> Block cascade
     const distSelect = document.getElementById('filterDistrict');
