@@ -56,6 +56,14 @@ echo "  table service_rate_rules exists: " . (!empty($srrTable) ? "PASS [OK]" : 
 $waTable = $db->query("SHOW TABLES LIKE 'whatsapp_notification_outbox'")->fetchAll();
 echo "  table whatsapp_notification_outbox exists: " . (!empty($waTable) ? "PASS [OK]" : "FAIL [MISSING]") . "\n";
 
+// Check operator_application_code_assignments table
+$oacaTable = $db->query("SHOW TABLES LIKE 'operator_application_code_assignments'")->fetchAll();
+echo "  table operator_application_code_assignments exists: " . (!empty($oacaTable) ? "PASS [OK]" : "FAIL [MISSING]") . "\n";
+
+// Check application_code_fields table
+$acfTable = $db->query("SHOW TABLES LIKE 'application_code_fields'")->fetchAll();
+echo "  table application_code_fields exists: " . (!empty($acfTable) ? "PASS [OK]" : "FAIL [MISSING]") . "\n";
+
 // 3. Admin Controller Method Test
 echo "\n3. Testing AdminController::systemUpdate() simulation...\n";
 if (session_status() === PHP_SESSION_NONE) session_start();

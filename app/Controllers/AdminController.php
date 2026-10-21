@@ -136,10 +136,16 @@ class AdminController
 
             // Admin Routing KPI Metrics
             $routingDashboardStats = [
-                'assigned' => (int)$db->query("SELECT COUNT(*) FROM applications WHERE assigned_operator_id IS NOT NULL")->fetchColumn(),
-                'unassigned' => (int)$db->query("SELECT COUNT(*) FROM applications WHERE assigned_operator_id IS NULL AND status = 'PENDING'")->fetchColumn(),
-                'active_rules' => (int)$db->query("SELECT COUNT(*) FROM operator_application_code_assignments WHERE is_active = 1")->fetchColumn(),
-                'codes_without_staff' => (int)$db->query("
+                'assigned' => 0,
+                'unassigned' => 0,
+                'active_rules' => 0,
+                'codes_without_staff' => 0
+            ];
+            try {
+                $routingDashboardStats['assigned'] = (int)$db->query("SELECT COUNT(*) FROM applications WHERE assigned_operator_id IS NOT NULL")->fetchColumn();
+                $routingDashboardStats['unassigned'] = (int)$db->query("SELECT COUNT(*) FROM applications WHERE assigned_operator_id IS NULL AND status = 'PENDING'")->fetchColumn();
+                $routingDashboardStats['active_rules'] = (int)$db->query("SELECT COUNT(*) FROM operator_application_code_assignments WHERE is_active = 1")->fetchColumn();
+                $routingDashboardStats['codes_without_staff'] = (int)$db->query("
                     SELECT COUNT(DISTINCT srr.district_id, srr.block_id, srr.application_code)
                     FROM service_rate_rules srr
                     WHERE srr.is_active = 1 AND srr.fee_amount > 0 AND srr.application_code IS NOT NULL AND srr.application_code != ''
@@ -152,8 +158,10 @@ class AdminController
                             AND oaca.is_active = 1
                             AND u.role = 'OPERATOR' AND u.status = 'ACTIVE'
                       )
-                ")->fetchColumn()
-            ];
+                ")->fetchColumn();
+            } catch (\Throwable $re) {
+                // Table might not exist yet before migration runs
+            }
         }
         $reqStats['approved'] = (int)($reqStats['completed'] ?? 0);
 
@@ -1222,7 +1230,10 @@ class AdminController
         }
 
         // Summary metrics
-        $totalRules = (int)$db->query("SELECT COUNT(*) FROM operator_application_code_assignments WHERE is_active = 1")->fetchColumn();
+        $totalRules = 0;
+        try {
+            $totalRules = (int)$db->query("SELECT COUNT(*) FROM operator_application_code_assignments WHERE is_active = 1")->fetchColumn();
+        } catch (\Throwable $e) {}
         $unassignedAppsCount = (int)$db->query("SELECT COUNT(*) FROM applications WHERE assigned_operator_id IS NULL AND status = 'PENDING'")->fetchColumn();
 
         // Populate variables expected by staff_routing.php view

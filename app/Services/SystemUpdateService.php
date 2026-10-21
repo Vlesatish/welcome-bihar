@@ -30,21 +30,65 @@ class SystemUpdateService
                 $db->exec("ALTER TABLE `applications` ADD INDEX `idx_apps_batch_ref` (`batch_ref`)");
             }
 
+            if (!in_array('application_code', $appCols, true)) {
+                $db->exec("ALTER TABLE `applications` ADD COLUMN `application_code` VARCHAR(64) NULL AFTER `data_type_id`");
+                $db->exec("ALTER TABLE `applications` ADD INDEX `idx_apps_app_code` (`application_code`)");
+            }
+
             if (!in_array('assigned_operator_id', $appCols, true)) {
                 $db->exec("ALTER TABLE `applications` ADD COLUMN `assigned_operator_id` INT NULL AFTER `distributor_id`");
                 $db->exec("ALTER TABLE `applications` ADD INDEX `idx_apps_assigned_operator` (`assigned_operator_id`)");
+            }
+
+            if (!in_array('assigned_at', $appCols, true)) {
+                $db->exec("ALTER TABLE `applications` ADD COLUMN `assigned_at` DATETIME NULL AFTER `assigned_operator_id`");
+            }
+
+            if (!in_array('assignment_method', $appCols, true)) {
+                $db->exec("ALTER TABLE `applications` ADD COLUMN `assignment_method` VARCHAR(50) NULL AFTER `assigned_at`");
+            }
+
+            if (!in_array('district_id', $appCols, true)) {
+                $db->exec("ALTER TABLE `applications` ADD COLUMN `district_id` INT NULL AFTER `assignment_method`");
+                $db->exec("ALTER TABLE `applications` ADD INDEX `idx_apps_district` (`district_id`)");
+            }
+
+            if (!in_array('block_id', $appCols, true)) {
+                $db->exec("ALTER TABLE `applications` ADD COLUMN `block_id` INT NULL AFTER `district_id`");
+                $db->exec("ALTER TABLE `applications` ADD INDEX `idx_apps_block` (`block_id`)");
+            }
+
+            if (!in_array('applicant_name', $appCols, true)) {
+                $db->exec("ALTER TABLE `applications` ADD COLUMN `applicant_name` VARCHAR(150) NULL AFTER `block_id`");
+            }
+
+            if (!in_array('applicant_mobile', $appCols, true)) {
+                $db->exec("ALTER TABLE `applications` ADD COLUMN `applicant_mobile` VARCHAR(20) NULL AFTER `applicant_name`");
+            }
+
+            if (!in_array('applicant_identifier', $appCols, true)) {
+                $db->exec("ALTER TABLE `applications` ADD COLUMN `applicant_identifier` VARCHAR(100) NULL AFTER `applicant_mobile`");
+                $db->exec("ALTER TABLE `applications` ADD INDEX `idx_apps_applicant_identifier` (`applicant_identifier`)");
             }
 
             if (!in_array('claimed_at', $appCols, true)) {
                 $db->exec("ALTER TABLE `applications` ADD COLUMN `claimed_at` DATETIME NULL AFTER `assigned_operator_id`");
             }
 
+            if (!in_array('remarks', $appCols, true)) {
+                $db->exec("ALTER TABLE `applications` ADD COLUMN `remarks` TEXT NULL AFTER `status`");
+            }
+
+            if (!in_array('is_locked', $appCols, true)) {
+                $db->exec("ALTER TABLE `applications` ADD COLUMN `is_locked` TINYINT(1) NOT NULL DEFAULT 1");
+            }
+
             if (!in_array('is_refunded', $appCols, true)) {
-                $db->exec("ALTER TABLE `applications` ADD COLUMN `is_refunded` TINYINT(1) NOT NULL DEFAULT 0 AFTER `is_locked`");
+                $db->exec("ALTER TABLE `applications` ADD COLUMN `is_refunded` TINYINT(1) NOT NULL DEFAULT 0");
             }
 
             if (!in_array('is_commission_paid', $appCols, true)) {
-                $db->exec("ALTER TABLE `applications` ADD COLUMN `is_commission_paid` TINYINT(1) NOT NULL DEFAULT 0 AFTER `is_refunded`");
+                $db->exec("ALTER TABLE `applications` ADD COLUMN `is_commission_paid` TINYINT(1) NOT NULL DEFAULT 0");
             }
 
             // 2. Users table checks
@@ -185,6 +229,83 @@ class SystemUpdateService
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
                 ");
             }
+
+            // operator_application_code_assignments
+            if (!in_array('operator_application_code_assignments', $tables, true)) {
+                $db->exec("
+                    CREATE TABLE IF NOT EXISTS `operator_application_code_assignments` (
+                        `id` INT AUTO_INCREMENT PRIMARY KEY,
+                        `operator_user_id` INT NOT NULL,
+                        `district_id` INT NOT NULL,
+                        `block_id` INT NOT NULL,
+                        `application_code` VARCHAR(64) NOT NULL,
+                        `is_active` TINYINT(1) NOT NULL DEFAULT 1,
+                        `priority` INT NOT NULL DEFAULT 1,
+                        `assigned_by` INT NULL,
+                        `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        INDEX `idx_oaca_operator` (`operator_user_id`),
+                        INDEX `idx_oaca_dist_blk` (`district_id`, `block_id`),
+                        UNIQUE KEY `uq_op_dist_blk_code` (`operator_user_id`, `district_id`, `block_id`, `application_code`),
+                        INDEX `idx_routing_lookup` (`district_id`, `block_id`, `application_code`, `is_active`)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+                ");
+            }
+
+            // application_code_fields
+            if (!in_array('application_code_fields', $tables, true)) {
+                $db->exec("
+                    CREATE TABLE IF NOT EXISTS `application_code_fields` (
+                        `id` INT AUTO_INCREMENT PRIMARY KEY,
+                        `data_type_id` INT NOT NULL,
+                        `application_code` VARCHAR(64) NOT NULL,
+                        `field_name` VARCHAR(100) NOT NULL,
+                        `label` VARCHAR(150) NOT NULL,
+                        `field_type` ENUM('text', 'number', 'mobile', 'aadhaar', 'date', 'select', 'radio', 'textarea', 'file', 'email') NOT NULL DEFAULT 'text',
+                        `placeholder` VARCHAR(255) NULL,
+                        `help_text` VARCHAR(255) NULL,
+                        `options_json` TEXT NULL,
+                        `validation_pattern` VARCHAR(255) NULL,
+                        `min_length` INT NULL,
+                        `max_length` INT NULL,
+                        `min_value` DECIMAL(15,2) NULL,
+                        `max_value` DECIMAL(15,2) NULL,
+                        `allowed_file_types` VARCHAR(150) NULL,
+                        `max_file_size_mb` INT NULL,
+                        `is_required` TINYINT(1) NOT NULL DEFAULT 1,
+                        `is_unique` TINYINT(1) NOT NULL DEFAULT 0,
+                        `is_active` TINYINT(1) NOT NULL DEFAULT 1,
+                        `sort_order` INT NOT NULL DEFAULT 0,
+                        `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        UNIQUE KEY `uniq_code_field` (`data_type_id`, `application_code`, `field_name`),
+                        KEY `idx_code_active` (`data_type_id`, `application_code`, `is_active`)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+                ");
+            }
+
+            // application_field_values adjustments
+            if (in_array('application_field_values', $tables, true)) {
+                $afvCols = $db->query("SHOW COLUMNS FROM `application_field_values`")->fetchAll(PDO::FETCH_COLUMN);
+                $afvCols = array_map('strtolower', $afvCols);
+                if (!in_array('code_field_id', $afvCols, true)) {
+                    $db->exec("ALTER TABLE `application_field_values` ADD COLUMN `code_field_id` INT NULL AFTER `field_id`, ADD KEY `idx_code_field_id` (`code_field_id`)");
+                }
+                try {
+                    $db->exec("ALTER TABLE `application_field_values` MODIFY `field_id` INT NULL");
+                } catch (\Throwable $e) {}
+            }
+
+            // Seed default application_code_fields if none exist
+            try {
+                $countFields = (int)($db->query("SELECT COUNT(*) FROM `application_code_fields`")->fetchColumn() ?: 0);
+                if ($countFields === 0) {
+                    $seedMigration = dirname(__DIR__, 2) . '/cli/migrate_code_fields.php';
+                    if (file_exists($seedMigration)) {
+                        include_once $seedMigration;
+                    }
+                }
+            } catch (\Throwable $e) {}
 
             // 4. Ensure srv_block_app service exists
             $chkService = $db->query("SELECT id FROM data_types WHERE code = 'srv_block_app' LIMIT 1")->fetch();
@@ -335,6 +456,10 @@ class SystemUpdateService
                 }
             }
         }
+
+        // Re-run schema ensure on the newly updated codebase
+        self::$schemaChecked = false;
+        self::ensureSchema();
 
         $log[] = "Database schema, columns, indexes, and master tables are 100% synchronized.";
 
