@@ -32,18 +32,26 @@
     z-index: 1;
 }
 
-/* Base Glass Stat Card */
+/* Base Glass Stat Card (Clickable & Fresh) */
 .dash-glass-card {
     border-radius: 16px;
-    padding: 1.15rem 1.25rem;
-    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    padding: 1.25rem 1.35rem;
+    transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
     position: relative;
     overflow: hidden;
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
 }
 .dash-glass-card:hover {
-    transform: translateY(-3px);
+    transform: translateY(-4px);
+}
+.dash-glass-card:active {
+    transform: translateY(-1px) scale(0.99);
 }
 
 /* 1. Wallet Balance - Soft Cyan/Blue Glass */
@@ -249,97 +257,62 @@
 <div id="toast-container" class="position-fixed top-0 end-0 p-3" style="z-index: 1080;"></div>
 
 <div class="wb-glass-dashboard">
-    <!-- Quick Light Colorful Glass Stat Cards (Kept at the top) -->
+    <!-- Quick Light Colorful Glass Stat Cards (Clean, Clickable & Minimal) -->
     <div class="row g-3 mb-4">
         <!-- 1. Wallet Balance (Blue Glass) -->
         <div class="col-sm-6 col-lg-3">
-            <div class="dash-glass-card card-glass-blue h-100 d-flex flex-column justify-content-between">
+            <a href="/wallet/passbook" class="dash-glass-card card-glass-blue h-100 text-decoration-none">
                 <div class="d-flex align-items-center justify-content-between mb-2">
                     <span class="stat-label-text"><?= e(__('wallet_balance')) ?></span>
                     <div class="stat-icon-glass">
                         <i class="bi bi-wallet2"></i>
                     </div>
                 </div>
-                <div>
-                    <div class="stat-val-text font-monospace" style="color: #1d4ed8;">₹<?= number_format($balance, 2) ?></div>
-                </div>
-                <div class="mt-3 pt-2 d-flex align-items-center justify-content-between" style="border-top: 1px solid rgba(191, 219, 254, 0.7);">
-                    <a href="/wallet/passbook" class="small fw-bold text-decoration-none" style="font-size: 0.76rem; color: #1d4ed8;">
-                        <?= e(__('view_details')) ?> &rarr;
-                    </a>
-                    <span class="badge rounded-pill px-2.5 py-1" style="font-size: 0.68rem; background: rgba(37, 99, 235, 0.15); color: #1e40af; border: 1px solid rgba(191, 219, 254, 0.8);">Active</span>
-                </div>
-            </div>
+                <div class="stat-val-text font-monospace" style="color: #1d4ed8;">₹<?= number_format($balance, 2) ?></div>
+            </a>
         </div>
 
         <!-- 2. Total Applications (Purple Glass) -->
         <div class="col-sm-6 col-lg-3">
-            <div class="dash-glass-card card-glass-purple h-100 d-flex flex-column justify-content-between">
+            <a href="/dashboard" class="dash-glass-card card-glass-purple h-100 text-decoration-none">
                 <div class="d-flex align-items-center justify-content-between mb-2">
                     <span class="stat-label-text"><?= e(__('applications')) ?></span>
                     <div class="stat-icon-glass">
                         <i class="bi bi-files"></i>
                     </div>
                 </div>
-                <div>
-                    <div class="stat-val-text" style="color: #6d28d9;"><?= number_format((int)($stats['total'] ?? 0)) ?></div>
-                </div>
-                <div class="mt-3 pt-2 d-flex align-items-center justify-content-between" style="border-top: 1px solid rgba(221, 214, 254, 0.7);">
-                    <a href="/applications" class="small fw-bold text-decoration-none" style="font-size: 0.76rem; color: #6d28d9;">
-                        <?= e(__('application_list')) ?> &rarr;
-                    </a>
-                    <span class="badge rounded-pill px-2.5 py-1" style="font-size: 0.68rem; background: rgba(124, 58, 237, 0.12); color: #5b21b6; border: 1px solid rgba(221, 214, 254, 0.8);">Lifetime</span>
-                </div>
-            </div>
+                <div class="stat-val-text" style="color: #6d28d9;"><?= number_format((int)($stats['total'] ?? 0)) ?></div>
+            </a>
         </div>
 
         <!-- 3. Approved Applications (Emerald Glass) -->
         <div class="col-sm-6 col-lg-3">
-            <div class="dash-glass-card card-glass-emerald h-100 d-flex flex-column justify-content-between">
+            <a href="/dashboard?status=COMPLETED" class="dash-glass-card card-glass-emerald h-100 text-decoration-none">
                 <div class="d-flex align-items-center justify-content-between mb-2">
                     <span class="stat-label-text"><?= e(__('status_approved')) ?></span>
                     <div class="stat-icon-glass">
                         <i class="bi bi-check2-circle"></i>
                     </div>
                 </div>
-                <div>
-                    <div class="stat-val-text" style="color: #047857;"><?= number_format((int)($stats['approved'] ?? 0)) ?></div>
-                </div>
-                <div class="mt-3 pt-2 d-flex align-items-center justify-content-between" style="border-top: 1px solid rgba(167, 243, 208, 0.7);">
-                    <a href="/applications?status=COMPLETED" class="small fw-bold text-decoration-none" style="font-size: 0.76rem; color: #047857;">
-                        View Approved &rarr;
-                    </a>
-                    <span class="badge rounded-pill px-2.5 py-1" style="font-size: 0.68rem; background: rgba(16, 185, 129, 0.15); color: #065f46; border: 1px solid rgba(167, 243, 208, 0.8);">Ready</span>
-                </div>
-            </div>
+                <div class="stat-val-text" style="color: #047857;"><?= number_format((int)($stats['approved'] ?? 0)) ?></div>
+            </a>
         </div>
 
         <!-- 4. Pending & Under Review (Amber Glass) -->
         <div class="col-sm-6 col-lg-3">
-            <div class="dash-glass-card card-glass-amber h-100 d-flex flex-column justify-content-between">
+            <a href="/dashboard?status=PENDING" class="dash-glass-card card-glass-amber h-100 text-decoration-none">
                 <div class="d-flex align-items-center justify-content-between mb-2">
                     <span class="stat-label-text"><?= e(__('status_pending')) ?> / Review</span>
                     <div class="stat-icon-glass">
                         <i class="bi bi-clock-history"></i>
                     </div>
                 </div>
-                <div>
-                    <div class="stat-val-text" style="color: #b45309;"><?= number_format((int)($stats['pending'] ?? 0) + (int)($stats['under_review'] ?? 0)) ?></div>
-                </div>
-                <div class="mt-3 pt-2 d-flex align-items-center justify-content-between" style="border-top: 1px solid rgba(253, 230, 138, 0.7);">
-                    <div class="d-flex gap-1">
-                        <span class="badge rounded-pill px-2 py-0.5" style="font-size: 0.68rem; background: rgba(245, 158, 11, 0.15); color: #92400e; border: 1px solid rgba(253, 230, 138, 0.8);"><?= (int)($stats['pending'] ?? 0) ?> Pending</span>
-                        <span class="badge rounded-pill px-2 py-0.5" style="font-size: 0.68rem; background: rgba(14, 165, 233, 0.15); color: #0369a1; border: 1px solid rgba(186, 230, 253, 0.8);"><?= (int)($stats['under_review'] ?? 0) ?> Review</span>
-                    </div>
-                    <a href="/applications?status=PENDING" class="small fw-bold text-decoration-none" style="font-size: 0.76rem; color: #b45309;">
-                        &rarr;
-                    </a>
-                </div>
-            </div>
+                <div class="stat-val-text" style="color: #b45309;"><?= number_format((int)($stats['pending'] ?? 0) + (int)($stats['under_review'] ?? 0)) ?></div>
+            </a>
         </div>
     </div>
 
-    <!-- Page Title & Actions (Matching Image 3) -->
+    <!-- Page Title & Actions -->
     <div class="row align-items-center mb-3 g-2">
         <div class="col-md-6">
             <h1 class="h5 fw-bold mb-0 text-dark d-flex align-items-center gap-2">
@@ -347,9 +320,6 @@
                 <span>Application List</span>
                 <span class="badge bg-primary-subtle text-primary border rounded-pill px-2.5 small"><?= number_format($totalRecords) ?></span>
             </h1>
-            <p class="text-muted small mb-0" style="font-size: 0.75rem;">
-                Search, track live progress, download receipts and output documents
-            </p>
         </div>
         <div class="col-md-6 text-md-end d-flex gap-2 justify-content-md-end flex-wrap">
             <a href="/applications/export-csv?<?= http_build_query($_GET) ?>" class="btn btn-sm btn-outline-success fw-semibold rounded-pill px-3 shadow-2xs">
@@ -361,51 +331,11 @@
         </div>
     </div>
 
-    <!-- Search & Filters Card (Matching Image 3) -->
+    <!-- Search & Filters Card -->
     <div class="card mb-3 shadow-sm border rounded-3 bg-white" style="border: 1px solid #e2e8f0;">
         <div class="card-body p-3">
-            <div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2 pb-2 border-bottom">
-                <div class="d-flex align-items-center flex-wrap gap-1.5">
-                    <i class="bi bi-funnel-fill text-primary" style="font-size: 0.82rem;"></i>
-                    <h2 class="h6 fw-bold mb-0 text-dark" style="font-size: 0.85rem; letter-spacing: 0.2px;">Filters</h2>
-                    <?php if (!empty($districtId)): ?>
-                        <span class="badge bg-light text-dark border" style="font-size: 0.72rem;">
-                            District: <strong><?= e($districtId) ?></strong>
-                        </span>
-                    <?php endif; ?>
-                    <?php if (!empty($blockId)): ?>
-                        <span class="badge bg-light text-dark border" style="font-size: 0.72rem;">
-                            Block: <strong><?= e($blockId) ?></strong>
-                        </span>
-                    <?php endif; ?>
-                    <?php if (!empty($status)): ?>
-                        <span class="badge bg-primary-subtle text-primary border border-primary-subtle" style="font-size: 0.72rem;">
-                            Status: <strong><?= e($status) ?></strong>
-                        </span>
-                    <?php endif; ?>
-                    <?php if (!empty($appCode)): ?>
-                        <span class="badge bg-light text-dark border" style="font-size: 0.72rem;">
-                            Code: <strong><?= e($appCode) ?></strong>
-                        </span>
-                    <?php endif; ?>
-                    <?php if ($dateFilter !== '' && $dateFilter !== 'ALL'): ?>
-                        <span class="badge bg-light text-dark border" style="font-size: 0.72rem;">
-                            Date: <strong><?= e($dateFilter) ?></strong>
-                        </span>
-                    <?php endif; ?>
-                    <?php if (!empty($search)): ?>
-                        <span class="badge bg-light text-dark border" style="font-size: 0.72rem;">
-                            Search: <strong>"<?= e($search) ?>"</strong>
-                        </span>
-                    <?php endif; ?>
-                </div>
-                <div class="small text-muted" style="font-size: 0.74rem;">
-                    Showing <strong><?= number_format($totalRecords) ?></strong> applications
-                </div>
-            </div>
-
             <form method="GET" action="/dashboard" id="appFilterForm">
-                <div class="filters-grid pt-1">
+                <div class="filters-grid">
                     <!-- 1. District -->
                     <div class="filter-col filter-col-district">
                         <label for="filter_district_id" class="filter-label">District</label>
@@ -489,15 +419,8 @@
         </div>
     </div>
 
-    <!-- Full-Width Applications Table Card (Matching Image 3) -->
-    <div class="card shadow-sm border rounded-3 bg-white mb-4" style="border: 1px solid #e2e8f0;">
-        <div class="card-header bg-white py-3 px-3.5 border-bottom d-flex align-items-center justify-content-between">
-            <div class="d-flex align-items-center gap-2">
-                <i class="bi bi-clock-history text-primary"></i>
-                <h2 class="h6 fw-bold mb-0 text-dark">Recent Applications</h2>
-            </div>
-            <span class="badge bg-light text-secondary border font-monospace"><?= number_format($totalRecords) ?> Applications</span>
-        </div>
+    <!-- Full-Width Applications Table Card -->
+    <div class="card shadow-sm border rounded-3 bg-white mb-4 overflow-hidden" style="border: 1px solid #e2e8f0;">
         <div class="card-body p-0">
             <?php if (empty($applications)): ?>
                 <div class="text-center py-5 text-muted">
