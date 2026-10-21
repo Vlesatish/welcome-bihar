@@ -193,6 +193,26 @@ try {
             $ctrl->adminApplications();
             break;
 
+        case '/admin/applications/reassign':
+            $ctrl = new \App\Controllers\ApplicationController();
+            $ctrl->reassignStaff();
+            break;
+
+        case '/admin/staff-routing':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->staffRouting();
+            break;
+
+        case '/admin/staff-routing/save':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->saveStaffRouting();
+            break;
+
+        case '/admin/staff-routing/api-block-data':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->apiGetBlockStaffRouting();
+            break;
+
         case '/admin/users':
             $ctrl = new \App\Controllers\AdminController();
             $ctrl->users();
@@ -365,6 +385,31 @@ try {
             $ctrl->deleteField();
             break;
 
+        case '/admin/application-code-forms':
+            $ctrl = new \App\Controllers\ApplicationCodeFieldController();
+            $ctrl->index();
+            break;
+
+        case '/admin/application-code-forms/save':
+            $ctrl = new \App\Controllers\ApplicationCodeFieldController();
+            $ctrl->saveField();
+            break;
+
+        case '/admin/application-code-forms/toggle':
+            $ctrl = new \App\Controllers\ApplicationCodeFieldController();
+            $ctrl->toggleActive();
+            break;
+
+        case '/admin/application-code-forms/delete':
+            $ctrl = new \App\Controllers\ApplicationCodeFieldController();
+            $ctrl->deleteField();
+            break;
+
+        case '/admin/application-code-forms/reorder':
+            $ctrl = new \App\Controllers\ApplicationCodeFieldController();
+            $ctrl->reorder();
+            break;
+
         case '/admin/settings':
             $ctrl = new \App\Controllers\SettingsController();
             if ($requestMethod === 'POST') $ctrl->save();
@@ -494,6 +539,7 @@ try {
             break;
 
         case '/api/blocks':
+        case '/api/locations/blocks':
         case '/locations/blocks':
             $ctrl = new \App\Controllers\LocationController();
             $ctrl->getBlocks();
@@ -512,6 +558,11 @@ try {
         case '/api/service-application-codes':
             $ctrl = new \App\Controllers\LocationController();
             $ctrl->getServiceApplicationCodes();
+            break;
+
+        case '/api/application-code-fields':
+            $ctrl = new \App\Controllers\ApplicationCodeFieldController();
+            $ctrl->apiGetFields();
             break;
 
 

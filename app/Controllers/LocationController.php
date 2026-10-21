@@ -259,8 +259,13 @@ class LocationController
         ];
 
         $results = [];
+        $seen = [];
         foreach ($rows as $r) {
             $code = strtoupper(trim($r['application_code']));
+            if (empty($code) || isset($seen[$code])) {
+                continue;
+            }
+            $seen[$code] = true;
             $fee = (float)$r['fee_amount'];
             $label = $appCodeNames[$code] ?? (!empty($r['rule_label']) ? $r['rule_label'] : $code);
             $results[] = [

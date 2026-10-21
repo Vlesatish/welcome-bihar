@@ -72,9 +72,17 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                     <i class="bi bi-people"></i>
                     <span>Users & Operators</span>
                 </a>
+                <a class="wb-sidebar-link <?= strpos($currentUri, '/admin/staff-routing') === 0 ? 'active' : '' ?>" href="/admin/staff-routing">
+                    <i class="bi bi-diagram-3 text-info"></i>
+                    <span>Staff Routing</span>
+                </a>
                 <a class="wb-sidebar-link <?= (strpos($currentUri, '/admin/block-rates') === 0 || strpos($currentUri, '/admin/data-types/rate-rules') === 0) ? 'active' : '' ?>" href="/admin/block-rates">
                     <i class="bi bi-currency-rupee text-warning"></i>
                     <span>Block Rates & Pricing</span>
+                </a>
+                <a class="wb-sidebar-link <?= strpos($currentUri, '/admin/application-code-forms') === 0 ? 'active' : '' ?>" href="/admin/application-code-forms">
+                    <i class="bi bi-ui-checks-grid text-primary"></i>
+                    <span>Application Code Forms</span>
                 </a>
                 <a class="wb-sidebar-link <?= (strpos($currentUri, '/admin/data-types') === 0 && strpos($currentUri, '/admin/data-types/rate-rules') === false) ? 'active' : '' ?>" href="/admin/data-types">
                     <i class="bi bi-sliders"></i>

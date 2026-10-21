@@ -60,6 +60,29 @@ class AuthService
         return self::role() === 'USER';
     }
 
+    public static function requireRole($roles): void
+    {
+        if (!self::check()) {
+            header('Location: /login');
+            exit;
+        }
+
+        $userRole = self::role();
+        $allowed = is_array($roles) ? $roles : [$roles];
+
+        if (!in_array($userRole, $allowed, true)) {
+            if (str_starts_with($_SERVER['REQUEST_URI'] ?? '', '/api/')) {
+                http_response_code(403);
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode(['success' => false, 'error' => 'Forbidden: insufficient role permissions']);
+                exit;
+            }
+            $_SESSION['flash_error'] = 'Access denied: You do not have permission to access this resource.';
+            header('Location: /admin/dashboard');
+            exit;
+        }
+    }
+
     /**
      * Reusable authorization policy for block operators
      * Verifies:
@@ -85,11 +108,16 @@ class AuthService
             return false;
         }
 
-        $appStmt = $db->prepare("SELECT id, district_id, block_id FROM applications WHERE id = ? LIMIT 1");
+        $appStmt = $db->prepare("SELECT id, district_id, block_id, assigned_operator_id FROM applications WHERE id = ? LIMIT 1");
         $appStmt->execute([$applicationId]);
         $app = $appStmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$app) {
+            return false;
+        }
+
+        // Strict application routing security: operator must be the designated assigned staff
+        if ((int)($app['assigned_operator_id'] ?? 0) !== $operatorId) {
             return false;
         }
 

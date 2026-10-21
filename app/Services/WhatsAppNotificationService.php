@@ -458,53 +458,90 @@ class WhatsAppNotificationService
         $appRef = trim((string)($data['app_ref'] ?? ''));
         $districtName = trim((string)($data['district_name'] ?? 'District'));
         $blockName = trim((string)($data['block_name'] ?? 'Block'));
-        $applicationCode = trim((string)($data['application_code'] ?? ''));
 
         if ($applicationNumber === '') {
             $applicationNumber = $appRef;
         }
-        if ($applicationCode === '') {
-            $applicationCode = 'N/A';
+
+        $lines = [];
+        $lines[] = "Applicant: {$applicantName}";
+        $lines[] = "Application No: {$applicationNumber}";
+        $lines[] = "Location: {$districtName} > {$blockName}";
+
+        // Include only user-inputted dynamic fields (e.g. Aadhaar No, Registration No)
+        $skipKeys = [
+            'applicant_name', 'application_number', 'applicant_identifier',
+            'app_ref', 'district_name', 'block_name', 'application_code',
+            'state', 'status', 'assigned_operator_id', 'district_id', 'block_id',
+            'user_id', 'created_at', 'updated_at', 'fields', 'raw_item'
+        ];
+
+        foreach ($data as $key => $val) {
+            $keyLower = strtolower(trim((string)$key));
+            if (in_array($keyLower, $skipKeys, true) || is_array($val) || is_object($val)) {
+                continue;
+            }
+            $valStr = trim((string)$val);
+            if ($valStr === '') {
+                continue;
+            }
+
+            if ($keyLower === 'aadhaar_number' || $keyLower === 'aadhaar_no' || $keyLower === 'aadhaar' || $keyLower === 'uid') {
+                $lines[] = "Aadhaar No: {$valStr}";
+            } elseif ($keyLower === 'registration_number' || $keyLower === 'registration_no' || $keyLower === 'reg_no') {
+                $lines[] = "Registration No: {$valStr}";
+            } else {
+                $label = ucwords(str_replace(['_', '-'], ' ', $keyLower));
+                $lines[] = "{$label}: {$valStr}";
+            }
         }
 
-        return "New application received\n\n"
-            . "Applicant: {$applicantName}\n"
-            . "Application No: {$applicationNumber}\n"
-            . "Location: {$districtName} > {$blockName}";
+        return implode("\n", $lines);
     }
 
     /**
      * Queue notification inside the application submission transaction.
-     * Selects all active operators assigned to the application's district & block.
-     * Inserts idempotent outbox entries into `whatsapp_notification_outbox`.
+     * Routes ONLY to the single assigned operator (applications.assigned_operator_id).
+     * If application is unassigned, records outbox status as SKIPPED with reason 'No assigned staff'.
      *
-     * @return array Summary of queued, skipped, and invalid operator counts
+     * @return array Summary of queued, skipped, and operator counts
      */
     public static function queueSubmissionNotification(
         int $applicationId,
         int $districtId,
         int $blockId,
         array $appData,
-        PDO $db
+        PDO $db,
+        ?int $targetOperatorId = null
     ): array {
         $settings = self::getSettings();
+
+        // Fetch dynamic fields (such as aadhaar_number) for this application if not provided
+        if ($applicationId > 0) {
+            try {
+                $fStmt = $db->prepare("SELECT field_name, field_value FROM application_field_values WHERE application_id = ?");
+                $fStmt->execute([$applicationId]);
+                while ($fRow = $fStmt->fetch(PDO::FETCH_ASSOC)) {
+                    $fn = strtolower(trim((string)$fRow['field_name']));
+                    $fv = trim((string)$fRow['field_value']);
+                    if (!empty($fv) && empty($appData[$fn])) {
+                        $appData[$fn] = $fv;
+                    }
+                }
+            } catch (\Throwable $e) {
+                // Ignore gracefully
+            }
+        }
+
         $messageBody = self::buildMessage($appData);
         $appRef = (string)($appData['app_ref'] ?? "ID #{$applicationId}");
         $districtName = (string)($appData['district_name'] ?? 'District');
         $blockName = (string)($appData['block_name'] ?? 'Block');
+        $applicationCode = (string)($appData['application_code'] ?? 'WB-PASS');
 
-        // Fetch all active operators assigned to the specific application district & block
-        $opStmt = $db->prepare("
-            SELECT id, name, mobile
-            FROM users
-            WHERE role = 'OPERATOR'
-              AND status = 'ACTIVE'
-              AND assigned_district_id = ?
-              AND assigned_block_id = ?
-            ORDER BY id ASC
-        ");
-        $opStmt->execute([$districtId, $blockId]);
-        $operators = $opStmt->fetchAll(PDO::FETCH_ASSOC);
+        if ($targetOperatorId === null && !empty($appData['assigned_operator_id'])) {
+            $targetOperatorId = (int)$appData['assigned_operator_id'];
+        }
 
         $outboxInsert = $db->prepare("
             INSERT INTO whatsapp_notification_outbox (
@@ -517,10 +554,10 @@ class WhatsAppNotificationService
             ON DUPLICATE KEY UPDATE updated_at = NOW()
         ");
 
-        // Case 1: No eligible Block Operator exists
-        if (empty($operators)) {
-            $noOpKey = "APPLICATION_SUBMITTED_NO_OPERATOR:{$applicationId}";
-            $reason = 'No active Block Operator is assigned to this District and Block.';
+        // Case 1: Unassigned application (no assigned staff)
+        if (empty($targetOperatorId) || (int)$targetOperatorId <= 0) {
+            $noOpKey = "APPLICATION_SUBMITTED_NO_STAFF:{$applicationId}";
+            $reason = 'No assigned staff';
             $outboxInsert->execute([
                 $noOpKey,
                 $applicationId,
@@ -537,15 +574,16 @@ class WhatsAppNotificationService
                 'event_key' => $noOpKey,
                 'reason' => $reason,
                 'district_id' => $districtId,
-                'block_id' => $blockId
+                'block_id' => $blockId,
+                'application_code' => $applicationCode
             ]);
 
-            // Real Admin In-App Alert
+            // Admin In-App Alert
             self::alertAdmins(
-                'No Active Block Operator Assigned',
-                "Application {$appRef} was submitted for location {$districtName} > {$blockName}, but no active Block Operator is assigned.",
+                'Unassigned Application',
+                "Application {$appRef} ({$applicationCode}) for location {$districtName} > {$blockName} has no assigned staff. WhatsApp notification skipped.",
                 'WARNING',
-                '/admin/whatsapp/logs'
+                '/admin/applications?assignment_status=UNASSIGNED'
             );
 
             return [
@@ -556,7 +594,44 @@ class WhatsAppNotificationService
             ];
         }
 
-        // Case 2: Process eligible operators, remove duplicate phone numbers
+        // Case 2: Fetch the single assigned operator, confirming active status and matching block
+        $opStmt = $db->prepare("
+            SELECT id, name, mobile
+            FROM users
+            WHERE id = ?
+              AND role = 'OPERATOR'
+              AND status = 'ACTIVE'
+              AND assigned_district_id = ?
+              AND assigned_block_id = ?
+            LIMIT 1
+        ");
+        $opStmt->execute([$targetOperatorId, $districtId, $blockId]);
+        $op = $opStmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$op) {
+            $invalidOpKey = "APPLICATION_SUBMITTED_INVALID_OPERATOR:{$applicationId}:{$targetOperatorId}";
+            $reason = 'Assigned operator is inactive or invalid for location';
+            $outboxInsert->execute([
+                $invalidOpKey,
+                $applicationId,
+                $targetOperatorId,
+                'INVALID',
+                $messageBody,
+                'SKIPPED',
+                0,
+                null,
+                $reason
+            ]);
+
+            return [
+                'operators_found' => 0,
+                'queued_count' => 0,
+                'skipped_count' => 1,
+                'warning' => $reason
+            ];
+        }
+
+        $operators = [$op];
         $queuedCount = 0;
         $skippedCount = 0;
         $seenMobiles = [];

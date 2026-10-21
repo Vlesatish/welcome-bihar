@@ -116,10 +116,11 @@ class AdminController
                     COALESCE(SUM(fee_debited), 0) as total_fees,
                     COALESCE(SUM(commission_credited), 0) as total_commissions
                 FROM applications
-                WHERE district_id = ? AND block_id = ?
+                WHERE assigned_operator_id = ? AND district_id = ? AND block_id = ?
             ");
-            $cStmt->execute([$operatorDistrictId, $operatorBlockId]);
+            $cStmt->execute([(int)$currentUser['id'], $operatorDistrictId, $operatorBlockId]);
             $reqStats = $cStmt->fetch(PDO::FETCH_ASSOC);
+            $routingDashboardStats = null;
         } else {
             $reqStats = $db->query("
                 SELECT
@@ -132,6 +133,27 @@ class AdminController
                     COALESCE(SUM(commission_credited), 0) as total_commissions
                 FROM applications
             ")->fetch(PDO::FETCH_ASSOC);
+
+            // Admin Routing KPI Metrics
+            $routingDashboardStats = [
+                'assigned' => (int)$db->query("SELECT COUNT(*) FROM applications WHERE assigned_operator_id IS NOT NULL")->fetchColumn(),
+                'unassigned' => (int)$db->query("SELECT COUNT(*) FROM applications WHERE assigned_operator_id IS NULL AND status = 'PENDING'")->fetchColumn(),
+                'active_rules' => (int)$db->query("SELECT COUNT(*) FROM operator_application_code_assignments WHERE is_active = 1")->fetchColumn(),
+                'codes_without_staff' => (int)$db->query("
+                    SELECT COUNT(DISTINCT srr.district_id, srr.block_id, srr.application_code)
+                    FROM service_rate_rules srr
+                    WHERE srr.is_active = 1 AND srr.fee_amount > 0 AND srr.application_code IS NOT NULL AND srr.application_code != ''
+                      AND NOT EXISTS (
+                          SELECT 1 FROM operator_application_code_assignments oaca
+                          JOIN users u ON oaca.operator_user_id = u.id
+                          WHERE oaca.district_id = srr.district_id
+                            AND oaca.block_id = srr.block_id
+                            AND oaca.application_code = srr.application_code
+                            AND oaca.is_active = 1
+                            AND u.role = 'OPERATOR' AND u.status = 'ACTIVE'
+                      )
+                ")->fetchColumn()
+            ];
         }
         $reqStats['approved'] = (int)($reqStats['completed'] ?? 0);
 
@@ -256,7 +278,8 @@ class AdminController
         $params = [];
 
         if ($isOperator) {
-            $where[] = "a.district_id = :op_dist AND a.block_id = :op_block";
+            $where[] = "a.assigned_operator_id = :op_id AND a.district_id = :op_dist AND a.block_id = :op_block";
+            $params[':op_id'] = (int)$currentUser['id'];
             $params[':op_dist'] = $operatorDistrictId;
             $params[':op_block'] = $operatorBlockId;
         } else {
@@ -1078,6 +1101,233 @@ class AdminController
         }
 
         header('Location: /admin/whatsapp/logs');
+        exit;
+    }
+
+    /**
+     * Admin Staff Routing Management Page
+     */
+    public function staffRouting(): void
+    {
+        AuthService::requireRole(['ADMIN']);
+        $db = Database::getConnection();
+
+        $districtId = !empty($_GET['district_id']) ? (int)$_GET['district_id'] : 0;
+        $blockId = !empty($_GET['block_id']) ? (int)$_GET['block_id'] : 0;
+        $appCode = strtoupper(trim($_GET['app_code'] ?? ''));
+        $staffStatus = strtoupper(trim($_GET['status'] ?? $_GET['staff_status'] ?? 'ALL'));
+        if (!in_array($staffStatus, ['ALL', 'ACTIVE', 'INACTIVE'], true)) {
+            $staffStatus = 'ALL';
+        }
+        $search = trim($_GET['search'] ?? '');
+
+        // Fetch active districts for filter
+        $districts = $db->query("SELECT id, name FROM districts WHERE is_active = 1 ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+
+        $availableBlocks = [];
+        if ($districtId > 0) {
+            $bStmt = $db->prepare("SELECT id, name, district_id FROM blocks WHERE district_id = ? AND is_active = 1 ORDER BY name ASC");
+            $bStmt->execute([$districtId]);
+            $availableBlocks = $bStmt->fetchAll(PDO::FETCH_ASSOC);
+        }
+
+        // Query operators
+        $where = ["u.role = 'OPERATOR'"];
+        $params = [];
+
+        if ($districtId > 0) {
+            $where[] = "u.assigned_district_id = :district_id";
+            $params[':district_id'] = $districtId;
+        }
+
+        if ($blockId > 0) {
+            $where[] = "u.assigned_block_id = :block_id";
+            $params[':block_id'] = $blockId;
+        }
+
+        if ($staffStatus === 'ACTIVE') {
+            $where[] = "u.status = 'ACTIVE'";
+        } elseif ($staffStatus === 'INACTIVE') {
+            $where[] = "u.status != 'ACTIVE'";
+        }
+
+        if (!empty($search)) {
+            $where[] = "(u.name LIKE :q OR u.mobile LIKE :q OR u.email LIKE :q)";
+            $params[':q'] = "%{$search}%";
+        }
+
+        $whereClause = implode(' AND ', $where);
+        $sql = "
+            SELECT u.id, u.name, u.mobile, u.email, u.status,
+                   u.assigned_district_id, u.assigned_district_id as district_id,
+                   u.assigned_block_id, u.assigned_block_id as block_id,
+                   d.name as district_name, b.name as block_name
+            FROM users u
+            LEFT JOIN districts d ON u.assigned_district_id = d.id
+            LEFT JOIN blocks b ON u.assigned_block_id = b.id
+            WHERE {$whereClause}
+            ORDER BY u.status = 'ACTIVE' DESC, d.name ASC, b.name ASC, u.name ASC
+        ";
+
+        $stmt = $db->prepare($sql);
+        $stmt->execute($params);
+        $allOperators = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Enhance operators with assigned codes and live queue counts
+        $codeStmt = $db->prepare("
+            SELECT application_code
+            FROM operator_application_code_assignments
+            WHERE operator_user_id = ? AND district_id = ? AND block_id = ? AND is_active = 1
+            ORDER BY application_code ASC
+        ");
+
+        $countStmt = $db->prepare("
+            SELECT
+                SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) as pending_count,
+                SUM(CASE WHEN status IN ('IN_PROCESS', 'UNDER_REVIEW') THEN 1 ELSE 0 END) as in_process_count
+            FROM applications
+            WHERE assigned_operator_id = ?
+        ");
+
+        $staffList = [];
+        foreach ($allOperators as $op) {
+            $opDist = (int)($op['assigned_district_id'] ?? 0);
+            $opBlk = (int)($op['assigned_block_id'] ?? 0);
+
+            $assignedCodes = [];
+            if ($opDist > 0 && $opBlk > 0) {
+                $codeStmt->execute([(int)$op['id'], $opDist, $opBlk]);
+                $assignedCodes = $codeStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+            }
+
+            // Filter by appCode if specified
+            if (!empty($appCode) && !in_array($appCode, $assignedCodes, true)) {
+                continue;
+            }
+
+            $countStmt->execute([(int)$op['id']]);
+            $counts = $countStmt->fetch(PDO::FETCH_ASSOC) ?: ['pending_count' => 0, 'in_process_count' => 0];
+
+            $op['district_id'] = $opDist;
+            $op['block_id'] = $opBlk;
+            $op['assigned_codes'] = $assignedCodes;
+            $op['pending_count'] = (int)($counts['pending_count'] ?? 0);
+            $op['in_process_count'] = (int)($counts['in_process_count'] ?? 0);
+
+            $staffList[] = $op;
+        }
+
+        // Summary metrics
+        $totalRules = (int)$db->query("SELECT COUNT(*) FROM operator_application_code_assignments WHERE is_active = 1")->fetchColumn();
+        $unassignedAppsCount = (int)$db->query("SELECT COUNT(*) FROM applications WHERE assigned_operator_id IS NULL AND status = 'PENDING'")->fetchColumn();
+
+        // Populate variables expected by staff_routing.php view
+        $operators = $staffList;
+        $blocks = $availableBlocks;
+        $filterDistrictId = $districtId;
+        $filterBlockId = $blockId;
+        $filterAppCode = $appCode;
+        $filterStatus = $staffStatus;
+
+        $allActiveCodes = $db->query("
+            SELECT DISTINCT UPPER(TRIM(application_code))
+            FROM service_rate_rules
+            WHERE is_active = 1 AND application_code IS NOT NULL AND application_code != '' AND application_code != '*'
+            ORDER BY application_code ASC
+        ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+        if (empty($allActiveCodes)) {
+            $allActiveCodes = ['BCCCO', 'BICCO', 'BOBC', 'BRCCO', 'LABOURCARD', 'NCLCO', 'OTHER'];
+        }
+
+        require dirname(__DIR__) . '/Views/admin/staff_routing.php';
+    }
+
+    /**
+     * POST /admin/staff-routing/save
+     */
+    public function saveStaffRouting(): void
+    {
+        AuthService::requireRole(['ADMIN']);
+
+        if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
+            $_SESSION['flash_error'] = 'Invalid CSRF token.';
+            header('Location: /admin/staff-routing');
+            exit;
+        }
+
+        $operatorId = (int)($_POST['operator_user_id'] ?? 0);
+        $districtId = (int)($_POST['district_id'] ?? 0);
+        $blockId = (int)($_POST['block_id'] ?? 0);
+        $codes = (array)($_POST['application_codes'] ?? []);
+
+        try {
+            $res = \App\Services\StaffRoutingService::saveOperatorCodeAssignments(
+                $operatorId,
+                $districtId,
+                $blockId,
+                $codes,
+                AuthService::id()
+            );
+            $_SESSION['flash_success'] = $res['message'];
+        } catch (\Exception $e) {
+            $_SESSION['flash_error'] = $e->getMessage();
+        }
+
+        header("Location: /admin/staff-routing?district_id={$districtId}&block_id={$blockId}");
+        exit;
+    }
+
+    /**
+     * GET /admin/staff-routing/api-block-data?district_id=X&block_id=Y
+     * Returns JSON with active block operators and active application codes
+     */
+    public function apiGetBlockStaffRouting(): void
+    {
+        header('Content-Type: application/json; charset=utf-8');
+        AuthService::requireRole(['ADMIN']);
+        $db = Database::getConnection();
+
+        $districtId = (int)($_GET['district_id'] ?? 0);
+        $blockId = (int)($_GET['block_id'] ?? 0);
+
+        if ($districtId <= 0 || $blockId <= 0) {
+            http_response_code(422);
+            echo json_encode(['success' => false, 'error' => 'Invalid District or Block.']);
+            exit;
+        }
+
+        $operators = \App\Services\StaffRoutingService::getOperatorsForBlock($districtId, $blockId, $db);
+        $codes = \App\Services\StaffRoutingService::getActiveCodesForBlock($districtId, $blockId, $db);
+
+        // Fetch block service status
+        $sbaStmt = $db->prepare("SELECT status FROM service_block_availability WHERE district_id = ? AND block_id = ? LIMIT 1");
+        $sbaStmt->execute([$districtId, $blockId]);
+        $sbaStatus = $sbaStmt->fetchColumn() ?: 'DISABLED';
+
+        // Fetch currently assigned codes for each operator
+        $codeStmt = $db->prepare("
+            SELECT application_code
+            FROM operator_application_code_assignments
+            WHERE operator_user_id = ? AND district_id = ? AND block_id = ? AND is_active = 1
+        ");
+
+        foreach ($operators as &$op) {
+            $codeStmt->execute([(int)$op['id'], $districtId, $blockId]);
+            $op['assigned_codes'] = $codeStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+        }
+        unset($op);
+
+        $distinctCodes = array_values(array_unique(array_filter(array_map(function ($c) {
+            return is_array($c) ? ($c['code'] ?? '') : (string)$c;
+        }, $codes))));
+
+        echo json_encode([
+            'success' => true,
+            'service_status' => $sbaStatus,
+            'operators' => $operators,
+            'rate_codes' => $codes,
+            'active_codes' => $distinctCodes
+        ]);
         exit;
     }
 }

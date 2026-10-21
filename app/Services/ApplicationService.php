@@ -4,9 +4,13 @@ namespace App\Services;
 use App\Config\Database;
 use Exception;
 use PDO;
+use App\Services\StaffRoutingService;
+use App\Services\Traits\ApplicationStatusTrait;
 
 class ApplicationService
 {
+    use ApplicationStatusTrait;
+
     /**
      * Submit a new application with validation, duplicate checks, file upload handling, and atomic wallet fee debit
      */
@@ -293,6 +297,14 @@ class ApplicationService
                 throw new Exception(__("insufficient_balance", "Insufficient wallet balance (Available: ₹" . number_format($lockedBalance, 2) . ", Required: ₹" . number_format($feeAmount, 2) . "). Please recharge your wallet."));
             }
 
+            $submittedAppCode = strtoupper(trim((string)($submittedValues['application_code'] ?? ($submittedValues['app_code'] ?? ''))));
+            if (empty($submittedAppCode)) {
+                $submittedAppCode = 'WB-PASS';
+            }
+
+            $assignedOperatorId = StaffRoutingService::resolveOperatorForApplication($districtId, $blockId, $submittedAppCode, $db);
+            $assignmentMethod = $assignedOperatorId ? 'AUTO_ROUND_ROBIN' : 'UNASSIGNED';
+
             // Generate unique application reference
             $appRef = 'WB-' . date('Ymd') . '-' . strtoupper(substr(bin2hex(random_bytes(3)), 0, 5));
             $rateSnapshot = "Applied Rate: " . ($pricing['rate_note'] ?? 'Standard Base Rate') . " (Charged: ₹" . number_format($feeAmount, 2) . ")";
@@ -300,13 +312,15 @@ class ApplicationService
             // Insert Application
             $insApp = $db->prepare("
                 INSERT INTO applications (
-                    app_ref, user_id, distributor_id, data_type_id, district_id, block_id,
-                    applicant_name, applicant_mobile, applicant_identifier, fee_debited,
-                    commission_credited, status, remarks, is_locked, created_at
+                    app_ref, user_id, distributor_id, data_type_id, application_code,
+                    assigned_operator_id, assigned_at, assignment_method,
+                    district_id, block_id, applicant_name, applicant_mobile, applicant_identifier,
+                    fee_debited, commission_credited, status, remarks, is_locked, created_at
                 ) VALUES (
-                    ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?,
-                    ?, 'PENDING', ?, 1, NOW()
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, 'PENDING', ?, 1, NOW()
                 )
             ");
             $insApp->execute([
@@ -314,6 +328,10 @@ class ApplicationService
                 $userId,
                 $distributorId,
                 $dataTypeId,
+                $submittedAppCode,
+                $assignedOperatorId,
+                $assignedOperatorId ? date('Y-m-d H:i:s') : null,
+                $assignmentMethod,
                 $districtId,
                 $blockId,
                 $applicantName,
@@ -324,6 +342,36 @@ class ApplicationService
                 $rateSnapshot
             ]);
             $appId = (int)$db->lastInsertId();
+
+            // Record assignment in immutable assignment history and audit logs
+            StaffRoutingService::recordAssignment(
+                $appId,
+                $assignedOperatorId,
+                $submittedAppCode,
+                $assignmentMethod,
+                null,
+                "Initial submission routing",
+                $db
+            );
+
+            // Include any additional dynamic fields submitted (e.g. aadhaar_number)
+            $knownFieldNames = array_column($validatedData, 'field_name');
+            $skipSingleKeys = ['csrf_token', 'redirect', 'data_type_id', 'data_type_code', 'district_id', 'block_id'];
+            foreach ($submittedValues as $sKey => $sVal) {
+                if (in_array($sKey, $skipSingleKeys, true) || in_array($sKey, $knownFieldNames, true)) {
+                    continue;
+                }
+                $sValTrim = trim((string)$sVal);
+                if ($sValTrim !== '') {
+                    $validatedData[] = [
+                        'field_id' => null,
+                        'field_name' => $sKey,
+                        'value' => $sValTrim,
+                        'is_unique' => 0
+                    ];
+                    $knownFieldNames[] = $sKey;
+                }
+            }
 
             // Insert dynamic field values
             $insVal = $db->prepare("
@@ -410,14 +458,20 @@ class ApplicationService
                 'app_ref' => $appRef,
                 'district_name' => $distName,
                 'block_name' => $blkName,
-                'application_code' => $submittedValues['application_code'] ?? ($dataType['code'] ?? 'srv_block_app')
+                'application_code' => $submittedAppCode
             ];
+            foreach ($validatedData as $vf) {
+                if (empty($waData[$vf['field_name']])) {
+                    $waData[$vf['field_name']] = $vf['value'];
+                }
+            }
             WhatsAppNotificationService::queueSubmissionNotification(
                 $appId,
                 $districtId,
                 $blockId,
                 $waData,
-                $db
+                $db,
+                $assignedOperatorId
             );
 
             $db->commit();
@@ -636,6 +690,43 @@ class ApplicationService
                 ];
             }
 
+            // Include any additional dynamic fields (e.g. aadhaar_number, registration_number) from submitted item
+            $knownFields = array_column($itemValidatedFields, 'field_name');
+            $skipKeys = ['district_id', 'block_id', 'client_fee', 'fee', 'row_num', 'csrf_token'];
+            foreach ($item as $iKey => $iVal) {
+                if (in_array($iKey, $skipKeys, true) || in_array($iKey, $knownFields, true)) {
+                    continue;
+                }
+                if ($iKey === 'fields' && is_array($iVal)) {
+                    foreach ($iVal as $fKey => $fVal) {
+                        if (is_scalar($fVal) && !in_array($fKey, $knownFields, true)) {
+                            $fValTrim = trim((string)$fVal);
+                            if ($fValTrim !== '') {
+                                $itemValidatedFields[] = [
+                                    'field_id' => null,
+                                    'field_name' => $fKey,
+                                    'value' => $fValTrim
+                                ];
+                                $knownFields[] = $fKey;
+                            }
+                        }
+                    }
+                    continue;
+                }
+                if (!is_scalar($iVal)) {
+                    continue;
+                }
+                $valTrim = trim((string)$iVal);
+                if ($valTrim !== '') {
+                    $itemValidatedFields[] = [
+                        'field_id' => null,
+                        'field_name' => $iKey,
+                        'value' => $valTrim
+                    ];
+                    $knownFields[] = $iKey;
+                }
+            }
+
             $totalBatchFee += $serverFee;
 
             $preparedItems[] = [
@@ -715,13 +806,15 @@ class ApplicationService
 
             $insApp = $db->prepare("
                 INSERT INTO applications (
-                    app_ref, batch_ref, user_id, distributor_id, data_type_id, district_id, block_id,
-                    applicant_name, applicant_mobile, applicant_identifier, fee_debited,
-                    commission_credited, status, remarks, is_locked, created_at
+                    app_ref, batch_ref, user_id, distributor_id, data_type_id, application_code,
+                    assigned_operator_id, assigned_at, assignment_method,
+                    district_id, block_id, applicant_name, applicant_mobile, applicant_identifier,
+                    fee_debited, commission_credited, status, remarks, is_locked, created_at
                 ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?,
-                    ?, 'PENDING', ?, 1, NOW()
+                    ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, 'PENDING', ?, 1, NOW()
                 )
             ");
 
@@ -749,12 +842,20 @@ class ApplicationService
                 $appRef = 'WB-' . date('Ymd') . '-' . strtoupper(substr(bin2hex(random_bytes(3)), 0, 5));
                 $rateSnapshot = "Applied Rate: {$prep['rate_note']} (Charged: ₹" . number_format($prep['fee'], 2) . ")";
 
+                $prepCode = $prep['application_code'];
+                $rowAssignedOpId = StaffRoutingService::resolveOperatorForApplication($prep['district_id'], $prep['block_id'], $prepCode, $db);
+                $rowMethod = $rowAssignedOpId ? 'AUTO_ROUND_ROBIN' : 'UNASSIGNED';
+
                 $insApp->execute([
                     $appRef,
                     $batchRef,
                     $userId,
                     $distributorId,
                     $dataTypeId,
+                    $prepCode,
+                    $rowAssignedOpId,
+                    $rowAssignedOpId ? date('Y-m-d H:i:s') : null,
+                    $rowMethod,
                     $prep['district_id'],
                     $prep['block_id'],
                     $prep['applicant_name'],
@@ -765,6 +866,17 @@ class ApplicationService
                     $rateSnapshot
                 ]);
                 $appId = (int)$db->lastInsertId();
+
+                // Record immutable assignment history
+                StaffRoutingService::recordAssignment(
+                    $appId,
+                    $rowAssignedOpId,
+                    $prepCode,
+                    $rowMethod,
+                    null,
+                    "Batch submission routing #{$batchRef}",
+                    $db
+                );
 
                 foreach ($prep['fields'] as $f) {
                     $insVal->execute([$appId, $f['field_id'], $f['field_name'], $f['value']]);
@@ -812,7 +924,7 @@ class ApplicationService
                     'isCommissionPaid' => false
                 ];
 
-                // Queue WhatsApp notification to active block operators for this specific application
+                // Queue WhatsApp notification directly and only to the assigned operator for this application
                 $waItemData = [
                     'applicant_name' => $prep['applicant_name'],
                     'application_number' => $prep['applicant_identifier'],
@@ -821,12 +933,16 @@ class ApplicationService
                     'block_name' => $blkName,
                     'application_code' => $prep['application_code']
                 ];
+                foreach ($prep['fields'] as $pf) {
+                    $waItemData[$pf['field_name']] = $pf['value'];
+                }
                 WhatsAppNotificationService::queueSubmissionNotification(
                     $appId,
                     $prep['district_id'],
                     $prep['block_id'],
                     $waItemData,
-                    $db
+                    $db,
+                    $rowAssignedOpId
                 );
             }
 
@@ -896,316 +1012,6 @@ class ApplicationService
         }
     }
 
-    /**
-     * Transition application status (Pending -> Under Review -> Approved / Rejected / Completed)
-     */
-    public static function updateStatus(
-        int $appId,
-        string $newStatus,
-        int $actorUserId,
-        string $actorRole,
-        string $actorName,
-        ?string $remarks = null,
-        ?string $rejectionReason = null,
-        ?string $adminRemarks = null,
-        ?string $resultFilePath = null
-    ): array {
-        $db = Database::getConnection();
-
-        $stmt = $db->prepare("SELECT a.*, dt.name_en as dt_name_en, dt.name_hi as dt_name_hi FROM applications a JOIN data_types dt ON a.data_type_id = dt.id WHERE a.id = ? FOR UPDATE");
-
-        $ownsTransaction = false;
-        if (!$db->inTransaction()) {
-            $db->beginTransaction();
-            $ownsTransaction = true;
-        }
-        try {
-            $stmt->execute([$appId]);
-            $app = $stmt->fetch();
-
-            if (!$app) {
-                throw new Exception("Application record not found.");
-            }
-
-            $currentStatus = $app['status'];
-
-            // 1. Role-based authorization: USER cannot update status
-            if ($actorRole === 'USER' || !in_array($actorRole, ['ADMIN', 'OPERATOR', 'DISTRIBUTOR'], true)) {
-                throw new Exception("Unauthorized: Role '{$actorRole}' is not permitted to update application status.");
-            }
-
-            // 2. Validate target status existence
-            $validStatuses = ['PENDING', 'IN_PROCESS', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'COMPLETED'];
-            if (!in_array($newStatus, $validStatuses, true)) {
-                throw new Exception("Invalid target status '{$newStatus}'.");
-            }
-
-            if ($currentStatus === $newStatus && empty($resultFilePath) && empty($adminRemarks)) {
-                $db->commit();
-                return ['success' => true, 'message' => 'Status is already ' . $newStatus];
-            }
-
-            // 3. Legal status transition check: Terminal statuses cannot transition
-            if ($currentStatus === 'REJECTED') {
-                throw new Exception("Application is in terminal state 'REJECTED' and cannot be modified.");
-            }
-
-            // Allowed transitions:
-            $allowedTransitions = [
-                'PENDING' => ['IN_PROCESS', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'COMPLETED'],
-                'IN_PROCESS' => ['APPROVED', 'COMPLETED', 'REJECTED', 'PENDING'],
-                'UNDER_REVIEW' => ['IN_PROCESS', 'APPROVED', 'REJECTED', 'COMPLETED'],
-                'APPROVED' => ['IN_PROCESS', 'COMPLETED', 'REJECTED', 'APPROVED'],
-                'COMPLETED' => ['APPROVED', 'COMPLETED'] // Allow admin to adjust certificate if needed
-            ];
-
-            if (!isset($allowedTransitions[$currentStatus]) || !in_array($newStatus, $allowedTransitions[$currentStatus], true)) {
-                throw new Exception("Illegal status transition from '{$currentStatus}' to '{$newStatus}'.");
-            }
-
-            // 4. Role-specific constraints
-            if ($actorRole === 'DISTRIBUTOR') {
-                $setStmt = $db->query("SELECT setting_value FROM settings WHERE setting_key = 'distributor_review_required'");
-                $reviewEnabled = (int)($setStmt->fetchColumn() ?: 1);
-
-                if (!$reviewEnabled) {
-                    throw new Exception("Distributor review is currently disabled by administrator.");
-                }
-
-                if ($newStatus !== 'UNDER_REVIEW') {
-                    throw new Exception("Distributors are only authorized to mark applications as UNDER_REVIEW. Final approval, completion, and rejection are reserved for Administration.");
-                }
-
-                if ((int)$app['distributor_id'] !== $actorUserId) {
-                    throw new Exception("You are not authorized to review applications outside your team.");
-                }
-            }
-
-            if ($newStatus === 'REJECTED' && empty(trim((string)$rejectionReason))) {
-                throw new Exception(__("rejection_reason_mandatory", "A specific reason is mandatory when rejecting an application."));
-            }
-
-            // Update application status with proper reviewer/final action timestamps
-            $finalRemarks = $remarks ?: $adminRemarks;
-            $resultFile = $resultFilePath ?: $app['result_file'];
-
-            if ($actorRole === 'DISTRIBUTOR') {
-                $upd = $db->prepare("
-                    UPDATE applications
-                    SET status = ?,
-                        remarks = ?,
-                        distributor_reviewed_at = NOW(),
-                        distributor_reviewed_by = ?,
-                        updated_at = NOW()
-                    WHERE id = ?
-                ");
-                $upd->execute([$newStatus, $finalRemarks, $actorUserId, $appId]);
-            } else {
-                // Admin or Operator action
-                $completedAt = ($newStatus === 'COMPLETED' || $newStatus === 'APPROVED') ? date('Y-m-d H:i:s') : $app['completed_at'];
-                $completedBy = ($newStatus === 'COMPLETED' || $newStatus === 'APPROVED') ? $actorUserId : $app['completed_by'];
-
-                $upd = $db->prepare("
-                    UPDATE applications
-                    SET status = ?,
-                        rejection_reason = ?,
-                        remarks = ?,
-                        admin_remarks = ?,
-                        result_file = ?,
-                        final_action_at = NOW(),
-                        final_action_by = ?,
-                        completed_at = ?,
-                        completed_by = ?,
-                        updated_at = NOW()
-                    WHERE id = ?
-                ");
-                $upd->execute([
-                    $newStatus,
-                    $rejectionReason,
-                    $finalRemarks,
-                    $adminRemarks ?: $finalRemarks,
-                    $resultFile,
-                    $actorUserId,
-                    $completedAt,
-                    $completedBy,
-                    $appId
-                ]);
-            }
-
-            // Record status history
-            $hist = $db->prepare("
-                INSERT INTO application_status_history (
-                    application_id, from_status, to_status, actor_user_id,
-                    actor_name, actor_role, remarks, rejection_reason, created_at
-                ) VALUES (
-                    ?, ?, ?, ?,
-                    ?, ?, ?, ?, NOW()
-                )
-            ");
-            $hist->execute([
-                $appId,
-                $currentStatus,
-                $newStatus,
-                $actorUserId,
-                $actorName,
-                $actorRole,
-                $finalRemarks,
-                $rejectionReason
-            ]);
-
-            // Payout Distributor Commission upon COMPLETED (matching eCyberCafe flow)
-            if ($newStatus === 'COMPLETED' && $currentStatus !== 'COMPLETED') {
-                $isCommPaid = (int)($app['is_commission_paid'] ?? 0);
-                $distId = $app['distributor_id'] ? (int)$app['distributor_id'] : null;
-
-                if ($distId && !$isCommPaid) {
-                    $commFee = (float)($app['commission_credited'] ?? 0.00);
-                    if ($commFee <= 0) {
-                        $commFee = (float)$db->query("SELECT distributor_commission FROM data_types WHERE id = " . (int)$app['data_type_id'])->fetchColumn();
-                        if ($commFee <= 0) $commFee = 10.00;
-                    }
-
-                    if ($commFee > 0) {
-                        $commIdemKey = "DIST_COMM_CREDIT_{$appId}_{$distId}";
-                        WalletService::credit(
-                            $distId,
-                            $commFee,
-                            'COMMISSION_CREDIT',
-                            'APPLICATION',
-                            (string)$appId,
-                            $commIdemKey,
-                            "Commission earned on operator application ({$app['app_ref']})",
-                            "Commission earned on operator application ({$app['app_ref']})",
-                            "Commission for app {$app['app_ref']}",
-                            $actorUserId
-                        );
-
-                        $db->prepare("UPDATE applications SET is_commission_paid = 1, commission_credited = ? WHERE id = ?")->execute([$commFee, $appId]);
-                    }
-                }
-            }
-
-            // Refund logic if application is REJECTED
-            if ($newStatus === 'REJECTED') {
-                $refSet = $db->query("SELECT setting_value FROM settings WHERE setting_key = 'refund_on_rejection'");
-                $refundActive = (int)($refSet->fetchColumn() ?: 1);
-
-                $feeDebited = (float)$app['fee_debited'];
-                $isAlreadyRefunded = (int)($app['is_refunded'] ?? 0);
-
-                if ($refundActive && $feeDebited > 0 && !$isAlreadyRefunded) {
-                    $refundKey = "REFUND_APP_{$appId}_FEE";
-                    WalletService::credit(
-                        (int)$app['user_id'],
-                        $feeDebited,
-                        'REFUND_CREDIT',
-                        'APPLICATION',
-                        (string)$appId,
-                        $refundKey,
-                        "Automatic fee refund on rejected application ({$app['app_ref']})",
-                        "Automatic fee refund on rejected application ({$app['app_ref']})",
-                        $rejectionReason,
-                        $actorUserId
-                    );
-
-                    $db->prepare("UPDATE applications SET is_refunded = 1 WHERE id = ?")->execute([$appId]);
-                }
-
-                // If distributor was previously paid commission, reverse it cleanly
-                if (!empty($app['is_commission_paid']) && $app['distributor_id'] && (float)$app['commission_credited'] > 0) {
-                    $distComm = (float)$app['commission_credited'];
-                    $revKey = "COMM_REV_APP_{$appId}_{$app['distributor_id']}";
-                    WalletService::debit(
-                        (int)$app['distributor_id'],
-                        $distComm,
-                        'APPLICATION_FEE_DEBIT',
-                        'APPLICATION',
-                        (string)$appId,
-                        $revKey,
-                        "Commission reversal on rejected application ({$app['app_ref']})",
-                        "Commission reversal on rejected application ({$app['app_ref']})",
-                        "Reversed due to rejection",
-                        $actorUserId
-                    );
-                    $db->prepare("UPDATE applications SET is_commission_paid = 0 WHERE id = ?")->execute([$appId]);
-                }
-            }
-
-            AuditService::log(
-                'APPLICATION_STATUS_UPDATE',
-                'APPLICATION',
-                (string)$appId,
-                [
-                    'from' => $currentStatus,
-                    'to' => $newStatus,
-                    'app_ref' => $app['app_ref'],
-                    'rejection_reason' => $rejectionReason
-                ],
-                $actorUserId,
-                $actorRole
-            );
-
-            // In-app Notification to Submitting User
-            $notifType = 'INFO';
-            if ($newStatus === 'COMPLETED' || $newStatus === 'APPROVED') {
-                $notifType = 'SUCCESS';
-            } elseif ($newStatus === 'REJECTED') {
-                $notifType = 'DANGER';
-            } elseif ($newStatus === 'UNDER_REVIEW') {
-                $notifType = 'WARNING';
-            }
-
-            $notifMsg = "Your application {$app['app_ref']} status is now {$newStatus}.";
-            if (!empty($adminRemarks)) {
-                $notifMsg .= " Remarks: " . $adminRemarks;
-            } elseif (!empty($rejectionReason)) {
-                $notifMsg .= " Reason: " . $rejectionReason;
-            }
-
-            NotificationService::create(
-                (int)$app['user_id'],
-                "Application Status: {$newStatus}",
-                $notifMsg,
-                $notifType,
-                "/applications/view?id={$appId}"
-            );
-
-            // If result file was uploaded/attached
-            if (!empty($resultFilePath) && $resultFilePath !== ($app['result_file'] ?? null)) {
-                NotificationService::create(
-                    (int)$app['user_id'],
-                    "Result File Uploaded",
-                    "A result certificate / document has been uploaded for your application ({$app['app_ref']}).",
-                    'SUCCESS',
-                    "/applications/view?id={$appId}"
-                );
-                AuditService::log('RESULT_FILE_UPLOADED', 'APPLICATION', (string)$appId, ['file' => $resultFilePath], $actorUserId, $actorRole);
-            }
-
-            if ($ownsTransaction && $db->inTransaction()) {
-                $db->commit();
-            }
-
-            return [
-                'success' => true,
-                'status' => $newStatus,
-                'message' => "Application status updated to {$newStatus}."
-            ];
-        } catch (Exception $e) {
-            if ($ownsTransaction && $db->inTransaction()) {
-                $db->rollBack();
-            }
-            throw $e;
-        }
-    }
-
-    /**
-     * Validate that Application Number format aligns with selected Application Code
-     *
-     * @param string $code
-     * @param string $number
-     * @throws Exception
-     */
     public static function validateApplicationCodeAndNumber(string $code, string $number): void
     {
         $code = strtoupper(trim($code));
@@ -1215,12 +1021,13 @@ class ApplicationService
             throw new Exception("Full Application Number is required.");
         }
 
-        if (strlen($number) < 5 || strlen($number) > 64) {
-            throw new Exception("Application number length must be between 5 and 64 characters.");
+        $minLen = ($code === 'LABOURCARD') ? 1 : 5;
+        if (strlen($number) < $minLen || strlen($number) > 64) {
+            throw new Exception("Application number length must be between {$minLen} and 64 characters.");
         }
 
-        if (!preg_match('/^[A-Z0-9\/_\-]{5,64}$/', $number)) {
-            throw new Exception("Application number contains invalid characters. Only alphanumeric, slash (/), hyphen (-), and underscore (_) are allowed.");
+        if (!preg_match('/^[A-Z0-9\/_\- ]{' . $minLen . ',64}$/', $number)) {
+            throw new Exception("Application number contains invalid characters. Only alphanumeric, slash (/), hyphen (-), underscore (_), and spaces are allowed.");
         }
 
         // Strict code-to-number prefix/format alignment

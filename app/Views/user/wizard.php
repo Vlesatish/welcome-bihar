@@ -126,6 +126,7 @@
                         <th style="width: 165px;">Application Code *</th>
                         <th style="width: 220px;">Application Number *</th>
                         <th style="min-width: 210px;">Applicant Name *</th>
+                        <th style="width: 200px;">Additional Fields</th>
                         <th style="width: 95px;" class="text-end">Rate</th>
                         <th style="width: 50px;" class="text-center">Action</th>
                     </tr>
@@ -171,6 +172,79 @@
 
 </div>
 
+<!-- UPDATED RATES CONFIRMATION POPUP MODAL -->
+<div class="modal fade" id="modalPriceChange" tabindex="-1" data-bs-backdrop="static" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" style="max-width: 500px;">
+        <div class="modal-content rounded-4 border-0 shadow-lg overflow-hidden">
+            <div class="modal-header bg-warning-subtle border-0 px-4 pt-4 pb-2">
+                <div class="d-flex align-items-center gap-2">
+                    <div class="rounded-circle bg-warning text-dark d-flex align-items-center justify-content-center" style="width: 40px; height: 40px;">
+                        <i class="bi bi-exclamation-triangle-fill fs-5"></i>
+                    </div>
+                    <div>
+                        <h5 class="modal-title fw-bold text-dark mb-0">Rate Update Detected</h5>
+                        <p class="text-muted small mb-0" style="font-size: 0.76rem;">Rate rules were updated on the server</p>
+                    </div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body px-4 py-3">
+                <p class="text-secondary small mb-3" id="priceChangeDescription">
+                    The rates for your batch have changed. Please review the updated rates below:
+                </p>
+                <div class="table-responsive rounded-3 border mb-3">
+                    <table class="table table-sm table-hover align-middle mb-0" style="font-size: 0.8rem;">
+                        <thead class="table-light">
+                            <tr>
+                                <th>#</th>
+                                <th>Applicant</th>
+                                <th class="text-end">Previous</th>
+                                <th class="text-end text-primary">New Rate</th>
+                            </tr>
+                        </thead>
+                        <tbody id="priceChangeTableBody">
+                            <!-- Populated dynamically via JS -->
+                        </tbody>
+                    </table>
+                </div>
+                <div class="p-3 bg-light rounded-3 d-flex justify-content-between align-items-center border">
+                    <span class="fw-semibold text-secondary small">New Total Batch Fee:</span>
+                    <strong class="fs-5 text-primary font-monospace" id="modalNewTotalFee">₹0.00</strong>
+                </div>
+            </div>
+            <div class="modal-footer bg-light border-0 px-4 py-3 d-flex justify-content-end gap-2">
+                <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill px-3 fw-semibold" data-bs-dismiss="modal">
+                    Cancel
+                </button>
+                <button type="button" id="btnConfirmPriceChange" class="btn btn-sm btn-primary rounded-pill px-4 fw-bold shadow-sm d-inline-flex align-items-center gap-1">
+                    <i class="bi bi-check2-circle"></i>
+                    <span>Accept &amp; Submit</span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- GENERAL ALERT / NOTICE MODAL -->
+<div class="modal fade" id="modalGeneralAlert" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" style="max-width: 400px;">
+        <div class="modal-content rounded-4 border-0 shadow-lg text-center p-4">
+            <div class="my-2">
+                <div class="d-inline-flex align-items-center justify-content-center rounded-circle p-3 mb-2" id="alertModalIconWrapper" style="width: 70px; height: 70px; background-color: #fee2e2; color: #dc2626;">
+                    <i id="alertModalIcon" class="bi bi-exclamation-triangle-fill fs-2"></i>
+                </div>
+            </div>
+            <h5 class="fw-bold text-dark mb-2" id="alertModalTitle">Notice</h5>
+            <p class="text-secondary small mb-4" id="alertModalBody"></p>
+            <div class="d-flex justify-content-center">
+                <button type="button" class="btn btn-secondary btn-sm rounded-pill px-4 fw-bold" data-bs-dismiss="modal">
+                    OK
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- SUCCESS CONFIRMATION MODAL -->
 <div class="modal fade" id="modalBatchSuccess" tabindex="-1" data-bs-backdrop="static" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered" style="max-width: 380px;">
@@ -200,7 +274,7 @@
 
 <script>
 // Master Districts data passed from server
-window.DISTRICTS = <?= json_encode(array_map(function($d) {
+window.DISTRICTS = window.DISTRICTS_DATA = <?= json_encode(array_map(function($d) {
     return [
         'id' => (int)$d['id'],
         'name' => $d['name'],
@@ -212,786 +286,8 @@ window.DISTRICTS = <?= json_encode(array_map(function($d) {
 // Copied Data if redirected from Application List
 window.COPIED_DATA = <?= !empty($copiedData) ? json_encode($copiedData) : 'null' ?>;
 
-document.addEventListener('DOMContentLoaded', function () {
-    let currentWallet = <?= (float)$walletBalance ?>;
-    const blockCache = {}; // Cache blocks by district_id
-    const codeCache = {};  // Cache application codes & rates by district_id + '_' + block_id
-    const tableBody = document.getElementById('entriesTableBody');
-    const headerCountBadge = document.getElementById('headerCountBadge');
-    const metricCount = document.getElementById('metricCount');
-    const metricTotalFee = document.getElementById('metricTotalFee');
-    const metricWallet = document.getElementById('metricWallet');
-    const btnSubmitAll = document.getElementById('btnSubmitAll');
-    const submitBtnText = document.getElementById('submitBtnText');
-    const submitIcon = document.getElementById('submitIcon');
-    const btnAddRowText = document.getElementById('btnAddRowText');
-    const walletShortfallAlert = document.getElementById('walletShortfallAlert');
-    const shortfallAmount = document.getElementById('shortfallAmount');
-
-    // Code vs Prefix validation rules (Strict parity with ApplicationService.php)
-    const prefixRules = {
-        'BICCO': { expected: ['BICCO', 'BICC', 'BIIC', 'INC', 'AAY'], conflicting: ['BCCCO', 'BCCC', 'BRCCO', 'BRCC', 'BOBC', 'NCLCO'] },
-        'BCCCO': { expected: ['BCCCO', 'BCCC', 'JAAT', 'CST'], conflicting: ['BICCO', 'BICC', 'BIIC', 'BRCCO', 'BRCC', 'BOBC', 'NCLCO'] },
-        'BRCCO': { expected: ['BRCCO', 'BRCC', 'BIRC', 'NIWAS', 'RES'], conflicting: ['BCCCO', 'BCCC', 'BICCO', 'BICC', 'BIIC', 'BOBC', 'NCLCO'] },
-        'BOBC':  { expected: ['BOBC', 'BCOBC', 'OBC'], conflicting: ['BICCO', 'BCCCO', 'BRCCO'] },
-        'NCLCO': { expected: ['NCLCO', 'NCLC', 'BINC'], conflicting: ['BICCO', 'BCCCO', 'BRCCO'] },
-        'RTPS':  { expected: ['RTPS', 'BR', 'BICCO', 'BCCCO', 'BRCCO'], conflicting: [] }
-    };
-
-    let rowCounter = 0;
-
-    // Helper: Create District Options HTML
-    function buildDistrictOptionsHtml(selectedId = null) {
-        if (!window.DISTRICTS || window.DISTRICTS.length === 0) {
-            return '<option value="">No rate-configured districts</option>';
-        }
-        let html = '<option value="">-- Select District --</option>';
-        window.DISTRICTS.forEach(d => {
-            const isSel = (selectedId && String(d.id) === String(selectedId)) ? 'selected' : '';
-            html += `<option value="${d.id}" data-name="${escapeHtml(d.name)}" ${isSel}>${escapeHtml(d.name)}</option>`;
-        });
-        return html;
-    }
-
-    // Set row rate value and display
-    function setRowRate(tr, rate, label) {
-        tr.dataset.rate = String(rate || 0);
-        const rateSpan = tr.querySelector('.row-rate');
-        if (rateSpan) {
-            rateSpan.textContent = label;
-            if (rate > 0) {
-                rateSpan.className = 'row-rate fw-bold text-success font-monospace';
-            } else {
-                rateSpan.className = 'row-rate font-monospace text-muted';
-            }
-        }
-    }
-
-    // 1. ADD NEW ROW
-    window.addNewRow = function (initialData = null, shouldFocus = true) {
-        rowCounter++;
-        const rowId = 'row-' + rowCounter;
-
-        let defDistrict = '';
-        let defBlock = '';
-        let defCode = '';
-        let defNumber = '';
-        let defName = '';
-
-        if (initialData) {
-            defDistrict = initialData.district_id || '';
-            defBlock = initialData.block_id || '';
-            defCode = initialData.application_code || '';
-            defNumber = initialData.application_number || '';
-            defName = initialData.applicant_name || '';
-        } else {
-            // Carry forward district and block from last row if available
-            const existingRows = tableBody.querySelectorAll('tr');
-            if (existingRows.length > 0) {
-                const lastRow = existingRows[existingRows.length - 1];
-                defDistrict = lastRow.querySelector('.row-district')?.value || '';
-                defBlock = lastRow.querySelector('.row-block')?.value || '';
-            }
-        }
-
-        const tr = document.createElement('tr');
-        tr.id = rowId;
-        tr.className = 'entry-row';
-        tr.dataset.rate = '0';
-        tr.dataset.rateNote = '';
-        tr.dataset.isCalculating = '0';
-
-        tr.innerHTML = `
-            <!-- S.No -->
-            <td class="text-center align-middle">
-                <span class="row-serial-badge">1</span>
-            </td>
-
-            <!-- District -->
-            <td>
-                <select class="form-select form-select-sm fw-semibold row-district rounded-2" required>
-                    ${buildDistrictOptionsHtml(defDistrict)}
-                </select>
-                <span class="row-err-district text-danger small d-none" style="font-size: 0.7rem;">Select District</span>
-            </td>
-
-            <!-- Block -->
-            <td>
-                <select class="form-select form-select-sm fw-semibold row-block rounded-2" required disabled>
-                    <option value="">-- Select District First --</option>
-                </select>
-                <span class="row-err-block text-danger small d-none" style="font-size: 0.7rem;">Select Block</span>
-            </td>
-
-            <!-- Application Code -->
-            <td>
-                <select class="form-select form-select-sm fw-semibold row-code rounded-2" required disabled>
-                    <option value="">-- Select Block First --</option>
-                </select>
-                <span class="row-err-code text-danger small d-none" style="font-size: 0.7rem;">Select Service Code</span>
-            </td>
-
-            <!-- Application Number -->
-            <td>
-                <input type="text" class="form-control form-control-sm font-monospace fw-bold text-uppercase row-number rounded-2" placeholder="Application Number" value="${escapeHtml(defNumber)}">
-                <span class="row-err-number text-danger small d-none" style="font-size: 0.7rem;"></span>
-            </td>
-
-            <!-- Applicant Name -->
-            <td>
-                <input type="text" class="form-control form-control-sm fw-semibold row-name rounded-2" placeholder="Applicant Full Name" value="${escapeHtml(defName)}">
-                <span class="row-err-name text-danger small d-none" style="font-size: 0.7rem;">Name is required</span>
-            </td>
-
-            <!-- Server Configured Rate -->
-            <td class="text-end align-middle">
-                <span class="row-rate font-monospace text-muted" style="font-size: 0.85rem;">—</span>
-                <div class="row-rate-spinner spinner-border spinner-border-sm text-primary d-none" role="status"></div>
-            </td>
-
-            <!-- Delete Action -->
-            <td class="text-center align-middle">
-                <button type="button" class="btn btn-xs btn-outline-danger p-1 rounded-2 btn-delete-row" title="Delete Row" onclick="deleteRow('${rowId}')">
-                    <i class="bi bi-trash"></i>
-                </button>
-            </td>
-        `;
-
-        tableBody.appendChild(tr);
-
-        // Bind events for this row
-        bindRowEvents(tr, defDistrict, defBlock, defCode);
-
-        // Re-index all serial numbers & update totals
-        reindexRows();
-
-        // Focus new application number input
-        if (shouldFocus) {
-            setTimeout(() => {
-                const numInput = tr.querySelector('.row-number');
-                if (numInput) numInput.focus();
-            }, 50);
-        }
-    };
-
-    // 2. BIND EVENTS FOR A ROW
-    function bindRowEvents(tr, initialDistrictId = '', initialBlockId = '', initialCode = '') {
-        const districtSelect = tr.querySelector('.row-district');
-        const blockSelect = tr.querySelector('.row-block');
-        const codeSelect = tr.querySelector('.row-code');
-        const numberInput = tr.querySelector('.row-number');
-        const nameInput = tr.querySelector('.row-name');
-
-        // District change -> fetch & populate live blocks having rates, reset block & code
-        districtSelect.addEventListener('change', function () {
-            clearRowError(tr, 'district');
-            clearRowError(tr, 'block');
-            clearRowError(tr, 'code');
-            populateBlocksForRow(tr, this.value, null, null);
-        });
-
-        // Block change -> fetch & populate configured application codes and exact rates
-        blockSelect.addEventListener('change', function () {
-            clearRowError(tr, 'block');
-            clearRowError(tr, 'code');
-            populateCodesForRow(tr, districtSelect.value, this.value, null);
-        });
-
-        // Code change -> display exact configured rate, update placeholder, validate prefix
-        codeSelect.addEventListener('change', function () {
-            clearRowError(tr, 'code');
-            const selectedOpt = this.selectedOptions[0];
-            const rate = (selectedOpt && selectedOpt.dataset.rate) ? parseFloat(selectedOpt.dataset.rate) : 0;
-            if (this.value && rate > 0) {
-                setRowRate(tr, rate, '₹' + rate.toFixed(2));
-                numberInput.placeholder = `e.g. ${this.value}/2026/...`;
-            } else {
-                setRowRate(tr, 0, '—');
-                numberInput.placeholder = 'Application Number';
-            }
-            validateRowPrefix(tr);
-            updateTotals();
-        });
-
-        // Number input -> uppercase, validate prefix, debounce updateTotals
-        numberInput.addEventListener('input', function () {
-            this.value = this.value.toUpperCase();
-            clearRowError(tr, 'number');
-            validateRowPrefix(tr);
-            debounce(() => updateTotals(), 200)();
-        });
-
-        // Name input -> clear error on input
-        nameInput.addEventListener('input', function () {
-            clearRowError(tr, 'name');
-            debounce(() => updateTotals(), 200)();
-        });
-
-        // Initial populate for this row
-        if (initialDistrictId) {
-            populateBlocksForRow(tr, initialDistrictId, initialBlockId, () => {
-                if (initialBlockId) {
-                    populateCodesForRow(tr, initialDistrictId, initialBlockId, initialCode);
-                }
-            });
-        }
-    }
-
-    // 3. POPULATE BLOCKS FOR ROW WITH CACHING
-    function populateBlocksForRow(tr, districtId, preselectBlockId = null, callback = null) {
-        const blockSelect = tr.querySelector('.row-block');
-        const codeSelect = tr.querySelector('.row-code');
-
-        if (!districtId) {
-            blockSelect.innerHTML = '<option value="">-- Select District First --</option>';
-            blockSelect.disabled = true;
-            codeSelect.innerHTML = '<option value="">-- Select Block First --</option>';
-            codeSelect.disabled = true;
-            setRowRate(tr, 0, '—');
-            updateTotals();
-            if (callback) callback();
-            return;
-        }
-
-        if (blockCache[districtId]) {
-            renderBlockOptions(tr, blockSelect, blockCache[districtId], preselectBlockId, callback);
-            return;
-        }
-
-        blockSelect.innerHTML = '<option value="">Loading blocks...</option>';
-        blockSelect.disabled = true;
-        codeSelect.innerHTML = '<option value="">-- Select Block First --</option>';
-        codeSelect.disabled = true;
-        setRowRate(tr, 0, '—');
-
-        fetch('/api/service-blocks?district_id=' + encodeURIComponent(districtId) + '&service=srv_block_app')
-            .then(res => {
-                if (!res.ok) throw new Error('HTTP error ' + res.status);
-                return res.json();
-            })
-            .then(blocks => {
-                blockCache[districtId] = Array.isArray(blocks) ? blocks : [];
-                renderBlockOptions(tr, blockSelect, blockCache[districtId], preselectBlockId, callback);
-            })
-            .catch(err => {
-                console.error('Failed to load live blocks for district ' + districtId, err);
-                blockSelect.innerHTML = '<option value="">Service is not available in this district.</option>';
-                blockSelect.disabled = true;
-                codeSelect.innerHTML = '<option value="">-- Select Block First --</option>';
-                codeSelect.disabled = true;
-                setRowRate(tr, 0, '—');
-                updateTotals();
-            });
-    }
-
-    function renderBlockOptions(tr, selectEl, blocks, preselectBlockId = null, callback = null) {
-        const codeSelect = tr.querySelector('.row-code');
-        if (!blocks || blocks.length === 0) {
-            selectEl.innerHTML = '<option value="">No rate-configured blocks</option>';
-            selectEl.disabled = true;
-            codeSelect.innerHTML = '<option value="">-- Select Block First --</option>';
-            codeSelect.disabled = true;
-            setRowRate(tr, 0, '—');
-            updateTotals();
-            return;
-        }
-
-        let html = '<option value="">-- Select Block --</option>';
-        blocks.forEach(b => {
-            const isSel = (preselectBlockId && String(b.id) === String(preselectBlockId)) ? 'selected' : '';
-            html += `<option value="${b.id}" data-name="${escapeHtml(b.name)}" ${isSel}>${escapeHtml(b.name)}</option>`;
-        });
-        selectEl.innerHTML = html;
-        selectEl.disabled = false;
-
-        if (preselectBlockId && blocks.some(b => String(b.id) === String(preselectBlockId))) {
-            // Preselected block matched
-            if (callback) callback();
-        } else {
-            codeSelect.innerHTML = '<option value="">-- Select Block First --</option>';
-            codeSelect.disabled = true;
-            setRowRate(tr, 0, '—');
-            updateTotals();
-        }
-    }
-
-    // 4. POPULATE CODES AND RATES FOR ROW WITH CACHING
-    function populateCodesForRow(tr, districtId, blockId, preselectCode = null) {
-        const codeSelect = tr.querySelector('.row-code');
-
-        if (!districtId || !blockId) {
-            codeSelect.innerHTML = '<option value="">-- Select Block First --</option>';
-            codeSelect.disabled = true;
-            setRowRate(tr, 0, '—');
-            updateTotals();
-            return;
-        }
-
-        const cacheKey = districtId + '_' + blockId;
-        if (codeCache[cacheKey]) {
-            renderCodeOptions(tr, codeSelect, codeCache[cacheKey], preselectCode);
-            return;
-        }
-
-        codeSelect.innerHTML = '<option value="">Loading services...</option>';
-        codeSelect.disabled = true;
-        setRowRate(tr, 0, '—');
-
-        fetch('/api/service-application-codes?district_id=' + encodeURIComponent(districtId) + '&block_id=' + encodeURIComponent(blockId))
-            .then(res => {
-                if (!res.ok) throw new Error('HTTP error ' + res.status);
-                return res.json();
-            })
-            .then(codes => {
-                codeCache[cacheKey] = Array.isArray(codes) ? codes : [];
-                renderCodeOptions(tr, codeSelect, codeCache[cacheKey], preselectCode);
-            })
-            .catch(err => {
-                console.error('Failed to load application codes for block ' + blockId, err);
-                codeSelect.innerHTML = '<option value="">No active rates</option>';
-                codeSelect.disabled = true;
-                setRowRate(tr, 0, '—');
-                updateTotals();
-            });
-    }
-
-    function renderCodeOptions(tr, selectEl, codes, preselectCode = null) {
-        const numberInput = tr.querySelector('.row-number');
-        if (!codes || codes.length === 0) {
-            selectEl.innerHTML = '<option value="">No active rates for this block</option>';
-            selectEl.disabled = true;
-            setRowRate(tr, 0, '—');
-            updateTotals();
-            return;
-        }
-
-        let html = '<option value="">-- Select Application Code --</option>';
-        codes.forEach(c => {
-            const isSel = (preselectCode && String(c.code) === String(preselectCode)) ? 'selected' : '';
-            html += `<option value="${escapeHtml(c.code)}" data-rate="${c.rate}" ${isSel}>${escapeHtml(c.code)} — ${escapeHtml(c.rate_formatted)}</option>`;
-        });
-        selectEl.innerHTML = html;
-        selectEl.disabled = false;
-
-        const selectedOpt = selectEl.selectedOptions[0];
-        const r = (selectedOpt && selectedOpt.dataset.rate) ? parseFloat(selectedOpt.dataset.rate) : 0;
-        if (selectEl.value && r > 0) {
-            setRowRate(tr, r, '₹' + r.toFixed(2));
-            numberInput.placeholder = `e.g. ${selectEl.value}/2026/...`;
-        } else {
-            setRowRate(tr, 0, '—');
-            numberInput.placeholder = 'Application Number';
-        }
-        updateTotals();
-    }
-
-    // 5. VALIDATE PREFIX IN A ROW
-    function validateRowPrefix(tr) {
-        const code = tr.querySelector('.row-code').value;
-        const numInput = tr.querySelector('.row-number');
-        const errSpan = tr.querySelector('.row-err-number');
-        const num = numInput.value.trim().toUpperCase();
-
-        errSpan.classList.add('d-none');
-        errSpan.textContent = '';
-        numInput.classList.remove('is-invalid');
-
-        if (!num) return true;
-
-        if (code && prefixRules[code]) {
-            const rule = prefixRules[code];
-
-            // Check conflicting prefixes
-            for (let cp of rule.conflicting) {
-                if (num.startsWith(cp + '/') || num.startsWith(cp + '-') || num.startsWith(cp + '_') || num === cp) {
-                    errSpan.textContent = `Prefix mismatch: number starts with '${cp}', Code is '${code}'`;
-                    errSpan.classList.remove('d-none');
-                    numInput.classList.add('is-invalid');
-                    return false;
-                }
-            }
-
-            // Check expected prefixes
-            if (rule.expected.length > 0 && num.length >= 4) {
-                let matchesExpected = rule.expected.some(ep => {
-                    return num.startsWith(ep + '/') || num.startsWith(ep + '-') || num.startsWith(ep + '_') || num.startsWith(ep);
-                });
-                if (!matchesExpected) {
-                    errSpan.textContent = `Expected prefix: ${rule.expected.join(', ')}`;
-                    errSpan.classList.remove('d-none');
-                    numInput.classList.add('is-invalid');
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-
-    // 6. DELETE ROW
-    window.deleteRow = function (rowId) {
-        const tr = document.getElementById(rowId);
-        if (!tr) return;
-
-        const allRows = tableBody.querySelectorAll('tr');
-        if (allRows.length <= 1) {
-            // If only 1 row, clear inputs instead of deleting
-            tr.querySelector('.row-number').value = '';
-            tr.querySelector('.row-name').value = '';
-            clearRowError(tr, 'number');
-            clearRowError(tr, 'name');
-            setRowRate(tr, 0, '—');
-            showToast('info', 'Row cleared.');
-            updateTotals();
-            return;
-        }
-
-        tr.remove();
-        reindexRows();
-        updateTotals();
-        showToast('info', 'Row removed.');
-    };
-
-    // 7. RE-INDEX SERIAL NUMBERS
-    function reindexRows() {
-        const rows = tableBody.querySelectorAll('tr');
-        rows.forEach((tr, index) => {
-            const serialEl = tr.querySelector('.row-serial-badge');
-            if (serialEl) serialEl.textContent = (index + 1);
-        });
-
-        const count = rows.length;
-        headerCountBadge.textContent = count === 1 ? '1 Row' : `${count} Rows`;
-        btnAddRowText.textContent = `+ Add Row (Entry #${count + 1})`;
-    }
-
-    // 8. UPDATE TOTALS (COUNT, TOTAL FEE, WALLET, REMAINING)
-    function updateTotals() {
-        const rows = tableBody.querySelectorAll('tr');
-        let completedCount = 0;
-        let totalFee = 0;
-        let hasIncompleteRow = false;
-
-        rows.forEach(tr => {
-            const districtId = tr.querySelector('.row-district')?.value || '';
-            const blockId = tr.querySelector('.row-block')?.value || '';
-            const code = tr.querySelector('.row-code')?.value || '';
-            const num = tr.querySelector('.row-number')?.value.trim() || '';
-            const name = tr.querySelector('.row-name')?.value.trim() || '';
-            const rate = parseFloat(tr.dataset.rate || '0');
-
-            const isTouched = (districtId || blockId || code || num || name);
-            const isComplete = (districtId && blockId && code && rate > 0 && num && name.length >= 2);
-
-            if (isComplete) {
-                completedCount++;
-                totalFee += rate;
-            } else if (isTouched) {
-                hasIncompleteRow = true;
-            }
-        });
-
-        if (!window.DISTRICTS || window.DISTRICTS.length === 0) {
-            if (metricCount) metricCount.textContent = '0';
-            if (metricTotalFee) metricTotalFee.textContent = '₹0.00';
-            btnSubmitAll.disabled = true;
-            submitBtnText.textContent = 'Submit Disabled (No Rates Configured)';
-            return;
-        }
-
-        if (metricCount) metricCount.textContent = completedCount;
-        if (metricTotalFee) metricTotalFee.textContent = '₹' + totalFee.toFixed(2);
-        if (metricWallet) metricWallet.textContent = '₹' + currentWallet.toFixed(2);
-
-        // Submit button must remain disabled until at least one valid complete row exists, and no partially filled rows
-        if (completedCount === 0 || hasIncompleteRow) {
-            btnSubmitAll.disabled = true;
-            submitBtnText.textContent = `Submit All (${completedCount} ${completedCount === 1 ? 'Row' : 'Rows'} — ₹${totalFee.toFixed(2)})`;
-        } else {
-            const remaining = currentWallet - totalFee;
-            if (remaining >= 0) {
-                walletShortfallAlert.classList.add('d-none');
-                btnSubmitAll.disabled = false;
-            } else {
-                const shortfall = Math.abs(remaining);
-                shortfallAmount.textContent = '₹' + shortfall.toFixed(2);
-                walletShortfallAlert.classList.remove('d-none');
-                btnSubmitAll.disabled = true;
-            }
-            submitBtnText.textContent = `Submit All (${completedCount} ${completedCount === 1 ? 'Row' : 'Rows'} — ₹${totalFee.toFixed(2)})`;
-        }
-    }
-
-    // 9. SUBMIT ALL (ATOMIC BATCH)
-    window.handleSubmitAll = function () {
-        const rows = tableBody.querySelectorAll('tr');
-        const itemsToSubmit = [];
-        let hasValidationError = false;
-        let firstErrorInput = null;
-
-        // Collect and validate rows
-        const seenNumbers = new Set();
-
-        rows.forEach((tr, index) => {
-            const rowNum = index + 1;
-            const districtSelect = tr.querySelector('.row-district');
-            const blockSelect = tr.querySelector('.row-block');
-            const codeSelect = tr.querySelector('.row-code');
-            const numInput = tr.querySelector('.row-number');
-            const nameInput = tr.querySelector('.row-name');
-
-            const state = 'Bihar';
-            const districtId = districtSelect.value;
-            const blockId = blockSelect.value;
-            const appCode = codeSelect.value;
-            const appNumber = numInput.value.trim().toUpperCase();
-            const applicantName = nameInput.value.trim();
-            const clientFee = parseFloat(tr.dataset.rate || '0');
-
-            // Untouched Blank Row check: if both number and name are empty and no location selected
-            const isUntouchedBlank = (!districtId && !blockId && !appCode && !appNumber && !applicantName);
-            if (isUntouchedBlank) {
-                if (rows.length > 1) return;
-            }
-
-            // Partially filled validation
-            if (!districtId) {
-                showRowError(tr, 'district', 'Select District');
-                hasValidationError = true;
-                if (!firstErrorInput) firstErrorInput = districtSelect;
-            }
-            if (!blockId) {
-                showRowError(tr, 'block', 'Select Block');
-                hasValidationError = true;
-                if (!firstErrorInput) firstErrorInput = blockSelect;
-            }
-            if (!appCode) {
-                showRowError(tr, 'code', 'Select Service Code');
-                hasValidationError = true;
-                if (!firstErrorInput) firstErrorInput = codeSelect;
-            }
-            if (clientFee <= 0) {
-                showToast('danger', `Row #${rowNum} does not have an active rate configured.`);
-                hasValidationError = true;
-            }
-            if (!appNumber) {
-                showRowError(tr, 'number', 'Application Number is required');
-                hasValidationError = true;
-                if (!firstErrorInput) firstErrorInput = numInput;
-            } else if (!validateRowPrefix(tr)) {
-                hasValidationError = true;
-                if (!firstErrorInput) firstErrorInput = numInput;
-            } else if (seenNumbers.has(appNumber)) {
-                showRowError(tr, 'number', `Duplicate number '${appNumber}' in batch`);
-                hasValidationError = true;
-                if (!firstErrorInput) firstErrorInput = numInput;
-            } else {
-                seenNumbers.add(appNumber);
-            }
-
-            if (!applicantName) {
-                showRowError(tr, 'name', 'Applicant Name is required');
-                hasValidationError = true;
-                if (!firstErrorInput) firstErrorInput = nameInput;
-            } else if (applicantName.length < 2) {
-                showRowError(tr, 'name', 'Min 2 characters');
-                hasValidationError = true;
-                if (!firstErrorInput) firstErrorInput = nameInput;
-            }
-
-            if (tr.dataset.isCalculating === '1') {
-                showToast('danger', `Row #${rowNum} rate is still calculating. Please wait.`);
-                hasValidationError = true;
-            }
-
-            if (!hasValidationError) {
-                itemsToSubmit.push({
-                    state: state,
-                    district_id: districtId,
-                    block_id: blockId,
-                    application_code: appCode,
-                    application_number: appNumber,
-                    applicant_name: applicantName,
-                    client_fee: clientFee
-                });
-            }
-        });
-
-        if (hasValidationError) {
-            if (firstErrorInput) firstErrorInput.focus();
-            showToast('danger', 'Please correct the highlighted fields before submitting.');
-            return;
-        }
-
-        if (itemsToSubmit.length === 0) {
-            showToast('danger', 'Please enter at least one application before submitting.');
-            const firstNum = tableBody.querySelector('.row-number');
-            if (firstNum) firstNum.focus();
-            return;
-        }
-
-        // Wallet check
-        const totalFee = itemsToSubmit.reduce((sum, item) => sum + Number(item.client_fee || 0), 0);
-        if (currentWallet < totalFee) {
-            showToast('danger', `Insufficient wallet balance! Shortfall: ₹${(totalFee - currentWallet).toFixed(2)}.`);
-            return;
-        }
-
-        // Lock button & submit
-        btnSubmitAll.disabled = true;
-        submitIcon.className = 'spinner-border spinner-border-sm';
-        submitBtnText.textContent = `Submitting ${itemsToSubmit.length} Applications...`;
-
-        executeBatchSubmit(itemsToSubmit, false);
-    };
-
-    function executeBatchSubmit(items, acceptPriceChange = false) {
-        const payload = {
-            accept_price_change: acceptPriceChange,
-            items: items
-        };
-
-        fetch('/api/requests/batch', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        })
-        .then(res => res.json().then(data => ({ status: res.status, body: data })))
-        .then(({ status, body }) => {
-            btnSubmitAll.disabled = false;
-            submitIcon.className = 'bi bi-send-check';
-            updateTotals();
-
-            if (status === 200 || status === 201) {
-                // Success!
-                if (typeof body.remainingWalletBalance === 'number') {
-                    currentWallet = body.remainingWalletBalance;
-                    const hWal = document.getElementById('header-wallet-balance');
-                    if (hWal) hWal.textContent = '₹' + currentWallet.toFixed(2);
-                    if (metricWallet) metricWallet.textContent = '₹' + currentWallet.toFixed(2);
-                    document.querySelectorAll('.topbar-balance-text, [data-wallet-balance]').forEach(el => {
-                        el.textContent = '₹' + currentWallet.toFixed(2);
-                    });
-                }
-
-                // Show confirmation modal
-                const elMsg = document.getElementById('batchSuccessMessage');
-                if (elMsg) elMsg.textContent = body.message || 'Your Application Submitted';
-                const elRef = document.getElementById('successBatchRef');
-                if (elRef) elRef.textContent = body.batch_ref || '--';
-                const elCount = document.getElementById('successItemCount');
-                if (elCount) elCount.textContent = body.total_items || items.length;
-                const elFee = document.getElementById('successTotalFee');
-                if (elFee) elFee.textContent = '₹' + Number(body.total_fee || 0).toFixed(2);
-
-                new bootstrap.Modal(document.getElementById('modalBatchSuccess')).show();
-
-                // Reset table to 1 clean fresh row
-                resetAllRows();
-
-            } else if (status === 409 && body.price_changed) {
-                // Price updated acceptance
-                let msg = body.error || 'Rates have updated for some applications.';
-                if (Array.isArray(body.changes)) {
-                    msg += '\n\nUpdated rows:';
-                    body.changes.forEach(c => {
-                        msg += `\n• Row #${c.row} (${c.applicant_name}): Old ₹${Number(c.old_fee).toFixed(2)} → New ₹${Number(c.new_fee).toFixed(2)}`;
-                    });
-                }
-                msg += '\n\nConfirm submission with new total of ₹' + Number(body.new_total_fee).toFixed(2) + '?';
-
-                if (confirm(msg)) {
-                    btnSubmitAll.disabled = true;
-                    submitIcon.className = 'spinner-border spinner-border-sm';
-                    submitBtnText.textContent = 'Submitting with updated rates...';
-                    executeBatchSubmit(items, true);
-                }
-
-            } else {
-                showToast('danger', body.error || 'Failed to submit batch.');
-            }
-        })
-        .catch(err => {
-            console.error('Batch error:', err);
-            btnSubmitAll.disabled = false;
-            submitIcon.className = 'bi bi-send-check';
-            updateTotals();
-            showToast('danger', 'Network error during submission. Please retry.');
-        });
-    }
-
-    // 10. ERROR HELPERS
-    function showRowError(tr, field, message) {
-        const input = tr.querySelector(`.row-${field}`);
-        const errSpan = tr.querySelector(`.row-err-${field}`);
-        if (input) input.classList.add('is-invalid');
-        if (errSpan) {
-            errSpan.textContent = message;
-            errSpan.classList.remove('d-none');
-        }
-    }
-
-    function clearRowError(tr, field) {
-        const input = tr.querySelector(`.row-${field}`);
-        const errSpan = tr.querySelector(`.row-err-${field}`);
-        if (input) input.classList.remove('is-invalid');
-        if (errSpan) {
-            errSpan.classList.add('d-none');
-            errSpan.textContent = '';
-        }
-    }
-
-    // 11. RESET TABLE
-    window.resetAllRows = function () {
-        tableBody.innerHTML = '';
-        rowCounter = 0;
-        addNewRow(null, true);
-        updateTotals();
-    };
-
-    // 12. UTILITIES
-    window.zoomImage = function (url) {
-        document.getElementById('modalZoomImg').src = url;
-        new bootstrap.Modal(document.getElementById('modalImageZoom')).show();
-    };
-
-    function showToast(type, msg) {
-        const c = document.getElementById('toast-container');
-        const t = document.createElement('div');
-        t.className = `toast align-items-center text-white bg-${type === 'success' ? 'success' : (type === 'danger' ? 'danger' : 'primary')} border-0 shadow-lg`;
-        t.setAttribute('role', 'alert');
-        t.innerHTML = `
-            <div class="d-flex">
-                <div class="toast-body fw-bold small">${escapeHtml(msg)}</div>
-                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
-            </div>
-        `;
-        c.appendChild(t);
-        const bsToast = new bootstrap.Toast(t, { delay: 4000 });
-        bsToast.show();
-        t.addEventListener('hidden.bs.toast', () => t.remove());
-    }
-
-    function debounce(fn, wait) {
-        let t;
-        return function (...args) {
-            clearTimeout(t);
-            t = setTimeout(() => fn.apply(this, args), wait);
-        };
-    }
-
-    function escapeHtml(str) {
-        const d = document.createElement('div');
-        d.textContent = str;
-        return d.innerHTML;
-    }
-
-    // INITIALIZATION: Start with Row 1 (or copied data if present)
-    if (window.COPIED_DATA) {
-        addNewRow(window.COPIED_DATA, true);
-    } else {
-        addNewRow(null, true);
-    }
-});
 </script>
+
+<?php require __DIR__ . '/wizard_script.php'; ?>
 
 <?php require dirname(__DIR__) . '/layouts/footer.php'; ?>
