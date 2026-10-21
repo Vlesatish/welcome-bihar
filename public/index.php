@@ -129,6 +129,26 @@ try {
             break;
 
 
+        // Dashboard alias & User Dashboard
+        case '/dashboard':
+            if (\App\Services\AuthService::check()) {
+                $role = \App\Services\AuthService::role();
+                if ($role === 'ADMIN' || $role === 'OPERATOR') {
+                    header('Location: /admin/dashboard' . (!empty($_SERVER['QUERY_STRING']) ? '?' . $_SERVER['QUERY_STRING'] : ''));
+                    exit;
+                } elseif ($role === 'DISTRIBUTOR') {
+                    header('Location: /distributor/dashboard' . (!empty($_SERVER['QUERY_STRING']) ? '?' . $_SERVER['QUERY_STRING'] : ''));
+                    exit;
+                } else {
+                    $ctrl = new \App\Controllers\UserController();
+                    $ctrl->dashboard();
+                    break;
+                }
+            } else {
+                header('Location: /login');
+                exit;
+            }
+
         // User
         case '/user/dashboard':
             $ctrl = new \App\Controllers\UserController();

@@ -274,7 +274,7 @@
 
         <!-- 2. Total Applications (Purple Glass) -->
         <div class="col-sm-6 col-lg-3">
-            <a href="/dashboard" class="dash-glass-card card-glass-purple h-100 text-decoration-none">
+            <a href="/user/dashboard" class="dash-glass-card card-glass-purple h-100 text-decoration-none">
                 <div class="d-flex align-items-center justify-content-between mb-2">
                     <span class="stat-label-text"><?= e(__('applications')) ?></span>
                     <div class="stat-icon-glass">
@@ -287,7 +287,7 @@
 
         <!-- 3. Approved Applications (Emerald Glass) -->
         <div class="col-sm-6 col-lg-3">
-            <a href="/dashboard?status=COMPLETED" class="dash-glass-card card-glass-emerald h-100 text-decoration-none">
+            <a href="/user/dashboard?status=COMPLETED" class="dash-glass-card card-glass-emerald h-100 text-decoration-none">
                 <div class="d-flex align-items-center justify-content-between mb-2">
                     <span class="stat-label-text"><?= e(__('status_approved')) ?></span>
                     <div class="stat-icon-glass">
@@ -300,7 +300,7 @@
 
         <!-- 4. Pending & Under Review (Amber Glass) -->
         <div class="col-sm-6 col-lg-3">
-            <a href="/dashboard?status=PENDING" class="dash-glass-card card-glass-amber h-100 text-decoration-none">
+            <a href="/user/dashboard?status=PENDING" class="dash-glass-card card-glass-amber h-100 text-decoration-none">
                 <div class="d-flex align-items-center justify-content-between mb-2">
                     <span class="stat-label-text"><?= e(__('status_pending')) ?> / Review</span>
                     <div class="stat-icon-glass">
@@ -334,7 +334,7 @@
     <!-- Search & Filters Card -->
     <div class="card mb-3 shadow-sm border rounded-3 bg-white" style="border: 1px solid #e2e8f0;">
         <div class="card-body p-3">
-            <form method="GET" action="/dashboard" id="appFilterForm">
+            <form method="GET" action="/user/dashboard" id="appFilterForm">
                 <div class="filters-grid">
                     <!-- 1. District -->
                     <div class="filter-col filter-col-district">
@@ -410,7 +410,7 @@
 
                     <!-- 8. Reset Button -->
                     <div class="filter-col filter-col-btn">
-                        <a href="/dashboard" class="btn btn-sm btn-outline-danger filter-btn filter-ctrl" title="Reset all filters">
+                        <a href="/user/dashboard" class="btn btn-sm btn-outline-danger filter-btn filter-ctrl" title="Reset all filters">
                             <i class="bi bi-arrow-counterclockwise me-1"></i> Reset
                         </a>
                     </div>
@@ -428,7 +428,7 @@
                     <h5 class="h6 fw-bold text-dark mb-1">No Applications Found</h5>
                     <p class="small text-muted mb-3">No matching records found for the applied search criteria.</p>
                     <div class="d-flex gap-2 justify-content-center">
-                        <a href="/dashboard" class="btn btn-sm btn-outline-secondary rounded-pill px-3">Reset Filters</a>
+                        <a href="/user/dashboard" class="btn btn-sm btn-outline-secondary rounded-pill px-3">Reset Filters</a>
                         <a href="/applications/new" class="btn btn-sm btn-primary rounded-pill px-3 fw-bold">New Application</a>
                     </div>
                 </div>
