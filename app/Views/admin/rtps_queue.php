@@ -25,8 +25,8 @@ require dirname(__DIR__) . '/layouts/header.php';
                 <i class="bi bi-box-arrow-up-right me-1"></i> Official RTPS Portal
             </a>
             <?php if (\App\Services\AuthService::isAdmin()): ?>
-                <button type="button" class="btn btn-primary btn-sm rounded-2 fw-semibold shadow-2xs" data-bs-toggle="modal" data-bs-target="#triggerWorkerModal">
-                    <i class="bi bi-play-circle-fill me-1"></i> Run Nightly Worker Now
+                <button type="button" class="btn btn-primary btn-sm rounded-2 fw-bold shadow-2xs d-flex align-items-center gap-1.5" id="btnQueueRunWorker" onclick="runAdminBatchRtpsCheck(this)" title="Eligible applications ko abhi portal se check karke certificate download aur auto attach karein">
+                    <i class="bi bi-magic"></i> <span>Auto Check &amp; Attach Now</span>
                 </button>
             <?php endif; ?>
         </div>
@@ -627,6 +627,91 @@ function openUnavailableModal(appId, appNumber) {
     document.getElementById('unavailableAppId').value = appId;
     document.getElementById('unavailableAppNumberText').textContent = appNumber;
     new bootstrap.Modal(document.getElementById('unavailableModal')).show();
+}
+
+async function runAdminBatchRtpsCheck(btn) {
+    const originalHtml = btn ? btn.innerHTML : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> RTPS Portal Checking...';
+    }
+
+    if (typeof Swal !== 'undefined') {
+        Swal.fire({
+            title: 'Checking RTPS Portal...',
+            html: '<div class="py-2"><span class="spinner-border text-primary mb-2"></span><p class="small text-muted mb-0">Bihar Government RTPS portal par eligible applications verify aur certificates download ho rahe hain, kripya prateeksha karein...</p></div>',
+            allowOutsideClick: false,
+            showConfirmButton: false
+        });
+    }
+
+    try {
+        const formData = new FormData();
+        formData.append('ajax', '1');
+        formData.append('force', '1');
+        formData.append('limit', '25');
+
+        const res = await fetch('/admin/rtps-queue/trigger', {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            if (typeof Swal !== 'undefined') {
+                Swal.fire({
+                    icon: data.ready > 0 ? 'success' : 'info',
+                    title: data.ready > 0 ? 'Certificates Downloaded & Attached!' : 'RTPS Check Complete',
+                    html: `
+                        <div class="text-start p-2 small">
+                            <p class="mb-2"><strong>Total Eligible Applications Checked:</strong> ${data.processed}</p>
+                            <p class="mb-2 text-success"><strong>Certificates Downloaded &amp; Attached:</strong> <span class="badge bg-success fs-6">${data.ready}</span></p>
+                            <p class="mb-0 text-secondary"><strong>Pending at Govt Office (Scheduled for 12 AM):</strong> ${data.unavailable}</p>
+                        </div>
+                    `,
+                    confirmButtonText: 'OK',
+                    confirmButtonColor: '#0284c7'
+                }).then(() => {
+                    window.location.reload();
+                });
+            } else {
+                alert(`Auto Check Complete! Checked: ${data.processed}, Attached: ${data.ready}`);
+                window.location.reload();
+            }
+        } else {
+            if (typeof Swal !== 'undefined') {
+                Swal.fire({
+                    icon: 'warning',
+                    title: 'Notice',
+                    text: data.message || 'Could not complete auto-check.'
+                });
+            } else {
+                alert(data.message || 'Auto check failed.');
+            }
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        }
+    } catch (e) {
+        if (typeof Swal !== 'undefined') {
+            Swal.fire({
+                icon: 'error',
+                title: 'Communication Error',
+                text: e.message || 'Failed to connect to RTPS checker endpoint.'
+            });
+        } else {
+            alert('Error: ' + e.message);
+        }
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
+    }
 }
 
 document.addEventListener('DOMContentLoaded', function () {

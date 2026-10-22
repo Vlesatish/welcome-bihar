@@ -118,6 +118,11 @@
         </div>
 
         <div class="d-flex align-items-center gap-2 flex-wrap">
+            <?php if (\App\Services\AuthService::isAdmin()): ?>
+                <button type="button" class="btn btn-sm btn-primary rounded-pill px-3 py-1 fw-bold shadow-sm d-flex align-items-center gap-1.5" id="btnAdminTriggerAutoCheck" onclick="runAdminBatchRtpsCheck(this)" title="Bihar RTPS portal se sabhi pending certificates download aur auto attach karein">
+                    <i class="bi bi-magic"></i> <span>Auto Check &amp; Attach (RTPS)</span>
+                </button>
+            <?php endif; ?>
             <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill px-3 py-1 fw-semibold shadow-2xs" onclick="window.location.reload()">
                 <i class="bi bi-arrow-clockwise me-1"></i> Refresh
             </button>

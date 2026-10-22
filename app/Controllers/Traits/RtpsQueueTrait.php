@@ -172,28 +172,70 @@ trait RtpsQueueTrait
      */
     public function triggerRtpsQueueCheck(): void
     {
+        $isJson = (
+            (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') ||
+            (str_contains($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json')) ||
+            !empty($_POST['ajax'])
+        );
+
         if (!AuthService::isAdmin()) {
+            if ($isJson) {
+                http_response_code(403);
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'message' => 'Access restricted: Administrator access required.']);
+                exit;
+            }
             $_SESSION['flash_error'] = 'Access restricted: Administrator access required to trigger queue worker.';
             header('Location: /admin/rtps-queue');
             exit;
         }
 
-        if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
+        // Validate CSRF if provided
+        if (!empty($_POST['csrf_token']) && !AuthService::validateCsrfToken($_POST['csrf_token'])) {
+            if ($isJson) {
+                http_response_code(400);
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'message' => 'Invalid security token (CSRF).']);
+                exit;
+            }
             $_SESSION['flash_error'] = 'Invalid security token (CSRF). Please try again.';
             header('Location: /admin/rtps-queue');
             exit;
         }
 
-        $force = !empty($_POST['force']);
+        $force = !isset($_POST['force']) || !empty($_POST['force']);
+        $limit = isset($_POST['limit']) ? max(1, min(50, (int)$_POST['limit'])) : 25;
 
         try {
-            $res = RtpsCertificateService::processScheduledQueue(50, $force);
-            $_SESSION['flash_success'] = "Queue worker executed: {$res['processed']} eligible applications checked. Next cycle scheduled for 12:00 AM.";
+            $res = RtpsCertificateService::processScheduledQueue($limit, $force);
+
+            if ($isJson) {
+                header('Content-Type: application/json');
+                echo json_encode([
+                    'success' => true,
+                    'total_eligible' => $res['total_eligible'],
+                    'processed' => $res['processed'],
+                    'ready' => $res['ready'],
+                    'unavailable' => $res['unavailable'],
+                    'errors' => $res['errors'],
+                    'message' => "Auto Check completed: {$res['processed']} applications checked, {$res['ready']} certificates downloaded & attached!"
+                ]);
+                exit;
+            }
+
+            $_SESSION['flash_success'] = "Queue worker executed: {$res['processed']} eligible applications checked. {$res['ready']} certificates attached. Next cycle scheduled for 12:00 AM.";
         } catch (\Throwable $e) {
+            if ($isJson) {
+                http_response_code(500);
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'message' => 'Queue trigger error: ' . $e->getMessage()]);
+                exit;
+            }
             $_SESSION['flash_error'] = 'Queue trigger error: ' . $e->getMessage();
         }
 
-        header('Location: /admin/rtps-queue');
+        $redirect = !empty($_POST['redirect_to']) ? $_POST['redirect_to'] : '/admin/rtps-queue';
+        header('Location: ' . $redirect);
         exit;
     }
 

@@ -835,6 +835,92 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     };
 
+    // 6b. BATCH AUTO CHECK & ATTACH (ADMIN TRIGGER)
+    window.runAdminBatchRtpsCheck = async function (btn) {
+        const originalHtml = btn ? btn.innerHTML : '';
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> RTPS Portal Checking...';
+        }
+
+        if (typeof Swal !== 'undefined') {
+            Swal.fire({
+                title: 'Checking RTPS Portal...',
+                html: '<div class="py-2"><span class="spinner-border text-primary mb-2"></span><p class="small text-muted mb-0">Bihar Government RTPS portal par eligible applications verify aur certificates download ho rahe hain, kripya prateeksha karein...</p></div>',
+                allowOutsideClick: false,
+                showConfirmButton: false
+            });
+        }
+
+        try {
+            const formData = new FormData();
+            formData.append('ajax', '1');
+            formData.append('force', '1');
+            formData.append('limit', '25');
+
+            const res = await fetch('/admin/rtps-queue/trigger', {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        icon: data.ready > 0 ? 'success' : 'info',
+                        title: data.ready > 0 ? 'Certificates Downloaded & Attached!' : 'RTPS Check Complete',
+                        html: `
+                            <div class="text-start p-2 small">
+                                <p class="mb-2"><strong>Total Eligible Applications Checked:</strong> ${data.processed}</p>
+                                <p class="mb-2 text-success"><strong>Certificates Downloaded &amp; Attached:</strong> <span class="badge bg-success fs-6">${data.ready}</span></p>
+                                <p class="mb-0 text-secondary"><strong>Pending at Govt Office (Scheduled for 12 AM):</strong> ${data.unavailable}</p>
+                            </div>
+                        `,
+                        confirmButtonText: 'OK',
+                        confirmButtonColor: '#0284c7'
+                    }).then(() => {
+                        window.location.reload();
+                    });
+                } else {
+                    alert(`Auto Check Complete! Checked: ${data.processed}, Attached: ${data.ready}`);
+                    window.location.reload();
+                }
+            } else {
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        icon: 'warning',
+                        title: 'Notice',
+                        text: data.message || 'Could not complete auto-check.'
+                    });
+                } else {
+                    alert(data.message || 'Auto check failed.');
+                }
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
+                }
+            }
+        } catch (e) {
+            if (typeof Swal !== 'undefined') {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Communication Error',
+                    text: e.message || 'Failed to connect to RTPS checker endpoint.'
+                });
+            } else {
+                alert('Error: ' + e.message);
+            }
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        }
+    };
+
     // 7. TOAST NOTIFICATION HELPER
     function showToast(type, msg) {
         const c = document.getElementById('toast-container');
