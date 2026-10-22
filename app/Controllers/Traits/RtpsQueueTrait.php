@@ -196,4 +196,56 @@ trait RtpsQueueTrait
         header('Location: /admin/rtps-queue');
         exit;
     }
+
+    /**
+     * One-Click Auto Download and Attach Certificate from Bihar RTPS Portal
+     * POST /admin/rtps-queue/auto-fetch
+     */
+    public function autoFetchRtpsCertificate(): void
+    {
+        if (!AuthService::isStaffOrAdmin()) {
+            http_response_code(403);
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'message' => 'Unauthorized: Staff or Admin privilege required.']);
+            exit;
+        }
+
+        $appId = (int)($_POST['application_id'] ?? $_POST['app_id'] ?? 0);
+        if ($appId <= 0) {
+            http_response_code(400);
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'message' => 'Invalid application ID.']);
+            exit;
+        }
+
+        try {
+            $res = RtpsCertificateService::checkAndProcessApplication($appId);
+
+            header('Content-Type: application/json');
+            if (!empty($res['success'])) {
+                echo json_encode([
+                    'success' => true,
+                    'app_id' => $appId,
+                    'status' => 'COMPLETED',
+                    'result_file' => $res['result_file'] ?? '',
+                    'message' => 'Official certificate PDF downloaded from Bihar RTPS and attached successfully!'
+                ]);
+            } else {
+                echo json_encode([
+                    'success' => false,
+                    'app_id' => $appId,
+                    'status' => $res['status'] ?? 'UNAVAILABLE',
+                    'message' => $res['message'] ?? 'Certificate not yet generated or ready on Bihar RTPS portal. Next check scheduled at 12:00 AM.'
+                ]);
+            }
+        } catch (\Throwable $e) {
+            http_response_code(500);
+            header('Content-Type: application/json');
+            echo json_encode([
+                'success' => false,
+                'message' => 'Error checking RTPS portal: ' . $e->getMessage()
+            ]);
+        }
+        exit;
+    }
 }

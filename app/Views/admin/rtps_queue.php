@@ -286,12 +286,18 @@ require dirname(__DIR__) . '/layouts/header.php';
 
                                 <td class="text-end pe-3">
                                     <div class="btn-group btn-group-sm">
+                                        <?php if ($row['status'] !== 'ATTACHED'): ?>
+                                            <button type="button" class="btn btn-primary fw-bold text-nowrap" title="1-Click Auto Download from Bihar RTPS & Attach" onclick="autoFetchFromQueue(<?= (int)$row['application_id'] ?>, this)">
+                                                <i class="bi bi-cloud-arrow-down-fill me-0.5"></i> Auto Attach
+                                            </button>
+                                        <?php endif; ?>
+
                                         <a href="https://swcs.bihar.gov.in/RtpsReportView/certificate_download.jsp" target="_blank" rel="noopener noreferrer" class="btn btn-outline-secondary" title="Open RTPS Portal to Check" onclick="navigator.clipboard.writeText('<?= e($row['application_number']) ?>');">
                                             <i class="bi bi-box-arrow-up-right"></i> Portal
                                         </a>
 
                                         <button type="button" class="btn btn-outline-success" title="Attach Downloaded Certificate PDF" onclick="openAttachModal(<?= (int)$row['application_id'] ?>, '<?= e($row['application_number']) ?>', '<?= e($row['applicant_name']) ?>')">
-                                            <i class="bi bi-paperclip"></i> Attach PDF
+                                            <i class="bi bi-paperclip"></i> Upload
                                         </button>
 
                                         <?php if ($row['status'] !== 'ATTACHED'): ?>
@@ -363,6 +369,22 @@ require dirname(__DIR__) . '/layouts/header.php';
                         <button type="button" class="btn btn-xs btn-outline-secondary py-0.5 px-1.5" onclick="navigator.clipboard.writeText(document.getElementById('attachApplicantNameTitleText').textContent); alert('Applicant name copied!');">Copy</button>
                     </div>
                 </div>
+
+                <!-- 1-Click Auto Fetch Option -->
+                <div class="card border-primary bg-primary-subtle p-3 mb-3 rounded-2 shadow-2xs">
+                    <div class="d-flex align-items-center justify-content-between gap-2">
+                        <div>
+                            <div class="fw-bold text-primary small"><i class="bi bi-magic me-1"></i> 1-Click Auto Download from Bihar RTPS</div>
+                            <div class="text-secondary" style="font-size: 0.72rem;">Portal se direct official signed PDF fetch aur attach karein</div>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-primary fw-bold text-nowrap px-3" id="btnQueueModalAutoFetch" onclick="triggerQueueModalAutoFetch()">
+                            <i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Attach
+                        </button>
+                    </div>
+                    <div id="queueModalAutoFetchAlert" class="mt-2 small d-none"></div>
+                </div>
+
+                <div class="text-center my-2 text-muted fw-bold small" style="font-size: 0.7rem;">OR UPLOAD MANUALLY</div>
 
                 <div class="mb-3">
                     <label class="form-label small fw-semibold text-secondary mb-1">
@@ -493,7 +515,112 @@ function openAttachModal(appId, appNumber, applicantName) {
     document.getElementById('attachApplicantNameTitleText').textContent = toTitleCase(applicantName);
     document.getElementById('attachCertFile').value = '';
     document.getElementById('attachCertUrl').value = '';
+    const alertBox = document.getElementById('queueModalAutoFetchAlert');
+    if (alertBox) {
+        alertBox.className = 'mt-2 small d-none';
+        alertBox.innerHTML = '';
+    }
+    const afBtn = document.getElementById('btnQueueModalAutoFetch');
+    if (afBtn) {
+        afBtn.disabled = false;
+        afBtn.innerHTML = '<i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Attach';
+    }
     new bootstrap.Modal(document.getElementById('attachCertModal')).show();
+}
+
+function triggerQueueModalAutoFetch() {
+    const appId = document.getElementById('attachAppId').value;
+    const btn = document.getElementById('btnQueueModalAutoFetch');
+    const alertBox = document.getElementById('queueModalAutoFetchAlert');
+    if (!appId) return;
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Fetching...';
+    alertBox.className = 'mt-2 small alert alert-info p-2 mb-0';
+    alertBox.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Bihar Government RTPS portal se certificate verify aur download ho raha hai...';
+
+    const formData = new FormData();
+    formData.append('application_id', appId);
+
+    fetch('/admin/rtps-queue/auto-fetch', {
+        method: 'POST',
+        body: formData
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            alertBox.className = 'mt-2 small alert alert-success p-2 mb-0';
+            alertBox.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i> ' + (data.message || 'Certificate attach ho gaya!');
+            setTimeout(() => window.location.reload(), 1200);
+        } else {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Attach';
+            alertBox.className = 'mt-2 small alert alert-warning p-2 mb-0';
+            alertBox.innerHTML = '<i class="bi bi-info-circle me-1"></i> ' + (data.message || 'Certificate abhi portal par uplabdh nahi hai.');
+        }
+    })
+    .catch(e => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Attach';
+        alertBox.className = 'mt-2 small alert alert-danger p-2 mb-0';
+        alertBox.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i> Error: ' + e.message;
+    });
+}
+
+async function autoFetchFromQueue(appId, btn) {
+    if (!appId) return;
+    const originalHtml = btn ? btn.innerHTML : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Fetching...';
+    }
+
+    try {
+        const formData = new FormData();
+        formData.append('application_id', appId);
+
+        const res = await fetch('/admin/rtps-queue/auto-fetch', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            if (typeof Swal !== 'undefined') {
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Certificate Attached!',
+                    text: data.message || 'Official certificate PDF downloaded and attached successfully!',
+                    timer: 1800,
+                    showConfirmButton: false
+                });
+            } else {
+                alert(data.message || 'Certificate attached successfully!');
+            }
+            setTimeout(() => window.location.reload(), 1200);
+        } else {
+            if (typeof Swal !== 'undefined') {
+                Swal.fire({
+                    icon: 'info',
+                    title: 'RTPS Portal Notice',
+                    text: data.message || 'Certificate not ready yet on RTPS portal. Next check scheduled at 12:00 AM.',
+                    confirmButtonColor: '#0284c7'
+                });
+            } else {
+                alert(data.message || 'Certificate pending on portal; next check scheduled at 12:00 AM.');
+            }
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        }
+    } catch (e) {
+        alert('Communication error: ' + e.message);
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
+    }
 }
 
 function openUnavailableModal(appId, appNumber) {

@@ -42,7 +42,8 @@ class AdminController
                 '/admin/applications',
                 '/admin/rtps-queue',
                 '/admin/rtps-queue/attach',
-                '/admin/rtps-queue/unavailable'
+                '/admin/rtps-queue/unavailable',
+                '/admin/rtps-queue/auto-fetch'
             ];
             if (!in_array($uri, $allowedOperatorUris, true)) {
                 http_response_code(403);

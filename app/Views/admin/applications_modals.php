@@ -232,6 +232,29 @@ async function openReassignModal(appId, districtId, blockId, appRef, currentOpId
                         <div class="text-muted" style="font-size: 0.72rem;" id="uploadLocation">--</div>
                     </div>
 
+                    <!-- 1-Click Auto Fetch from Bihar RTPS Portal -->
+                    <div class="card border-primary bg-primary-subtle p-3 mb-3 rounded-3 shadow-sm">
+                        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                            <div>
+                                <div class="fw-bold text-primary d-flex align-items-center gap-1">
+                                    <i class="bi bi-magic fs-5"></i> 1-Click Auto Download from Bihar RTPS
+                                </div>
+                                <div class="text-secondary small mt-0.5">
+                                    Bihar Government portal se official signed PDF automatic download aur attach karein.
+                                </div>
+                            </div>
+                            <button type="button" class="btn btn-sm btn-primary fw-bold px-3 py-1.5 shadow-sm text-nowrap" id="btnModalAutoFetch" onclick="triggerAutoFetchFromModal()">
+                                <i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Fetch & Attach
+                            </button>
+                        </div>
+                        <div id="modalAutoFetchAlert" class="mt-2 small d-none"></div>
+                    </div>
+
+                    <div class="text-center my-3 position-relative">
+                        <hr class="my-0 text-muted">
+                        <span class="bg-white px-2 text-muted fw-bold small position-relative" style="top: -10px; font-size: 0.72rem;">YA MANUALLY FILE UPLOAD KAREIN</span>
+                    </div>
+
                     <div class="mb-3">
                         <label for="uploadResultFile" class="form-label small fw-bold text-dark">Result Certificate Document (PDF / JPG / PNG)</label>
                         <input type="file" class="form-control form-control-sm" id="uploadResultFile" name="result_file" accept=".pdf,.jpg,.jpeg,.png">
@@ -490,7 +513,127 @@ document.addEventListener('DOMContentLoaded', function () {
         document.getElementById('uploadResultFile').value = '';
         document.getElementById('uploadFilePreviewBox').classList.add('d-none');
 
+        // Reset 1-Click Auto Fetch button & alert box
+        const alertBox = document.getElementById('modalAutoFetchAlert');
+        if (alertBox) {
+            alertBox.className = 'mt-2 small d-none';
+            alertBox.innerHTML = '';
+        }
+        const afBtn = document.getElementById('btnModalAutoFetch');
+        if (afBtn) {
+            afBtn.disabled = false;
+            afBtn.innerHTML = '<i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Fetch & Attach';
+        }
+
         modalUpload.show();
+    };
+
+    // 1-Click Auto Fetch from Modal
+    window.triggerAutoFetchFromModal = function () {
+        const appId = document.getElementById('upload_app_id').value;
+        const btn = document.getElementById('btnModalAutoFetch');
+        const alertBox = document.getElementById('modalAutoFetchAlert');
+        if (!appId) return;
+
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Fetching from RTPS...';
+        alertBox.className = 'mt-2 small alert alert-info p-2 mb-0 d-flex align-items-center gap-1.5';
+        alertBox.innerHTML = '<span class="spinner-border spinner-border-sm text-primary"></span> Bihar Government RTPS portal se certificate verify aur download ho raha hai, kripya prateeksha karein...';
+
+        const formData = new FormData();
+        formData.append('application_id', appId);
+
+        fetch('/admin/rtps-queue/auto-fetch', {
+            method: 'POST',
+            body: formData
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                alertBox.className = 'mt-2 small alert alert-success p-2 mb-0';
+                alertBox.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i> ' + (data.message || 'Certificate attach ho gaya! Application completed.');
+                setTimeout(() => {
+                    modalUpload.hide();
+                    window.location.reload();
+                }, 1200);
+            } else {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Fetch & Attach';
+                alertBox.className = 'mt-2 small alert alert-warning p-2 mb-0';
+                alertBox.innerHTML = '<i class="bi bi-info-circle me-1"></i> ' + (data.message || 'Certificate abhi portal par generate nahi hua hai.');
+            }
+        })
+        .catch(err => {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Fetch & Attach';
+            alertBox.className = 'mt-2 small alert alert-danger p-2 mb-0';
+            alertBox.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i> Error: ' + err.message;
+        });
+    };
+
+    // 1-Click Auto Fetch from Table Action Button
+    window.autoFetchAndAttachRtps = async function (appId, btn) {
+        if (!appId) return;
+        const originalHtml = btn ? btn.innerHTML : '';
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Fetching...';
+        }
+
+        try {
+            const formData = new FormData();
+            formData.append('application_id', appId);
+
+            const res = await fetch('/admin/rtps-queue/auto-fetch', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'Certificate Attached!',
+                        text: data.message || 'Official certificate PDF downloaded and attached successfully!',
+                        timer: 1800,
+                        showConfirmButton: false
+                    });
+                } else if (typeof showToast === 'function') {
+                    showToast('success', data.message || 'Certificate attached successfully!');
+                }
+                setTimeout(() => window.location.reload(), 1200);
+            } else {
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        icon: 'info',
+                        title: 'RTPS Portal Notice',
+                        text: data.message || 'Certificate not ready yet on RTPS portal. Next check scheduled at 12:00 AM.',
+                        confirmButtonColor: '#0284c7'
+                    });
+                } else if (typeof showToast === 'function') {
+                    showToast('warning', data.message || 'Certificate pending on portal.');
+                }
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
+                }
+            }
+        } catch (e) {
+            if (typeof Swal !== 'undefined') {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Communication Error',
+                    text: e.message || 'Failed to connect to server.'
+                });
+            } else if (typeof showToast === 'function') {
+                showToast('danger', 'Error: ' + e.message);
+            }
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        }
     };
 
     // File Preview Handler in Upload Modal

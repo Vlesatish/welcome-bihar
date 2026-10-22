@@ -270,6 +270,11 @@ try {
             $ctrl->triggerRtpsQueueCheck();
             break;
 
+        case '/admin/rtps-queue/auto-fetch':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->autoFetchRtpsCertificate();
+            break;
+
         case '/admin/users':
             $ctrl = new \App\Controllers\AdminController();
             $ctrl->users();
