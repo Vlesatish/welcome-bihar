@@ -372,10 +372,10 @@ try {
         'status' => 'PENDING',
         'aadhaar_number' => '123456789012'
     ]);
-    $waClean = str_contains($waMsg, 'Applicant: John Doe')
-        && str_contains($waMsg, 'Application No: LC/12345')
+    $waClean = str_contains($waMsg, 'Applicant Name: John Doe')
+        && str_contains($waMsg, 'Application Number: LC/12345')
         && str_contains($waMsg, 'Location: Gaya > Konch')
-        && str_contains($waMsg, 'Aadhaar No: 123456789012')
+        && str_contains($waMsg, 'Aadhaar Number: XXXX-XXXX-9012')
         && !str_contains($waMsg, 'Reference:')
         && !str_contains($waMsg, 'Status:')
         && !str_contains($waMsg, 'Application Code:');

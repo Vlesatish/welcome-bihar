@@ -303,7 +303,7 @@ recordResult('11', 'Manual reassignment removes old staff access', $c11Pass, "Ne
 // Check the outbox message created for the Labour application (which went to Staff B)
 $outboxStaffB = $db->query("SELECT recipient_user_id, status, message_body FROM whatsapp_notification_outbox WHERE recipient_user_id = {$staffBId} ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
 $outboxStaffAForLabour = $db->query("SELECT COUNT(*) FROM whatsapp_notification_outbox WHERE recipient_user_id = {$staffAId} AND message_body LIKE '%LABOURCARD%'")->fetchColumn();
-$c12Pass = ($outboxStaffB && (int)$outboxStaffAForLabour === 0 && str_contains($outboxStaffB['message_body'], 'Applicant:'));
+$c12Pass = ($outboxStaffB && (int)$outboxStaffAForLabour === 0 && str_contains($outboxStaffB['message_body'], 'Applicant Name:'));
 recordResult('12', 'WhatsApp goes only to assigned staff', $c12Pass, "Staff B outbox recipient: " . ($outboxStaffB ? 'YES' : 'NO') . ", Staff A received Labour WA: {$outboxStaffAForLabour}");
 
 // -------------------------------------------------------------------------

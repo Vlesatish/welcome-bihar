@@ -351,10 +351,9 @@ if ($waEntry && !empty($waEntry['message_body'])) {
     $hasRequiredFields = (
         str_contains($body, 'Rohan Kumar') &&
         str_contains($body, $appDataWa['application_number']) &&
-        str_contains($body, 'BICCO') &&
-        str_contains($body, $distName) &&
-        str_contains($body, $blkName) &&
-        str_contains($body, $appRefWa)
+        str_contains($body, "Location: {$distName} > {$blkName}") &&
+        !str_contains($body, 'Reference:') &&
+        !str_contains($body, 'Status:')
     );
 }
 

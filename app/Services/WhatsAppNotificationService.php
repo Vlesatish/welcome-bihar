@@ -448,97 +448,304 @@ class WhatsAppNotificationService
     }
 
     /**
-     * Build clean WhatsApp message for application notification.
-     * Strictly includes ONLY: Applicant, Application No, Location, and filled input fields.
-     * Contains NO system boilerplate, NO references, NO status, and NO application codes.
+     * Check if a field value should be skipped (empty, null, whitespace, N/A, unchecked)
      */
-    public static function buildMessage(array $data): string
+    private static function isFieldValueEmpty(mixed $value, string $fieldType = ''): bool
     {
-        $applicantName = trim((string)($data['applicant_name'] ?? 'Applicant'));
-        $applicationNumber = trim((string)($data['application_number'] ?? ($data['applicant_identifier'] ?? '')));
-        $applicationCode = trim((string)($data['application_code'] ?? ''));
-        $districtName = trim((string)($data['district_name'] ?? ''));
-        $blockName = trim((string)($data['block_name'] ?? ''));
-        $appRef = trim((string)($data['app_ref'] ?? ''));
+        if ($value === null) {
+            return true;
+        }
+        if (is_array($value) || is_object($value)) {
+            return true;
+        }
+        $str = trim((string)$value);
+        if ($str === '') {
+            return true;
+        }
+        $upper = strtoupper($str);
+        if (in_array($upper, ['N/A', 'NA', '-', '--', 'NULL', 'NONE', 'UNCHECKED', 'OFF', 'FALSE', 'EMPTY'], true)) {
+            return true;
+        }
+        if (in_array(strtolower($fieldType), ['checkbox', 'bool', 'boolean'], true) && ($str === '0' || $upper === 'NO')) {
+            return true;
+        }
+        return false;
+    }
 
-        $lines = [];
-        if ($applicantName !== '') {
-            $lines[] = "Applicant: {$applicantName}";
-        }
-        if ($applicationNumber !== '') {
-            $lines[] = "Application No: {$applicationNumber}";
-        }
-        if ($applicationCode !== '') {
-            $lines[] = "Application Code: {$applicationCode}";
-        }
-        if ($districtName !== '' && $blockName !== '') {
-            $lines[] = "District: {$districtName}\nBlock: {$blockName}";
-        } elseif ($districtName !== '') {
-            $lines[] = "District: {$districtName}";
-        }
-        if ($appRef !== '') {
-            $lines[] = "Application Ref: {$appRef}";
+    /**
+     * Format clean human-readable label for a field
+     */
+    private static function formatFieldLabel(string $fieldName, ?string $explicitLabel = null): string
+    {
+        $explicitLabel = trim((string)$explicitLabel);
+        if ($explicitLabel !== '') {
+            $lower = strtolower($explicitLabel);
+            if (in_array($lower, ['applicant', 'applicant name', 'name of applicant'], true)) {
+                return 'Applicant Name';
+            }
+            if (in_array($lower, ['application no', 'application no.', 'application number', 'app no', 'app number'], true)) {
+                return 'Application Number';
+            }
+            if (in_array($lower, ['mobile', 'mobile no', 'mobile no.', 'mobile number', 'contact mobile number'], true)) {
+                return 'Mobile Number';
+            }
+            if (in_array($lower, ['aadhaar', 'aadhaar no', 'aadhaar no.', 'aadhaar number', 'head aadhaar number', 'uid'], true)) {
+                return 'Aadhaar Number';
+            }
+            if (in_array($lower, ['reg no', 'reg no.', 'registration no', 'registration number'], true)) {
+                return 'Registration Number';
+            }
+            return $explicitLabel;
         }
 
-        // Keys to strictly exclude (system internals, boilerplate, references, status)
-        $skipKeys = [
-            'applicant_name', 'application_number', 'applicant_identifier',
-            'app_ref', 'district_name', 'block_name', 'application_code',
-            'state', 'status', 'assigned_operator_id', 'district_id', 'block_id',
-            'user_id', 'created_at', 'updated_at', 'fields', 'raw_item',
-            'field_values', 'form_data'
+        $fn = strtolower(trim($fieldName));
+        $map = [
+            'applicant_name' => 'Applicant Name',
+            'application_number' => 'Application Number',
+            'applicant_identifier' => 'Application Number',
+            'mobile_number' => 'Mobile Number',
+            'mobile_no' => 'Mobile Number',
+            'mobile' => 'Mobile Number',
+            'aadhaar_number' => 'Aadhaar Number',
+            'aadhaar_no' => 'Aadhaar Number',
+            'aadhaar' => 'Aadhaar Number',
+            'registration_number' => 'Registration Number',
+            'reg_no' => 'Registration Number',
+            'father_name' => 'Father Name',
+            'father_or_husband_name' => 'Father / Husband Name',
+            'mother_name' => 'Mother Name',
+            'gender' => 'Gender',
+            'dob' => 'Date of Birth',
+            'email' => 'Email',
+            'address' => 'Address',
+            'pincode' => 'Pincode',
+            'pin_code' => 'Pincode',
+            'ration_card_no' => 'Ration Card Number',
+            'annual_income' => 'Annual Income',
+            'certificate_type' => 'Certificate Type'
         ];
 
-        $handledKeys = [];
+        if (isset($map[$fn])) {
+            return $map[$fn];
+        }
 
-        // 1. Process structured fields array if present
+        return ucwords(str_replace(['_', '-'], ' ', $fn));
+    }
+
+    /**
+     * Mask Aadhaar number to format: XXXX-XXXX-1234
+     */
+    private static function maskAadhaar(string $value): string
+    {
+        $digits = preg_replace('/\D/', '', $value);
+        if (strlen($digits) >= 4) {
+            $last4 = substr($digits, -4);
+            return "XXXX-XXXX-{$last4}";
+        }
+        return "XXXX-XXXX-" . $digits;
+    }
+
+    /**
+     * Determine if a field is an Aadhaar field requiring masking
+     */
+    private static function isAadhaarField(string $fieldName, string $fieldType, string $label, string $value): bool
+    {
+        if (strcasecmp($fieldType, 'aadhaar') === 0) {
+            return true;
+        }
+        if (stripos($fieldName, 'aadhaar') !== false || stripos($fieldName, 'uid') !== false) {
+            return true;
+        }
+        if (stripos($label, 'aadhaar') !== false) {
+            return true;
+        }
+        $cleanDigits = preg_replace('/\D/', '', $value);
+        if (strlen($cleanDigits) === 12 && preg_match('/^[2-9]\d{11}$/', $cleanDigits)) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Build clean WhatsApp message for application notification.
+     * Strictly includes ONLY:
+     * Location: {District} > {Block}
+     * {Filled Field Label}: {Filled Value}
+     *
+     * Contains NO heading, NO description, NO rate/fee/wallet, NO references, NO dates,
+     * NO status, NO service name, NO operator name, NO blank fields, NO decorative emojis.
+     */
+    public static function buildMessage(array $data, ?PDO $db = null, ?int $applicationId = null): string
+    {
+        $appId = $applicationId ?: (int)($data['application_id'] ?? ($data['id'] ?? 0));
+        $districtName = trim((string)($data['district_name'] ?? ''));
+        $blockName = trim((string)($data['block_name'] ?? ''));
+
+        // If district or block missing and DB available, resolve from application record
+        if (($districtName === '' || $blockName === '') && $db !== null && $appId > 0) {
+            try {
+                $locStmt = $db->prepare("
+                    SELECT d.name as district_name, b.name as block_name
+                    FROM applications a
+                    LEFT JOIN districts d ON d.id = a.district_id
+                    LEFT JOIN blocks b ON b.id = a.block_id
+                    WHERE a.id = ?
+                ");
+                $locStmt->execute([$appId]);
+                $loc = $locStmt->fetch(PDO::FETCH_ASSOC);
+                if ($loc) {
+                    if ($districtName === '' && !empty($loc['district_name'])) {
+                        $districtName = trim((string)$loc['district_name']);
+                    }
+                    if ($blockName === '' && !empty($loc['block_name'])) {
+                        $blockName = trim((string)$loc['block_name']);
+                    }
+                }
+            } catch (\Throwable $e) {}
+        }
+
+        $lines = [];
+        if ($districtName !== '' && $blockName !== '') {
+            $lines[] = "Location: {$districtName} > {$blockName}";
+        } elseif ($districtName !== '') {
+            $lines[] = "Location: {$districtName}";
+        } elseif ($blockName !== '') {
+            $lines[] = "Location: {$blockName}";
+        }
+
+        // Keys to strictly exclude (system internals, rates, status, references, technical details)
+        $excludedKeys = [
+            'id', 'application_id', 'field_id', 'code_field_id', 'data_type_id', 'service_id',
+            'user_id', 'retailer_id', 'operator_id', 'assigned_operator_id',
+            'district_id', 'block_id', 'district_name', 'block_name', 'district', 'block',
+            'rate', 'rate_snapshot', 'fee', 'fee_amount', 'wallet', 'wallet_balance',
+            'commission', 'distributor_commission', 'total_fee', 'payment_status',
+            'status', 'from_status', 'to_status', 'assignment_status', 'state', 'assignment_method',
+            'batch_id', 'batch_ref', 'batch_reference', 'batch_name', 'batch_count',
+            'batch_total', 'total_count', 'raw_item',
+            'app_ref', 'application_ref', 'reference', 'reference_no', 'ref_no',
+            'created_at', 'updated_at', 'date', 'time', 'timestamp',
+            'form_data', 'field_values', 'fields', 'ip_address', 'user_agent',
+            'lock_token', 'locked_at', 'attempts', 'event_key', 'event_type',
+            'service_name', 'operator_name', 'operator_mobile', 'actor_name', 'actor_role',
+            'remarks', 'notes', 'description', 'heading', 'application_code'
+        ];
+
+        $seenLabels = [];
+        $seenNames = [];
+
+        // 1. Fetch dynamic submitted values from application_field_values in exact form order
+        if ($db !== null && $appId > 0) {
+            try {
+                $fStmt = $db->prepare("
+                    SELECT 
+                        afv.id,
+                        afv.field_name,
+                        afv.field_value,
+                        COALESCE(NULLIF(TRIM(acf.label), ''), NULLIF(TRIM(dtf.label_en), '')) AS field_label,
+                        COALESCE(acf.field_type, dtf.field_type, '') AS field_type
+                    FROM application_field_values afv
+                    LEFT JOIN application_code_fields acf ON afv.code_field_id = acf.id
+                    LEFT JOIN data_type_fields dtf ON afv.field_id = dtf.id
+                    WHERE afv.application_id = ?
+                    ORDER BY afv.id ASC
+                ");
+                $fStmt->execute([$appId]);
+                $dbFields = $fStmt->fetchAll(PDO::FETCH_ASSOC);
+
+                foreach ($dbFields as $row) {
+                    $fName = strtolower(trim((string)$row['field_name']));
+                    $fType = strtolower(trim((string)$row['field_type']));
+                    $val = trim((string)$row['field_value']);
+
+                    if ($fType === 'file' || in_array($fName, $excludedKeys, true)) {
+                        continue;
+                    }
+                    if (self::isFieldValueEmpty($val, $fType)) {
+                        continue;
+                    }
+
+                    $label = self::formatFieldLabel($fName, $row['field_label'] ?? null);
+                    $normLabel = strtolower(preg_replace('/[^a-z0-9]/', '', $label));
+                    $normName = strtolower(preg_replace('/[^a-z0-9]/', '', $fName));
+
+                    if (isset($seenLabels[$normLabel]) || isset($seenNames[$normName])) {
+                        continue;
+                    }
+
+                    if (self::isAadhaarField($fName, $fType, $label, $val)) {
+                        $val = self::maskAadhaar($val);
+                    }
+
+                    $lines[] = "{$label}: {$val}";
+                    $seenLabels[$normLabel] = true;
+                    $seenNames[$normName] = true;
+                }
+            } catch (\Throwable $e) {}
+        }
+
+        // 2. Process structured fields array if provided in $data['fields']
         if (!empty($data['fields']) && is_array($data['fields'])) {
             foreach ($data['fields'] as $f) {
                 if (!is_array($f)) continue;
                 $fName = strtolower(trim((string)($f['field_name'] ?? '')));
                 $fType = strtolower(trim((string)($f['field_type'] ?? '')));
-                if ($fType === 'file' || in_array($fName, ['applicant_name', 'application_number', 'applicant_identifier'], true)) {
-                    continue;
-                }
-                $valStr = trim((string)($f['field_value'] ?? ''));
-                if ($valStr === '') {
-                    continue;
-                }
-                $handledKeys[$fName] = true;
+                $val = trim((string)($f['field_value'] ?? ($f['value'] ?? '')));
 
-                if (in_array($fName, ['aadhaar_number', 'aadhaar_no', 'aadhaar', 'uid'], true)) {
-                    $lines[] = "Aadhaar No: {$valStr}";
-                } elseif (in_array($fName, ['registration_number', 'reg_no'], true)) {
-                    $lines[] = "Registration No: {$valStr}";
-                } else {
-                    $label = !empty($f['field_label']) ? trim((string)$f['field_label']) : ucwords(str_replace(['_', '-'], ' ', $fName));
-                    $lines[] = "{$label}: {$valStr}";
+                if ($fType === 'file' || in_array($fName, $excludedKeys, true)) {
+                    continue;
                 }
+                if (self::isFieldValueEmpty($val, $fType)) {
+                    continue;
+                }
+
+                $label = self::formatFieldLabel($fName, $f['field_label'] ?? ($f['label'] ?? null));
+                $normLabel = strtolower(preg_replace('/[^a-z0-9]/', '', $label));
+                $normName = strtolower(preg_replace('/[^a-z0-9]/', '', $fName));
+
+                if (isset($seenLabels[$normLabel]) || isset($seenNames[$normName])) {
+                    continue;
+                }
+
+                if (self::isAadhaarField($fName, $fType, $label, $val)) {
+                    $val = self::maskAadhaar($val);
+                }
+
+                $lines[] = "{$label}: {$val}";
+                $seenLabels[$normLabel] = true;
+                $seenNames[$normName] = true;
             }
         }
 
-        // 2. Process any other input key-values passed in $data
+        // 3. Process any other user input key-values passed in $data (preserving submission order)
         foreach ($data as $key => $val) {
             $keyLower = strtolower(trim((string)$key));
-            if (isset($handledKeys[$keyLower]) || in_array($keyLower, $skipKeys, true) || is_array($val) || is_object($val)) {
+            if (in_array($keyLower, $excludedKeys, true) || is_array($val) || is_object($val)) {
                 continue;
             }
             $valStr = trim((string)$val);
-            if ($valStr === '') {
+            if (self::isFieldValueEmpty($valStr)) {
                 continue;
             }
 
-            if (in_array($keyLower, ['aadhaar_number', 'aadhaar_no', 'aadhaar', 'uid'], true)) {
-                $lines[] = "Aadhaar No: {$valStr}";
-            } elseif (in_array($keyLower, ['registration_number', 'reg_no'], true)) {
-                $lines[] = "Registration No: {$valStr}";
-            } else {
-                $label = ucwords(str_replace(['_', '-'], ' ', (string)$key));
-                $lines[] = "{$label}: {$valStr}";
+            $label = self::formatFieldLabel($keyLower, null);
+            $normLabel = strtolower(preg_replace('/[^a-z0-9]/', '', $label));
+            $normName = strtolower(preg_replace('/[^a-z0-9]/', '', $keyLower));
+
+            if (isset($seenLabels[$normLabel]) || isset($seenNames[$normName])) {
+                continue;
             }
+
+            if (self::isAadhaarField($keyLower, '', $label, $valStr)) {
+                $valStr = self::maskAadhaar($valStr);
+            }
+
+            $lines[] = "{$label}: {$valStr}";
+            $seenLabels[$normLabel] = true;
+            $seenNames[$normName] = true;
         }
 
-        return implode("\n", array_values(array_unique($lines)));
+        return implode("\n", $lines);
     }
 
     /**
@@ -593,22 +800,19 @@ class WhatsAppNotificationService
     ): array {
         $settings = self::getSettings();
 
-        // Fetch dynamic fields from DB if not already supplied
-        if ($applicationId > 0 && empty($appData['fields'])) {
+        // Ensure district and block names are available for Location line
+        if (empty($appData['district_name']) || empty($appData['block_name'])) {
             try {
-                $fStmt = $db->prepare("SELECT field_name, field_value FROM application_field_values WHERE application_id = ?");
-                $fStmt->execute([$applicationId]);
-                while ($fRow = $fStmt->fetch(PDO::FETCH_ASSOC)) {
-                    $fn = strtolower(trim((string)$fRow['field_name']));
-                    $fv = trim((string)$fRow['field_value']);
-                    if (!empty($fv) && empty($appData[$fn])) {
-                        $appData[$fn] = $fv;
-                    }
+                if ($districtId > 0 && empty($appData['district_name'])) {
+                    $appData['district_name'] = (string)$db->query("SELECT name FROM districts WHERE id = " . (int)$districtId)->fetchColumn();
+                }
+                if ($blockId > 0 && empty($appData['block_name'])) {
+                    $appData['block_name'] = (string)$db->query("SELECT name FROM blocks WHERE id = " . (int)$blockId)->fetchColumn();
                 }
             } catch (\Throwable $e) {}
         }
 
-        $messageBody = self::buildMessage($appData);
+        $messageBody = self::buildMessage($appData, $db, $applicationId);
         $appRef = (string)($appData['app_ref'] ?? "ID #{$applicationId}");
         $districtName = (string)($appData['district_name'] ?? 'District');
         $blockName = (string)($appData['block_name'] ?? 'Block');
@@ -717,12 +921,9 @@ class WhatsAppNotificationService
                   )
               )
               AND u.status = 'ACTIVE'
-              AND (
-                  EXISTS (
-                      SELECT 1 FROM operator_block_assignments oba
-                      WHERE oba.operator_user_id = u.id AND oba.district_id = ? AND oba.block_id = ? AND oba.is_active = 1
-                  )
-                  OR (u.assigned_district_id = ? AND u.assigned_block_id = ?)
+              AND EXISTS (
+                  SELECT 1 FROM operator_block_assignments oba
+                  WHERE oba.operator_user_id = u.id AND oba.district_id = ? AND oba.block_id = ? AND oba.is_active = 1
               )
               AND (
                   NOT EXISTS (
@@ -738,7 +939,6 @@ class WhatsAppNotificationService
         ");
         $opStmt->execute([
             $targetOperatorId,
-            $districtId, $blockId,
             $districtId, $blockId,
             $districtId, $blockId,
             $districtId, $blockId,
