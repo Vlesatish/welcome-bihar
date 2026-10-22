@@ -173,7 +173,7 @@ class ApplicationService
                 throw new Exception(__("insufficient_balance", "Insufficient wallet balance (Available: ₹" . number_format($lockedBalance, 2) . ", Required: ₹" . number_format($feeAmount, 2) . "). Please recharge your wallet."));
             }
 
-            $assignedOperatorId = StaffRoutingService::resolveOperatorForApplication($districtId, $blockId, $submittedAppCode, $db);
+            $assignedOperatorId = StaffRoutingService::resolveOperatorForApplication($districtId, $blockId, $submittedAppCode, $db, $userId);
             $assignmentMethod = $assignedOperatorId ? 'AUTO_ROUND_ROBIN' : 'UNASSIGNED';
 
             // Generate unique application reference
@@ -309,6 +309,8 @@ class ApplicationService
 
             // Queue WhatsApp notification (strictly user-filled inputs only)
             $waData = [
+                'app_ref' => $appRef,
+                'application_code' => $submittedAppCode,
                 'applicant_name' => $applicantName,
                 'application_number' => $applicantIdentifier ?: ($submittedValues['application_number'] ?? ''),
                 'district_name' => $distName,
@@ -660,7 +662,7 @@ class ApplicationService
                 $rateSnapshot = "Applied Rate: {$prep['rate_note']} (Charged: ₹" . number_format($prep['fee'], 2) . ")";
 
                 $prepCode = $prep['application_code'];
-                $rowAssignedOpId = StaffRoutingService::resolveOperatorForApplication($prep['district_id'], $prep['block_id'], $prepCode, $db);
+                $rowAssignedOpId = StaffRoutingService::resolveOperatorForApplication($prep['district_id'], $prep['block_id'], $prepCode, $db, $userId);
                 $rowMethod = $rowAssignedOpId ? 'AUTO_ROUND_ROBIN' : 'UNASSIGNED';
 
                 $insApp->execute([
@@ -743,6 +745,8 @@ class ApplicationService
 
                 // Queue WhatsApp notification (strictly user-filled inputs only)
                 $waItemData = [
+                    'app_ref' => $appRef,
+                    'application_code' => $prepCode,
                     'applicant_name' => $prep['applicant_name'],
                     'application_number' => $prep['applicant_identifier'],
                     'district_name' => $distName,

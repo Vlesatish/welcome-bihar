@@ -210,6 +210,9 @@ class UserController
             }
         }
 
+        $applications = is_array($applications) ? $applications : [];
+        $recentApplications = $applications;
+
         require dirname(__DIR__) . '/Views/user/dashboard.php';
     }
 

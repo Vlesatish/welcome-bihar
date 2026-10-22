@@ -18,30 +18,21 @@ class LocationController
         header('Content-Type: application/json');
 
         $districtId = (int)($_GET['district_id'] ?? 0);
+
+        // If user is authenticated in OPERATOR mode or role is OPERATOR, restrict to their assigned blocks
+        if (AuthService::check() && (AuthService::activePortalMode() === 'OPERATOR' || (AuthService::user()['role'] ?? '') === 'OPERATOR')) {
+            $user = AuthService::user();
+            $blocks = AuthService::getOperatorAssignedBlocks((int)$user['id'], $districtId > 0 ? $districtId : null);
+            echo json_encode($blocks);
+            exit;
+        }
+
         if ($districtId <= 0) {
             echo json_encode([]);
             exit;
         }
 
         $db = Database::getConnection();
-
-        // If user is authenticated as OPERATOR, restrict to operator's assigned scope
-        if (AuthService::check()) {
-            $user = AuthService::user();
-            if ($user && $user['role'] === 'OPERATOR') {
-                $opDist = (int)($user['assigned_district_id'] ?? 0);
-                $opBlk = (int)($user['assigned_block_id'] ?? 0);
-                if ($opDist !== $districtId) {
-                    http_response_code(403);
-                    echo json_encode(['error' => 'Forbidden: Mismatched district for assigned operator.']);
-                    exit;
-                }
-                $stmt = $db->prepare("SELECT id, name, name_hi, code FROM blocks WHERE id = ? AND district_id = ? AND is_active = 1 LIMIT 1");
-                $stmt->execute([$opBlk, $districtId]);
-                echo json_encode($stmt->fetchAll(PDO::FETCH_ASSOC));
-                exit;
-            }
-        }
 
         // For registration (unauthenticated), USER, ADMIN, and DISTRIBUTOR: return all active blocks for the district
         $stmt = $db->prepare("SELECT id, name, name_hi, code FROM blocks WHERE district_id = ? AND is_active = 1 ORDER BY name ASC");
@@ -575,7 +566,7 @@ class LocationController
             SELECT
                 b.id as block_id,
                 COALESCE(sba.status, 'INACTIVE') as service_status,
-                (SELECT COUNT(*) FROM users u WHERE u.role = 'OPERATOR' AND u.status = 'ACTIVE' AND u.assigned_district_id = b.district_id AND u.assigned_block_id = b.id) as op_count,
+                (SELECT COUNT(DISTINCT oba.operator_user_id) FROM operator_block_assignments oba JOIN users u ON oba.operator_user_id = u.id WHERE oba.district_id = b.district_id AND oba.block_id = b.id AND oba.is_active = 1 AND u.status = 'ACTIVE' AND (u.role = 'OPERATOR' OR EXISTS (SELECT 1 FROM user_role_assignments ura WHERE ura.user_id = u.id AND ura.role_code = 'OPERATOR' AND ura.is_active = 1))) as op_count,
                 (SELECT COUNT(*) FROM service_rate_rules srr WHERE srr.data_type_id = {$serviceId} AND srr.block_id = b.id AND srr.is_active = 1 AND srr.fee_amount > 0 AND srr.application_code IS NOT NULL AND srr.application_code != '' AND srr.application_code != '*') as rate_count
             FROM blocks b
             JOIN districts d ON b.district_id = d.id
@@ -651,8 +642,8 @@ class LocationController
                 sba.internal_note,
                 u_act.name as activated_by_name,
                 u_deact.name as deactivated_by_name,
-                (SELECT COUNT(*) FROM users u WHERE u.role = 'OPERATOR' AND u.status = 'ACTIVE' AND u.assigned_district_id = d.id AND u.assigned_block_id = b.id) as operator_count,
-                (SELECT COUNT(*) FROM users u WHERE u.role = 'OPERATOR' AND u.status = 'ACTIVE' AND u.assigned_district_id = d.id AND u.assigned_block_id = b.id AND u.mobile IS NOT NULL AND u.mobile != '' AND LENGTH(u.mobile) >= 10) as whatsapp_operator_count,
+                (SELECT COUNT(DISTINCT oba.operator_user_id) FROM operator_block_assignments oba JOIN users u ON oba.operator_user_id = u.id WHERE oba.district_id = d.id AND oba.block_id = b.id AND oba.is_active = 1 AND u.status = 'ACTIVE' AND (u.role = 'OPERATOR' OR EXISTS (SELECT 1 FROM user_role_assignments ura WHERE ura.user_id = u.id AND ura.role_code = 'OPERATOR' AND ura.is_active = 1))) as operator_count,
+                (SELECT COUNT(DISTINCT oba.operator_user_id) FROM operator_block_assignments oba JOIN users u ON oba.operator_user_id = u.id WHERE oba.district_id = d.id AND oba.block_id = b.id AND oba.is_active = 1 AND u.status = 'ACTIVE' AND (u.role = 'OPERATOR' OR EXISTS (SELECT 1 FROM user_role_assignments ura WHERE ura.user_id = u.id AND ura.role_code = 'OPERATOR' AND ura.is_active = 1)) AND u.mobile IS NOT NULL AND u.mobile != '' AND LENGTH(u.mobile) >= 10) as whatsapp_operator_count,
                 (SELECT COUNT(*) FROM service_rate_rules srr WHERE srr.data_type_id = {$serviceId} AND srr.block_id = b.id AND srr.is_active = 1 AND srr.fee_amount > 0 AND srr.application_code IS NOT NULL AND srr.application_code != '' AND srr.application_code != '*') as block_rate_count,
                 (SELECT fee_amount FROM service_rate_rules srr WHERE srr.data_type_id = {$serviceId} AND srr.block_id = b.id AND srr.is_active = 1 AND srr.fee_amount > 0 AND srr.application_code IS NOT NULL AND srr.application_code != '' AND srr.application_code != '*' ORDER BY fee_amount ASC LIMIT 1) as sample_block_fee,
                 (
@@ -741,7 +732,13 @@ class LocationController
         }
 
         // Available operators for quick activation assignment
-        $operators = $db->query("SELECT id, name, mobile, assigned_district_id, assigned_block_id FROM users WHERE role = 'OPERATOR' AND status = 'ACTIVE' ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+        $operators = $db->query("
+            SELECT DISTINCT u.id, u.name, u.mobile
+            FROM users u
+            WHERE u.status = 'ACTIVE'
+              AND (u.role = 'OPERATOR' OR EXISTS (SELECT 1 FROM user_role_assignments ura WHERE ura.user_id = u.id AND ura.role_code = 'OPERATOR' AND ura.is_active = 1))
+            ORDER BY u.name ASC
+        ")->fetchAll(PDO::FETCH_ASSOC);
 
         require dirname(__DIR__) . '/Views/admin/service_availability.php';
     }
@@ -858,7 +855,14 @@ class LocationController
         $previousStatus = $currentRecord ? $currentRecord['status'] : 'INACTIVE';
 
         // Check readiness info (operator count & rate rule count)
-        $opCount = (int)$db->query("SELECT COUNT(*) FROM users WHERE role = 'OPERATOR' AND status = 'ACTIVE' AND assigned_district_id = {$districtId} AND assigned_block_id = {$blockId}")->fetchColumn();
+        $opCount = (int)$db->query("
+            SELECT COUNT(DISTINCT oba.operator_user_id)
+            FROM operator_block_assignments oba
+            JOIN users u ON oba.operator_user_id = u.id
+            WHERE oba.district_id = {$districtId} AND oba.block_id = {$blockId} AND oba.is_active = 1
+              AND u.status = 'ACTIVE'
+              AND (u.role = 'OPERATOR' OR EXISTS (SELECT 1 FROM user_role_assignments ura WHERE ura.user_id = u.id AND ura.role_code = 'OPERATOR' AND ura.is_active = 1))
+        ")->fetchColumn();
         $rateCount = (int)$db->query("SELECT COUNT(*) FROM service_rate_rules WHERE data_type_id = {$dataTypeId} AND block_id = {$blockId} AND is_active = 1")->fetchColumn();
 
         $warnings = [];
@@ -1092,10 +1096,22 @@ class LocationController
 
         // 5. Assign Block Operator if selected
         if ($operatorId > 0) {
-            $opChk = $db->prepare("SELECT id, name FROM users WHERE id = ? AND role = 'OPERATOR' LIMIT 1");
+            $opChk = $db->prepare("
+                SELECT id, name FROM users
+                WHERE id = ? AND (role = 'OPERATOR' OR EXISTS (SELECT 1 FROM user_role_assignments ura WHERE ura.user_id = users.id AND ura.role_code = 'OPERATOR' AND ura.is_active = 1))
+                LIMIT 1
+            ");
             $opChk->execute([$operatorId]);
             $opUser = $opChk->fetch(PDO::FETCH_ASSOC);
             if ($opUser) {
+                // Ensure record in operator_block_assignments
+                $db->prepare("
+                    INSERT INTO operator_block_assignments (operator_user_id, district_id, block_id, is_active, assigned_by, created_at, updated_at)
+                    VALUES (?, ?, ?, 1, ?, NOW(), NOW())
+                    ON DUPLICATE KEY UPDATE is_active = 1, updated_at = NOW()
+                ")->execute([$operatorId, $districtId, $blockId, AuthService::id()]);
+
+                // Maintain legacy columns for backward compatibility display
                 $db->prepare("UPDATE users SET assigned_district_id = ?, assigned_block_id = ?, updated_at = NOW() WHERE id = ?")
                    ->execute([$districtId, $blockId, $operatorId]);
                 AuditService::log('OPERATOR_LOCATION_ASSIGNED', 'USER', (string)$operatorId, [

@@ -9,6 +9,7 @@ use App\Services\AuditService;
 use App\Services\NotificationService;
 use App\Services\WhatsAppNotificationService;
 use App\Services\CommissionService;
+use App\Services\AuthService;
 use Exception;
 use PDO;
 
@@ -47,9 +48,30 @@ trait ApplicationStatusTrait
 
             $currentStatus = $app['status'];
 
-            // 1. Role-based authorization: USER cannot update status
+            // Strict Self-Processing Protection: A user must never process their own submitted application
+            if ((int)$app['user_id'] === $actorUserId && $actorRole !== 'ADMIN') {
+                AuditService::log('SELF_ASSIGNMENT_PREVENTED', 'APPLICATION', (string)$appId, [
+                    'user_id' => $actorUserId,
+                    'reason' => 'Attempted to process/update status on self-submitted application'
+                ], $actorUserId);
+                throw new Exception("You cannot process an application submitted by your own retailer account.");
+            }
+
+            // Resolve effective role for dual-role user (USER account acting as OPERATOR)
+            if ($actorRole === 'USER' && AuthService::canAccessOperatorMode($actorUserId)) {
+                $actorRole = 'OPERATOR';
+            }
+
+            // 1. Role-based authorization: Pure USER cannot update status
             if ($actorRole === 'USER' || !in_array($actorRole, ['ADMIN', 'OPERATOR', 'DISTRIBUTOR'], true)) {
                 throw new Exception("Unauthorized: Role '{$actorRole}' is not permitted to update application status.");
+            }
+
+            // Operator scoping check
+            if ($actorRole === 'OPERATOR') {
+                if (!AuthService::canOperatorAccessApplication($actorUserId, $appId)) {
+                    throw new Exception("Unauthorized: You do not have permission to process applications outside your assigned District and Block or not assigned to you.");
+                }
             }
 
             // 2. Validate target status existence

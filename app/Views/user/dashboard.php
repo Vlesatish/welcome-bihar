@@ -1,3 +1,19 @@
+<?php
+$applications = isset($applications) && is_array($applications) ? $applications : [];
+$recentApplications = isset($recentApplications) && is_array($recentApplications) ? $recentApplications : $applications;
+$cntPending = $cntPending ?? 0;
+$cntInProcess = $cntInProcess ?? 0;
+$cntApproved = $cntApproved ?? 0;
+$cntRejected = $cntRejected ?? 0;
+$cntAll = $cntAll ?? 0;
+$totalRecords = $totalRecords ?? count($applications);
+$totalPages = $totalPages ?? 1;
+$page = $page ?? 1;
+$currentTab = $currentTab ?? 'ALL';
+$districts = isset($districts) && is_array($districts) ? $districts : [];
+$blocks = isset($blocks) && is_array($blocks) ? $blocks : [];
+$appCodes = isset($appCodes) && is_array($appCodes) ? $appCodes : [];
+?>
 <?php require dirname(__DIR__) . '/layouts/header.php'; ?>
 <?php require dirname(__DIR__) . '/admin/dashboard_styles.php'; ?>
 

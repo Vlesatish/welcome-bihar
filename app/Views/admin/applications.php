@@ -124,6 +124,17 @@
             <a href="/applications/export-csv<?= !empty($_SERVER['QUERY_STRING']) ? '?' . e($_SERVER['QUERY_STRING']) : '' ?>" class="btn btn-sm btn-outline-success rounded-pill px-3 py-1 fw-semibold shadow-2xs">
                 <i class="bi bi-file-earmark-spreadsheet me-1"></i> Export CSV
             </a>
+            <?php if (!$isOperator && (($assignmentStatus ?? '') === 'UNASSIGNED' || !empty($_GET['assignment_status']))): ?>
+                <form method="POST" action="/admin/applications/route-unassigned" class="d-inline" onsubmit="return confirm('Route all pending unassigned applications to matching active operators now?');">
+                    <?= csrf_field() ?>
+                    <input type="hidden" name="district_id" value="<?= e($districtId) ?>">
+                    <input type="hidden" name="block_id" value="<?= e($blockId) ?>">
+                    <input type="hidden" name="redirect_to" value="<?= e($_SERVER['REQUEST_URI'] ?? '/admin/applications?assignment_status=UNASSIGNED') ?>">
+                    <button type="submit" class="btn btn-sm btn-primary rounded-pill px-3 py-1 fw-semibold shadow-2xs">
+                        <i class="bi bi-person-check me-1"></i> Reassign Matching Applications
+                    </button>
+                </form>
+            <?php endif; ?>
             <?php if ($currentUser['role'] === 'ADMIN'): ?>
                 <a href="/admin/data-types" class="btn btn-sm btn-outline-primary rounded-pill px-3 py-1 fw-semibold shadow-2xs">
                     <i class="bi bi-sliders me-1"></i> Service Settings
@@ -135,11 +146,13 @@
     <!-- TABS: ALL | PENDING | IN PROCESS | APPROVED | REJECTED -->
     <div class="d-flex gap-2 flex-wrap mb-3">
         <?php
-            function buildTabUrl($tab) {
-                $q = $_GET;
-                $q['status'] = $tab;
-                $q['page'] = 1;
-                return '/admin/applications?' . http_build_query($q);
+            if (!function_exists('buildTabUrl')) {
+                function buildTabUrl($tab) {
+                    $q = $_GET;
+                    $q['status'] = $tab;
+                    $q['page'] = 1;
+                    return '/admin/applications?' . http_build_query($q);
+                }
             }
         ?>
         <a href="<?= buildTabUrl('ALL') ?>" class="tab-pill tab-pill-all <?= $currentTab === 'ALL' ? 'active' : '' ?>">
@@ -166,44 +179,27 @@
 
             <div class="filters-grid pt-1">
                 <!-- 1. District -->
-                <?php if ($isOperator): ?>
-                    <div class="filter-col filter-col-district">
-                        <label class="filter-label">District</label>
-                        <div class="input-group input-group-sm">
-                            <span class="input-group-text bg-light text-secondary filter-ctrl" style="border-radius: 6px 0 0 6px !important;"><i class="bi bi-lock-fill"></i></span>
-                            <input type="text" class="form-control bg-light filter-ctrl fw-semibold text-secondary" style="border-radius: 0 6px 6px 0 !important;" value="<?= e($districts[0]['name'] ?? 'Assigned') ?>" readonly disabled title="Locked to assigned district">
-                        </div>
-                    </div>
+                <div class="filter-col filter-col-district">
+                    <label for="filter_district_id" class="filter-label">District</label>
+                    <select name="district_id" id="filter_district_id" class="form-select form-select-sm filter-select filter-ctrl w-100">
+                        <option value=""><?= $isOperator ? 'All Assigned Districts' : 'All Districts' ?></option>
+                        <?php foreach ($districts as $d): ?>
+                            <option value="<?= $d['id'] ?>" <?= $districtId === (int)$d['id'] ? 'selected' : '' ?>><?= e($d['name']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
 
-                    <!-- 2. Block -->
-                    <div class="filter-col filter-col-block">
-                        <label class="filter-label">Block</label>
-                        <div class="input-group input-group-sm">
-                            <span class="input-group-text bg-light text-secondary filter-ctrl" style="border-radius: 6px 0 0 6px !important;"><i class="bi bi-lock-fill"></i></span>
-                            <input type="text" class="form-control bg-light filter-ctrl fw-semibold text-secondary" style="border-radius: 0 6px 6px 0 !important;" value="<?= e($blocks[0]['name'] ?? 'Assigned') ?>" readonly disabled title="Locked to assigned block">
-                        </div>
-                    </div>
-                <?php else: ?>
-                    <div class="filter-col filter-col-district">
-                        <label for="filter_district_id" class="filter-label">District</label>
-                        <select name="district_id" id="filter_district_id" class="form-select form-select-sm filter-select filter-ctrl w-100">
-                            <option value="">All Districts</option>
-                            <?php foreach ($districts as $d): ?>
-                                <option value="<?= $d['id'] ?>" <?= $districtId === (int)$d['id'] ? 'selected' : '' ?>><?= e($d['name']) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-
-                    <div class="filter-col filter-col-block">
-                        <label for="filter_block_id" class="filter-label">Block</label>
-                        <select name="block_id" id="filter_block_id" class="form-select form-select-sm filter-select filter-ctrl w-100" <?= empty($blocks) && empty($districtId) ? 'disabled' : '' ?>>
-                            <option value="">All Blocks</option>
-                            <?php foreach ($blocks as $b): ?>
-                                <option value="<?= $b['id'] ?>" <?= $blockId === (int)$b['id'] ? 'selected' : '' ?>><?= e($b['name']) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                <?php endif; ?>
+                <!-- 2. Block -->
+                <div class="filter-col filter-col-block">
+                    <label for="filter_block_id" class="filter-label">Block</label>
+                    <select name="block_id" id="filter_block_id" class="form-select form-select-sm filter-select filter-ctrl w-100" <?= empty($blocks) && empty($districtId) && !$isOperator ? 'disabled' : '' ?>>
+                        <option value=""><?= $isOperator ? 'All Assigned Blocks' : 'All Blocks' ?></option>
+                        <?php foreach ($blocks as $b): ?>
+                            <?php $bId = (int)($b['id'] ?? $b['block_id']); ?>
+                            <option value="<?= $bId ?>" <?= $blockId === $bId ? 'selected' : '' ?>><?= e($b['name'] ?? $b['block_name']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
 
                 <!-- 3. Status Filter (if Tab is ALL) -->
                 <div class="filter-col filter-col-status">

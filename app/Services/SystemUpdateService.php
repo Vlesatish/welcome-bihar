@@ -91,6 +91,18 @@ class SystemUpdateService
                 $db->exec("ALTER TABLE `applications` ADD COLUMN `is_commission_paid` TINYINT(1) NOT NULL DEFAULT 0");
             }
 
+            // Ensure required composite indexes for operator filtering and staff routing
+            try {
+                $existingIndexes = $db->query("SHOW INDEX FROM `applications`")->fetchAll(PDO::FETCH_ASSOC);
+                $indexNames = array_column($existingIndexes, 'Key_name');
+                if (!in_array('idx_dist_blk_app_code', $indexNames, true)) {
+                    $db->exec("ALTER TABLE `applications` ADD INDEX `idx_dist_blk_app_code` (`district_id`, `block_id`, `application_code`)");
+                }
+                if (!in_array('idx_status_assigned_op', $indexNames, true)) {
+                    $db->exec("ALTER TABLE `applications` ADD INDEX `idx_status_assigned_op` (`status`, `assigned_operator_id`)");
+                }
+            } catch (\Throwable $e) {}
+
             // 2. Users table checks
             $userCols = $db->query("SHOW COLUMNS FROM `users`")->fetchAll(PDO::FETCH_COLUMN);
             $userCols = array_map('strtolower', $userCols);
@@ -226,6 +238,67 @@ class SystemUpdateService
                       `sent_at` datetime DEFAULT NULL,
                       PRIMARY KEY (`id`),
                       UNIQUE KEY `event_key` (`event_key`)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+                ");
+            }
+
+            // user_role_assignments (Dual Role System)
+            if (!in_array('user_role_assignments', $tables, true)) {
+                $db->exec("
+                    CREATE TABLE IF NOT EXISTS `user_role_assignments` (
+                        `id` INT AUTO_INCREMENT PRIMARY KEY,
+                        `user_id` INT NOT NULL,
+                        `role_code` ENUM('USER', 'OPERATOR') NOT NULL,
+                        `is_active` TINYINT(1) NOT NULL DEFAULT 1,
+                        `granted_by` INT NULL,
+                        `granted_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        `revoked_by` INT NULL,
+                        `revoked_at` DATETIME NULL,
+                        `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        UNIQUE KEY `uk_user_role` (`user_id`, `role_code`),
+                        INDEX `idx_role_active` (`role_code`, `is_active`),
+                        INDEX `idx_ura_user_id` (`user_id`),
+                        CONSTRAINT `fk_ura_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+                        CONSTRAINT `fk_ura_granted_by` FOREIGN KEY (`granted_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+                        CONSTRAINT `fk_ura_revoked_by` FOREIGN KEY (`revoked_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+                ");
+
+                // Idempotently backfill existing users and operators
+                try {
+                    $db->exec("
+                        INSERT INTO `user_role_assignments` (`user_id`, `role_code`, `is_active`, `granted_by`, `granted_at`, `created_at`, `updated_at`)
+                        SELECT u.id, 'USER', 1, NULL, NOW(), NOW(), NOW()
+                        FROM `users` u
+                        WHERE u.role IN ('USER', 'DISTRIBUTOR')
+                        ON DUPLICATE KEY UPDATE `is_active` = `user_role_assignments`.`is_active`;
+                    ");
+                    $db->exec("
+                        INSERT INTO `user_role_assignments` (`user_id`, `role_code`, `is_active`, `granted_by`, `granted_at`, `created_at`, `updated_at`)
+                        SELECT u.id, 'OPERATOR', IF(u.status = 'ACTIVE', 1, 0), NULL, NOW(), NOW(), NOW()
+                        FROM `users` u
+                        WHERE u.role = 'OPERATOR'
+                        ON DUPLICATE KEY UPDATE `is_active` = `user_role_assignments`.`is_active`;
+                    ");
+                } catch (\Throwable $e) {}
+            }
+
+            // operator_block_assignments
+            if (!in_array('operator_block_assignments', $tables, true)) {
+                $db->exec("
+                    CREATE TABLE IF NOT EXISTS `operator_block_assignments` (
+                        `id` INT AUTO_INCREMENT PRIMARY KEY,
+                        `operator_user_id` INT NOT NULL,
+                        `district_id` INT NOT NULL,
+                        `block_id` INT NOT NULL,
+                        `is_active` TINYINT(1) NOT NULL DEFAULT 1,
+                        `assigned_by` INT NULL,
+                        `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        UNIQUE KEY `uq_op_dist_blk` (`operator_user_id`, `district_id`, `block_id`),
+                        INDEX `idx_op_block_user` (`operator_user_id`, `is_active`),
+                        INDEX `idx_op_block_dist_blk` (`district_id`, `block_id`, `is_active`)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
                 ");
             }

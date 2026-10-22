@@ -52,7 +52,7 @@ class AuthService
 
     public static function isOperator(): bool
     {
-        return self::role() === 'OPERATOR';
+        return self::role() === 'OPERATOR' || (self::canAccessOperatorMode() && self::activePortalMode() === 'OPERATOR');
     }
 
     public static function isDistributor(): bool
@@ -62,7 +62,293 @@ class AuthService
 
     public static function isUser(): bool
     {
-        return self::role() === 'USER';
+        return self::role() === 'USER' || (self::canAccessRetailerMode() && self::activePortalMode() === 'RETAILER');
+    }
+
+    /**
+     * Check if a user has a specific role (checks both users table and user_role_assignments)
+     */
+    public static function hasRole(int $userId, string $role): bool
+    {
+        $role = strtoupper(trim($role));
+        $db = Database::getConnection();
+
+        $stmt = $db->prepare("SELECT role, status FROM users WHERE id = ? LIMIT 1");
+        $stmt->execute([$userId]);
+        $u = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$u || $u['status'] !== 'ACTIVE') {
+            return false;
+        }
+
+        if ($u['role'] === $role) {
+            return true;
+        }
+
+        if (in_array($role, ['USER', 'OPERATOR'], true)) {
+            $chk = $db->prepare("
+                SELECT 1 FROM user_role_assignments
+                WHERE user_id = ? AND role_code = ? AND is_active = 1
+                LIMIT 1
+            ");
+            $chk->execute([$userId, $role]);
+            if ($chk->fetchColumn()) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Check if the authenticated user has a specific capability
+     */
+    public static function hasCapability(string $capability): bool
+    {
+        $cap = strtolower(trim($capability));
+        return match ($cap) {
+            'submit_applications' => self::canSubmitApplications(),
+            'process_applications' => self::canProcessApplications(),
+            'access_operator_mode' => self::canAccessOperatorMode(),
+            'access_retailer_mode' => self::canAccessRetailerMode(),
+            'admin_manage' => self::isAdmin(),
+            default => false,
+        };
+    }
+
+    /**
+     * Whether the current account can submit applications in the current mode
+     */
+    public static function canSubmitApplications(): bool
+    {
+        if (!self::check()) return false;
+        $role = self::role();
+        if ($role === 'ADMIN' || $role === 'DISTRIBUTOR') return true;
+
+        $mode = self::activePortalMode();
+        return ($mode === 'RETAILER') && self::canAccessRetailerMode();
+    }
+
+    /**
+     * Whether the current account can process applications in the current mode
+     */
+    public static function canProcessApplications(): bool
+    {
+        if (!self::check()) return false;
+        $role = self::role();
+        if ($role === 'ADMIN') return true;
+
+        $mode = self::activePortalMode();
+        return ($mode === 'OPERATOR') && self::canAccessOperatorMode();
+    }
+
+    /**
+     * Whether the user has operator access privileges
+     */
+    public static function canAccessOperatorMode(?int $userId = null): bool
+    {
+        $uid = $userId ?? self::id();
+        if (!$uid) return false;
+
+        $db = Database::getConnection();
+        $stmt = $db->prepare("SELECT role, status, assigned_district_id, assigned_block_id FROM users WHERE id = ? LIMIT 1");
+        $stmt->execute([$uid]);
+        $u = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$u || $u['status'] !== 'ACTIVE') {
+            return false;
+        }
+
+        if ($u['role'] === 'ADMIN') {
+            return true;
+        }
+
+        // Check if operator has active assignments in operator_block_assignments or legacy users table
+        $hasBlock = false;
+        try {
+            $chk = $db->prepare("SELECT 1 FROM operator_block_assignments WHERE operator_user_id = ? AND is_active = 1 LIMIT 1");
+            $chk->execute([$uid]);
+            if ($chk->fetchColumn()) {
+                $hasBlock = true;
+            }
+        } catch (\Throwable $e) {}
+
+        if (!$hasBlock) {
+            return false;
+        }
+
+        if ($u['role'] === 'OPERATOR') {
+            $ura = $db->prepare("SELECT is_active FROM user_role_assignments WHERE user_id = ? AND role_code = 'OPERATOR' LIMIT 1");
+            $ura->execute([$uid]);
+            $val = $ura->fetchColumn();
+            if ($val !== false && (int)$val === 0) {
+                return false;
+            }
+            return true;
+        }
+
+        // For other roles (e.g. USER), check active assignment in user_role_assignments
+        $ura = $db->prepare("SELECT is_active FROM user_role_assignments WHERE user_id = ? AND role_code = 'OPERATOR' AND is_active = 1 LIMIT 1");
+        $ura->execute([$uid]);
+        return (bool)$ura->fetchColumn();
+    }
+
+    public static function isStaffOrAdmin(): bool
+    {
+        return self::isAdmin() || self::isOperator();
+    }
+
+    public static function hasDualRole(?int $userId = null): bool
+    {
+        return self::isDualRole($userId);
+    }
+
+    public static function hasRoleCapability(int $userId, string $role): bool
+    {
+        return self::hasRole($userId, $role);
+    }
+
+    public static function switchRoleMode(string $mode): bool
+    {
+        return self::setActivePortalMode($mode);
+    }
+
+    public static function getActiveRoleMode(): string
+    {
+        return self::activePortalMode();
+    }
+
+    /**
+     * Whether the user has retailer access privileges
+     */
+    public static function canAccessRetailerMode(?int $userId = null): bool
+    {
+        $uid = $userId ?? self::id();
+        if (!$uid) return false;
+
+        $db = Database::getConnection();
+        $stmt = $db->prepare("SELECT role, status FROM users WHERE id = ? LIMIT 1");
+        $stmt->execute([$uid]);
+        $u = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$u || $u['status'] !== 'ACTIVE') {
+            return false;
+        }
+
+        if (in_array($u['role'], ['USER', 'DISTRIBUTOR'], true)) {
+            return true;
+        }
+
+        $ura = $db->prepare("SELECT is_active FROM user_role_assignments WHERE user_id = ? AND role_code = 'USER' AND is_active = 1 LIMIT 1");
+        $ura->execute([$uid]);
+        return (bool)$ura->fetchColumn();
+    }
+
+    /**
+     * Whether user has both Retailer and Operator capability
+     */
+    public static function isDualRole(?int $userId = null): bool
+    {
+        $uid = $userId ?? self::id();
+        if (!$uid) return false;
+
+        return self::canAccessRetailerMode($uid) && self::canAccessOperatorMode($uid);
+    }
+
+    /**
+     * Get active portal mode: 'RETAILER', 'OPERATOR', 'ADMIN', 'DISTRIBUTOR'
+     */
+    public static function activePortalMode(): string
+    {
+        $role = self::role();
+        if ($role === 'ADMIN') return 'ADMIN';
+        if ($role === 'DISTRIBUTOR') return 'DISTRIBUTOR';
+
+        $uid = self::id();
+        if (!$uid) return 'GUEST';
+
+        $hasOperator = self::canAccessOperatorMode($uid);
+        $hasRetailer = self::canAccessRetailerMode($uid);
+
+        if ($hasOperator && $hasRetailer) {
+            $sessMode = strtoupper((string)($_SESSION['active_portal_mode'] ?? ''));
+            if ($sessMode === 'OPERATOR') {
+                return 'OPERATOR';
+            }
+            return 'RETAILER';
+        }
+
+        if ($hasOperator) {
+            return 'OPERATOR';
+        }
+
+        return 'RETAILER';
+    }
+
+    /**
+     * Set active portal mode for dual-role user
+     */
+    public static function setActivePortalMode(string $mode): bool
+    {
+        $uid = self::id();
+        if (!$uid) return false;
+
+        $mode = strtoupper(trim($mode));
+        if ($mode === 'OPERATOR') {
+            if (!self::canAccessOperatorMode($uid)) {
+                return false;
+            }
+            $_SESSION['active_portal_mode'] = 'OPERATOR';
+            return true;
+        }
+
+        if ($mode === 'RETAILER') {
+            if (!self::canAccessRetailerMode($uid)) {
+                return false;
+            }
+            $_SESSION['active_portal_mode'] = 'RETAILER';
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Validate active portal mode server-side on every request
+     */
+    public static function validateAndSyncActiveMode(): string
+    {
+        $uid = self::id();
+        if (!$uid) return 'RETAILER';
+
+        $role = self::role();
+        if ($role === 'ADMIN' || $role === 'DISTRIBUTOR') return (string)$role;
+
+        $hasOperator = self::canAccessOperatorMode($uid);
+        $hasRetailer = self::canAccessRetailerMode($uid);
+
+        if ($hasOperator && $hasRetailer) {
+            $mode = strtoupper((string)($_SESSION['active_portal_mode'] ?? ''));
+            if (!in_array($mode, ['RETAILER', 'OPERATOR'], true)) {
+                $mode = 'RETAILER';
+                $_SESSION['active_portal_mode'] = 'RETAILER';
+            }
+            return $mode;
+        } elseif ($hasOperator) {
+            $_SESSION['active_portal_mode'] = 'OPERATOR';
+            return 'OPERATOR';
+        } else {
+            // Operator access was revoked or never present
+            if (isset($_SESSION['active_portal_mode']) && $_SESSION['active_portal_mode'] === 'OPERATOR') {
+                $_SESSION['active_portal_mode'] = 'RETAILER';
+                $_SESSION['flash_error'] = 'Operator access has been suspended or revoked. Switched to Retailer Mode.';
+                $currUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '';
+                if (str_starts_with($currUri, '/admin/') && !headers_sent()) {
+                    header('Location: /user/dashboard');
+                    exit;
+                }
+            } else {
+                $_SESSION['active_portal_mode'] = 'RETAILER';
+            }
+            return 'RETAILER';
+        }
     }
 
     public static function requireRole($roles): void
@@ -75,7 +361,13 @@ class AuthService
         $userRole = self::role();
         $allowed = is_array($roles) ? $roles : [$roles];
 
-        if (!in_array($userRole, $allowed, true)) {
+        // Also permit dual-role users acting in allowed mode
+        $activeMode = self::activePortalMode();
+        $isPermitted = in_array($userRole, $allowed, true)
+            || (in_array('OPERATOR', $allowed, true) && $activeMode === 'OPERATOR' && self::canAccessOperatorMode())
+            || (in_array('USER', $allowed, true) && $activeMode === 'RETAILER' && self::canAccessRetailerMode());
+
+        if (!$isPermitted) {
             if (str_starts_with($_SERVER['REQUEST_URI'] ?? '', '/api/')) {
                 http_response_code(403);
                 header('Content-Type: application/json; charset=utf-8');
@@ -83,7 +375,11 @@ class AuthService
                 exit;
             }
             $_SESSION['flash_error'] = 'Access denied: You do not have permission to access this resource.';
-            header('Location: /admin/dashboard');
+            if (self::canAccessRetailerMode()) {
+                header('Location: /user/dashboard');
+            } else {
+                header('Location: /admin/dashboard');
+            }
             exit;
         }
     }
@@ -91,43 +387,111 @@ class AuthService
     /**
      * Reusable authorization policy for block operators
      * Verifies:
-     * - User exists
-     * - Role is OPERATOR
-     * - Status is ACTIVE
+     * - User exists and status is ACTIVE
+     * - Has active operator capability
      * - District and Block assignments are present
      * - Application District equals operator District
      * - Application Block equals operator Block
+     * - Strict self-processing protection: application creator CANNOT be assigned or process
+     * - Application Code matches configured operator assignment (if codes configured)
      */
-    public static function canOperatorAccessApplication(int $operatorId, int $applicationId): bool
+    /**
+     * Get all active block and code assignments for an operator
+     */
+    public static function getOperatorAssignments(int $operatorId): array
     {
         $db = Database::getConnection();
-        $stmt = $db->prepare("SELECT id, role, status, assigned_district_id, assigned_block_id FROM users WHERE id = ? LIMIT 1");
-        $stmt->execute([$operatorId]);
-        $op = $stmt->fetch(PDO::FETCH_ASSOC);
+        $blocks = self::getOperatorAssignedBlocks($operatorId);
+        $result = [];
+        foreach ($blocks as $blk) {
+            $distId = (int)$blk['district_id'];
+            $blkId = (int)$blk['block_id'];
+            $cStmt = $db->prepare("
+                SELECT application_code 
+                FROM operator_application_code_assignments
+                WHERE operator_user_id = ? AND district_id = ? AND block_id = ? AND is_active = 1
+                ORDER BY application_code ASC
+            ");
+            $cStmt->execute([$operatorId, $distId, $blkId]);
+            $codes = $cStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+            $result[] = [
+                'operator_user_id' => $operatorId,
+                'district_id' => $distId,
+                'district_name' => $blk['district_name'],
+                'block_id' => $blkId,
+                'block_name' => $blk['block_name'],
+                'application_codes' => $codes,
+            ];
+        }
+        return $result;
+    }
 
-        if (!$op || $op['role'] !== 'OPERATOR' || $op['status'] !== 'ACTIVE') {
+    /**
+     * Get all distinct assigned districts for an operator
+     */
+    public static function getOperatorAssignedDistricts(int $operatorId): array
+    {
+        $db = Database::getConnection();
+        $blocks = self::getOperatorAssignedBlocks($operatorId);
+        $distIds = array_values(array_unique(array_filter(array_column($blocks, 'district_id'))));
+        if (empty($distIds)) {
+            return [];
+        }
+        $in = implode(',', array_map('intval', $distIds));
+        return $db->query("SELECT id, name, name_hi, state FROM districts WHERE id IN ({$in}) ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+
+    /**
+     * Get active block assignments for an operator, optionally filtered by district_id
+     */
+    public static function getOperatorAssignedBlocks(int $operatorId, ?int $districtId = null): array
+    {
+        $db = Database::getConnection();
+        $params = [$operatorId];
+        $distSql = "";
+        if ($districtId !== null && $districtId > 0) {
+            $distSql = " AND oba.district_id = ?";
+            $params[] = $districtId;
+        }
+
+        $stmt = $db->prepare("
+            SELECT oba.district_id, oba.block_id as id, oba.block_id, oba.is_active,
+                   d.name as district_name, b.name as block_name, b.name as name
+            FROM operator_block_assignments oba
+            JOIN districts d ON oba.district_id = d.id
+            JOIN blocks b ON oba.block_id = b.id
+            WHERE oba.operator_user_id = ? AND oba.is_active = 1 {$distSql}
+            ORDER BY d.name ASC, b.name ASC
+        ");
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        return $rows ?: [];
+    }
+
+    public static function isOperatorAssignedToBlock(int $operatorId, int $districtId, int $blockId): bool
+    {
+        if ($operatorId <= 0 || $districtId <= 0 || $blockId <= 0) {
             return false;
         }
 
-        if (empty($op['assigned_district_id']) || empty($op['assigned_block_id'])) {
+        $db = Database::getConnection();
+        $chk = $db->prepare("
+            SELECT 1 FROM operator_block_assignments
+            WHERE operator_user_id = ? AND district_id = ? AND block_id = ? AND is_active = 1
+            LIMIT 1
+        ");
+        $chk->execute([$operatorId, $districtId, $blockId]);
+        return (bool)$chk->fetchColumn();
+    }
+
+    public static function canOperatorAccessApplication(int $operatorId, int $applicationId): bool
+    {
+        if ($operatorId <= 0 || $applicationId <= 0) {
             return false;
         }
 
-        $appStmt = $db->prepare("SELECT id, district_id, block_id, assigned_operator_id FROM applications WHERE id = ? LIMIT 1");
-        $appStmt->execute([$applicationId]);
-        $app = $appStmt->fetch(PDO::FETCH_ASSOC);
-
-        if (!$app) {
-            return false;
-        }
-
-        // Strict application routing security: operator must be the designated assigned staff
-        if ((int)($app['assigned_operator_id'] ?? 0) !== $operatorId) {
-            return false;
-        }
-
-        return ((int)$app['district_id'] === (int)$op['assigned_district_id']) &&
-               ((int)$app['block_id'] === (int)$op['assigned_block_id']);
+        return OperatorAuthorizationService::canAccessApplication($operatorId, $applicationId);
     }
 
     /**
@@ -146,9 +510,6 @@ class AuthService
         if ($u['role'] === 'ADMIN') {
             return true;
         }
-        if ($u['role'] === 'OPERATOR') {
-            return self::canOperatorAccessApplication($userId, $applicationId);
-        }
 
         $appStmt = $db->prepare("SELECT id, user_id, distributor_id FROM applications WHERE id = ? LIMIT 1");
         $appStmt->execute([$applicationId]);
@@ -157,13 +518,18 @@ class AuthService
             return false;
         }
 
-        if ($u['role'] === 'USER') {
-            return (int)$app['user_id'] === $userId;
+        // Check if viewing in Staff mode
+        $activeMode = self::activePortalMode();
+        if ($activeMode === 'OPERATOR' && self::canAccessOperatorMode($userId)) {
+            return self::canOperatorAccessApplication($userId, $applicationId);
         }
+
         if ($u['role'] === 'DISTRIBUTOR') {
             return (int)$app['distributor_id'] === $userId;
         }
-        return false;
+
+        // Retailer mode: user views only their own submitted applications
+        return (int)$app['user_id'] === $userId;
     }
 
     public static function attempt(string $identifier, string $password): array
@@ -246,6 +612,22 @@ class AuthService
         $_SESSION['user_mobile'] = $user['mobile'];
         $_SESSION['lang'] = 'en';
 
+        // Initialize active portal mode: dual-role defaults to last valid selected mode, or OPERATOR if assigned work exists, otherwise RETAILER
+        if (self::canAccessOperatorMode((int)$user['id']) && self::canAccessRetailerMode((int)$user['id'])) {
+            $lastMode = strtoupper((string)($_SESSION['active_portal_mode'] ?? ''));
+            if ($lastMode === 'OPERATOR' || $lastMode === 'RETAILER') {
+                $_SESSION['active_portal_mode'] = $lastMode;
+            } elseif ($user['role'] === 'OPERATOR' || !empty(self::getOperatorAssignedBlocks((int)$user['id']))) {
+                $_SESSION['active_portal_mode'] = 'OPERATOR';
+            } else {
+                $_SESSION['active_portal_mode'] = 'RETAILER';
+            }
+        } elseif (self::canAccessOperatorMode((int)$user['id'])) {
+            $_SESSION['active_portal_mode'] = 'OPERATOR';
+        } else {
+            $_SESSION['active_portal_mode'] = 'RETAILER';
+        }
+
         // Update last login
         $db->prepare("UPDATE users SET last_login_at = NOW() WHERE id = ?")->execute([$user['id']]);
 
@@ -295,16 +677,20 @@ class AuthService
         $u = $stmt->fetch();
         if (!$u) return false;
 
-        // USER/RETAILER, ADMIN, and DISTRIBUTOR can access any active location for applications
-        if (in_array($u['role'], ['USER', 'ADMIN', 'DISTRIBUTOR'], true) || (int)$u['assigned_all_districts'] === 1) {
+        // Retailer mode, ADMIN, and DISTRIBUTOR can access any active location for applications
+        if (self::canAccessRetailerMode($userId) || in_array($u['role'], ['USER', 'ADMIN', 'DISTRIBUTOR'], true) || (int)($u['assigned_all_districts'] ?? 0) === 1) {
             return true;
         }
 
-        // OPERATOR is strictly limited to assigned district and block
-        if ($u['role'] === 'OPERATOR') {
-            if (empty($u['assigned_district_id'])) return false;
-            if ((int)$u['assigned_district_id'] !== $districtId) return false;
-            if ($blockId !== null && (int)$u['assigned_block_id'] !== $blockId) return false;
+        // Dedicated OPERATOR or staff checking location access
+        if ($blockId !== null) {
+            return self::isOperatorAssignedToBlock($userId, $districtId, $blockId);
+        }
+
+        // District level check
+        $distChk = $db->prepare("SELECT 1 FROM operator_block_assignments WHERE operator_user_id = ? AND district_id = ? AND is_active = 1 LIMIT 1");
+        $distChk->execute([$userId, $districtId]);
+        if ($distChk->fetchColumn()) {
             return true;
         }
 

@@ -6,6 +6,18 @@ use App\Services\NotificationService;
 
 $currentUser = AuthService::user();
 $currentRole = $currentUser['role'] ?? null;
+$isDualRole = $currentUser ? AuthService::isDualRole((int)$currentUser['id']) : false;
+$activeMode = AuthService::activePortalMode();
+$profileBadge = 'Retailer';
+if ($currentRole === 'ADMIN') {
+    $profileBadge = 'Admin';
+} elseif ($currentRole === 'DISTRIBUTOR') {
+    $profileBadge = 'Distributor';
+} elseif ($isDualRole) {
+    $profileBadge = 'Dual Access';
+} elseif ($currentRole === 'OPERATOR') {
+    $profileBadge = 'Staff';
+}
 $walletBalance = $currentUser ? WalletService::getBalance($currentUser['id']) : 0.00;
 $unreadNotifsCount = $currentUser ? NotificationService::getUnreadCount($currentUser['id']) : 0;
 $recentNotifs = $currentUser ? NotificationService::getRecent($currentUser['id'], 5) : [];
@@ -48,7 +60,7 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                 <span class="fs-5">Welcome Bihar</span>
             </a>
             <div class="d-flex align-items-center gap-2">
-                <span class="badge bg-primary role-badge"><?= e($currentRole) ?></span>
+                <span class="badge bg-primary role-badge"><?= e($profileBadge) ?></span>
                 <button class="btn btn-sm btn-link text-white-50 d-lg-none p-0 fs-5" id="wbSidebarClose" type="button">
                     <i class="bi bi-x-lg"></i>
                 </button>
@@ -148,14 +160,36 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                     <span>Wallet Passbook</span>
                 </a>
 
-            <?php elseif ($currentRole === 'OPERATOR'): ?>
+            <?php elseif ($currentRole === 'OPERATOR' || ($isDualRole && $activeMode === 'OPERATOR')): ?>
+                <!-- Staff Mode Sidebar -->
+                <div class="px-3 py-1 mb-2">
+                    <span class="badge bg-warning text-dark py-1 px-2" style="font-size: 0.72rem; font-weight: 700;">
+                        <i class="bi bi-briefcase me-1"></i> Staff Mode
+                    </span>
+                </div>
                 <a class="wb-sidebar-link <?= $currentUri === '/admin/dashboard' ? 'active' : '' ?>" href="/admin/dashboard">
                     <i class="bi bi-speedometer2"></i>
-                    <span>Dashboard</span>
+                    <span>Staff Dashboard</span>
                 </a>
-                <a class="wb-sidebar-link <?= (strpos($currentUri, '/admin/applications') === 0 || $currentUri === '/applications') ? 'active' : '' ?>" href="/admin/applications">
+                <a class="wb-sidebar-link <?= ($currentUri === '/admin/applications' && empty($_GET['status'])) ? 'active' : '' ?>" href="/admin/applications">
                     <i class="bi bi-folder2-open"></i>
-                    <span>Applications</span>
+                    <span>Assigned Applications</span>
+                </a>
+                <a class="wb-sidebar-link <?= ($currentUri === '/admin/applications' && ($_GET['status'] ?? '') === 'PENDING') ? 'active' : '' ?>" href="/admin/applications?status=PENDING">
+                    <i class="bi bi-hourglass-split text-warning"></i>
+                    <span>Pending</span>
+                </a>
+                <a class="wb-sidebar-link <?= ($currentUri === '/admin/applications' && ($_GET['status'] ?? '') === 'IN_PROCESS') ? 'active' : '' ?>" href="/admin/applications?status=IN_PROCESS">
+                    <i class="bi bi-gear-wide-connected text-info"></i>
+                    <span>In Process</span>
+                </a>
+                <a class="wb-sidebar-link <?= ($currentUri === '/admin/applications' && ($_GET['status'] ?? '') === 'APPROVED') ? 'active' : '' ?>" href="/admin/applications?status=APPROVED">
+                    <i class="bi bi-check-circle-fill text-success"></i>
+                    <span>Approved</span>
+                </a>
+                <a class="wb-sidebar-link <?= ($currentUri === '/admin/applications' && ($_GET['status'] ?? '') === 'REJECTED') ? 'active' : '' ?>" href="/admin/applications?status=REJECTED">
+                    <i class="bi bi-x-circle-fill text-danger"></i>
+                    <span>Rejected</span>
                 </a>
                 <a class="wb-sidebar-link <?= $currentUri === '/user/profile' ? 'active' : '' ?>" href="/user/profile">
                     <i class="bi bi-person-gear"></i>
@@ -167,6 +201,14 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                 </a>
 
             <?php elseif ($currentRole === 'USER'): ?>
+                <!-- Retailer Mode Sidebar -->
+                <?php if ($isDualRole): ?>
+                    <div class="px-3 py-1 mb-2">
+                        <span class="badge bg-primary text-white py-1 px-2" style="font-size: 0.72rem; font-weight: 700;">
+                            <i class="bi bi-shop me-1"></i> Retailer Mode
+                        </span>
+                    </div>
+                <?php endif; ?>
                 <a class="wb-sidebar-link <?= $currentUri === '/user/dashboard' ? 'active' : '' ?>" href="/user/dashboard">
                     <i class="bi bi-speedometer2"></i>
                     <span>Dashboard</span>
@@ -186,6 +228,14 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                 <a class="wb-sidebar-link <?= $currentUri === '/wallet/topup' ? 'active' : '' ?>" href="/wallet/topup">
                     <i class="bi bi-qr-code-scan"></i>
                     <span>Top Up Wallet</span>
+                </a>
+                <a class="wb-sidebar-link <?= $currentUri === '/user/profile' ? 'active' : '' ?>" href="/user/profile">
+                    <i class="bi bi-person-gear"></i>
+                    <span>Profile</span>
+                </a>
+                <a class="wb-sidebar-link text-danger" href="/logout">
+                    <i class="bi bi-box-arrow-right"></i>
+                    <span>Logout</span>
                 </a>
             <?php endif; ?>
         </nav>
@@ -220,13 +270,26 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
 
             <div class="d-flex align-items-center gap-2">
 
+                <?php if ($isDualRole): ?>
+                    <!-- Header Mode Switcher (POST + CSRF) -->
+                    <form method="POST" action="/switch-mode" class="d-inline-flex align-items-center bg-white border rounded-pill p-1 shadow-2xs me-1">
+                        <?= csrf_field() ?>
+                        <button type="submit" name="mode" value="RETAILER" class="btn btn-sm rounded-pill px-2.5 py-0.5 border-0 fw-semibold <?= $activeMode === 'RETAILER' ? 'bg-primary text-white shadow-xs' : 'text-secondary bg-transparent' ?>" style="font-size: 0.76rem;" title="Switch to Retailer Mode">
+                            <i class="bi bi-shop me-1"></i> Retailer Mode
+                        </button>
+                        <button type="submit" name="mode" value="OPERATOR" class="btn btn-sm rounded-pill px-2.5 py-0.5 border-0 fw-semibold <?= $activeMode === 'OPERATOR' ? 'bg-warning text-dark shadow-xs' : 'text-secondary bg-transparent' ?>" style="font-size: 0.76rem;" title="Switch to Operator Mode">
+                            <i class="bi bi-briefcase me-1"></i> Operator Mode
+                        </button>
+                    </form>
+                <?php endif; ?>
+
                 <!-- Wallet Balance Badge -->
                 <a href="/wallet/passbook" class="btn btn-sm btn-light border d-flex align-items-center gap-1 rounded-pill px-3 py-1 text-decoration-none shadow-sm" title="Wallet Balance">
                     <i class="bi bi-wallet2 text-success fw-bold"></i>
                     <span class="fw-bold text-dark">₹<?= number_format($walletBalance, 2) ?></span>
                 </a>
 
-                <?php if ($currentRole === 'USER'): ?>
+                <?php if ($currentRole === 'USER' && $activeMode === 'RETAILER'): ?>
                     <a href="/wallet/topup" class="btn btn-sm btn-warning rounded-pill px-2 py-1 fw-semibold d-none d-sm-inline-flex align-items-center gap-1">
                         <i class="bi bi-plus-lg"></i>
                         <span>Top-Up</span>
@@ -270,15 +333,16 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
 
                 <!-- User Dropdown Menu -->
                 <div class="dropdown ms-1">
-                    <button class="btn btn-sm btn-light border rounded-pill px-3 py-1 fw-semibold d-flex align-items-center gap-2 shadow-sm" type="button" data-bs-toggle="dropdown">
+                    <button class="btn btn-sm btn-light border rounded-pill px-2.5 py-1 fw-semibold d-flex align-items-center gap-1.5 shadow-sm" type="button" data-bs-toggle="dropdown">
                         <i class="bi bi-person-fill text-primary"></i>
                         <span class="d-none d-sm-inline"><?= e($currentUser['name']) ?></span>
+                        <span class="badge bg-secondary rounded-pill py-0.5 px-1.5" style="font-size: 0.65rem; font-weight: 600;"><?= e($profileBadge) ?></span>
                         <i class="bi bi-chevron-down small text-muted"></i>
                     </button>
                     <ul class="dropdown-menu dropdown-menu-end shadow border-0 mt-2">
-                        <li><h6 class="dropdown-header"><?= e($currentUser['email']) ?></h6></li>
+                        <li><h6 class="dropdown-header"><?= e($currentUser['email'] ?: $currentUser['mobile']) ?></h6></li>
                         <li><a class="dropdown-item" href="/user/profile"><i class="bi bi-person me-2"></i> <?= e(__('profile')) ?></a></li>
-                        <?php if ($currentRole === 'USER'): ?>
+                        <?php if ($currentRole === 'USER' && $activeMode === 'RETAILER'): ?>
                             <li><a class="dropdown-item" href="/wallet/topup"><i class="bi bi-qr-code me-2"></i> <?= e(__('topup_wallet')) ?></a></li>
                         <?php endif; ?>
                         <li><hr class="dropdown-divider"></li>

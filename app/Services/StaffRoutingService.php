@@ -29,7 +29,8 @@ class StaffRoutingService
         int $districtId,
         int $blockId,
         string $applicationCode,
-        ?PDO $db = null
+        ?PDO $db = null,
+        ?int $excludeUserId = null
     ): ?int {
         if ($db === null) {
             $db = Database::getConnection();
@@ -54,6 +55,13 @@ class StaffRoutingService
             ? "(SELECT COALESCE(MAX(aah.id), 0) FROM application_assignment_history aah WHERE aah.new_operator_id = u.id)"
             : "0";
 
+        $excludeClause = "";
+        $params = [$districtId, $blockId, $code, $districtId, $blockId];
+        if ($excludeUserId !== null && $excludeUserId > 0) {
+            $excludeClause = " AND u.id != ? ";
+            $params[] = $excludeUserId;
+        }
+
         $stmt = $db->prepare("
             SELECT oaca.operator_user_id,
                    (
@@ -69,18 +77,55 @@ class StaffRoutingService
               AND oaca.block_id = ?
               AND oaca.application_code = ?
               AND oaca.is_active = 1
-              AND u.role = 'OPERATOR'
+              AND (
+                  u.role = 'OPERATOR'
+                  OR EXISTS (
+                      SELECT 1 FROM user_role_assignments ura
+                      WHERE ura.user_id = u.id AND ura.role_code = 'OPERATOR' AND ura.is_active = 1
+                  )
+              )
               AND u.status = 'ACTIVE'
-              AND u.assigned_district_id = ?
-              AND u.assigned_block_id = ?
+              AND EXISTS (
+                  SELECT 1 FROM operator_block_assignments oba
+                  WHERE oba.operator_user_id = u.id AND oba.district_id = ? AND oba.block_id = ? AND oba.is_active = 1
+              )
+              {$excludeClause}
             ORDER BY active_load ASC, last_assignment_seq ASC, u.id ASC
             LIMIT 1
             FOR UPDATE
         ");
-        $stmt->execute([$districtId, $blockId, $code, $districtId, $blockId]);
+        $stmt->execute($params);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$row || empty($row['operator_user_id'])) {
+            // Self-processing check: if the creator was excluded and would otherwise have matched
+            if ($excludeUserId !== null && $excludeUserId > 0) {
+                try {
+                    $chkCreator = $db->prepare("
+                        SELECT 1 FROM operator_application_code_assignments oaca
+                        JOIN users u ON oaca.operator_user_id = u.id
+                        WHERE oaca.district_id = ? AND oaca.block_id = ? AND oaca.application_code = ? AND oaca.is_active = 1
+                          AND (u.role = 'OPERATOR' OR EXISTS (SELECT 1 FROM user_role_assignments ura WHERE ura.user_id = u.id AND ura.role_code = 'OPERATOR' AND ura.is_active = 1))
+                          AND u.status = 'ACTIVE'
+                          AND EXISTS (
+                              SELECT 1 FROM operator_block_assignments oba
+                              WHERE oba.operator_user_id = u.id AND oba.district_id = ? AND oba.block_id = ? AND oba.is_active = 1
+                          )
+                          AND u.id = ?
+                        LIMIT 1
+                    ");
+                    $chkCreator->execute([$districtId, $blockId, $code, $districtId, $blockId, $excludeUserId]);
+                    if ($chkCreator->fetchColumn()) {
+                        AuditService::log('SELF_ASSIGNMENT_PREVENTED', 'USER', (string)$excludeUserId, [
+                            'user_id' => $excludeUserId,
+                            'district_id' => $districtId,
+                            'block_id' => $blockId,
+                            'application_code' => $code,
+                            'reason' => 'Submitting retailer excluded from staff assignment; application remains unassigned'
+                        ], $excludeUserId);
+                    }
+                } catch (\Throwable $e) {}
+            }
             return null;
         }
 
@@ -229,18 +274,46 @@ class StaffRoutingService
         $opStmt->execute([$newOperatorId]);
         $op = $opStmt->fetch(PDO::FETCH_ASSOC);
 
-        if (!$op || $op['role'] !== 'OPERATOR' || $op['status'] !== 'ACTIVE') {
+        if (!$op || !AuthService::hasRole($newOperatorId, 'OPERATOR') || $op['status'] !== 'ACTIVE') {
             throw new Exception("Selected staff account is not an active Block Operator.");
         }
 
-        if ((int)$op['assigned_district_id'] !== (int)$app['district_id'] || (int)$op['assigned_block_id'] !== (int)$app['block_id']) {
+        // Self-processing protection: application creator must never be manually assigned to their own application
+        if ((int)$app['user_id'] === $newOperatorId) {
+            AuditService::log('SELF_ASSIGNMENT_PREVENTED', 'APPLICATION', (string)$applicationId, [
+                'user_id' => $newOperatorId,
+                'admin_id' => $adminUserId,
+                'reason' => 'Admin manual assignment to application creator rejected'
+            ], $adminUserId, 'ADMIN');
+            throw new Exception("You cannot process an application submitted by your own retailer account.");
+        }
+
+        if (!AuthService::isOperatorAssignedToBlock($newOperatorId, (int)$app['district_id'], (int)$app['block_id'])) {
             throw new Exception("Operator belongs to another District/Block. Applications can only be assigned to operators belonging to the same District and Block.");
         }
 
-        $appCode = !empty($app['application_code']) ? $app['application_code'] : 'WB-PASS';
+        $appCode = !empty($app['application_code']) ? strtoupper(trim((string)$app['application_code'])) : 'WB-PASS';
+
+        // Verify operator has active permission for application code
+        $codeCheck = $db->prepare("
+            SELECT COUNT(*) FROM operator_application_code_assignments
+            WHERE operator_user_id = ? AND district_id = ? AND block_id = ? AND application_code = ? AND is_active = 1
+        ");
+        $codeCheck->execute([$newOperatorId, (int)$app['district_id'], (int)$app['block_id'], $appCode]);
+        $hasCode = (int)$codeCheck->fetchColumn();
+        if ($hasCode === 0) {
+            $anyCodes = (int)$db->query("SELECT COUNT(*) FROM operator_application_code_assignments WHERE operator_user_id = {$newOperatorId} AND district_id = " . (int)$app['district_id'] . " AND block_id = " . (int)$app['block_id'] . " AND is_active = 1")->fetchColumn();
+            if ($anyCodes > 0) {
+                throw new Exception("Operator '{$op['name']}' is not assigned to handle application code '{$appCode}'.");
+            }
+        }
 
         // Perform atomic update
-        $db->beginTransaction();
+        $managedTx = false;
+        if (!$db->inTransaction()) {
+            $db->beginTransaction();
+            $managedTx = true;
+        }
         try {
             self::recordAssignment(
                 $applicationId,
@@ -268,7 +341,6 @@ class StaffRoutingService
                     $waData[$afv['field_name']] = $afv['field_value'];
                 }
             }
-
             WhatsAppNotificationService::queueSubmissionNotification(
                 $applicationId,
                 (int)$app['district_id'],
@@ -278,7 +350,9 @@ class StaffRoutingService
                 $newOperatorId // Send only to this specific operator
             );
 
-            $db->commit();
+            if ($managedTx && $db->inTransaction()) {
+                $db->commit();
+            }
 
             // Try instant WhatsApp dispatch
             try {
@@ -292,11 +366,106 @@ class StaffRoutingService
                 'message' => "Application {$app['app_ref']} successfully reassigned to {$op['name']}."
             ];
         } catch (Exception $e) {
-            if ($db->inTransaction()) {
+            if ($managedTx && $db->inTransaction()) {
                 $db->rollBack();
             }
             throw $e;
         }
+    }
+
+    /**
+     * Route pending unassigned applications to matching active operators
+     */
+    public static function routeUnassignedApplications(?int $districtId = null, ?int $blockId = null, int $adminUserId = 1): array
+    {
+        $db = Database::getConnection();
+        $sql = "
+            SELECT a.id, a.app_ref, a.user_id, a.data_type_id, a.application_code, 
+                   a.district_id, a.block_id, a.applicant_name, a.applicant_mobile, a.applicant_identifier
+            FROM applications a
+            WHERE a.assigned_operator_id IS NULL AND a.status = 'PENDING'
+        ";
+        $params = [];
+        if ($districtId !== null && $districtId > 0) {
+            $sql .= " AND a.district_id = ?";
+            $params[] = $districtId;
+        }
+        if ($blockId !== null && $blockId > 0) {
+            $sql .= " AND a.block_id = ?";
+            $params[] = $blockId;
+        }
+        $sql .= " ORDER BY a.id ASC";
+
+        $stmt = $db->prepare($sql);
+        $stmt->execute($params);
+        $apps = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $routedCount = 0;
+        $byOperator = [];
+
+        foreach ($apps as $app) {
+            $dist = (int)$app['district_id'];
+            $blk = (int)$app['block_id'];
+            $code = (string)($app['application_code'] ?: 'BICCO');
+            $applicantId = (int)$app['user_id'];
+
+            $opId = self::resolveOperatorForApplication($dist, $blk, $code, $db, $applicantId);
+            if ($opId !== null && $opId > 0) {
+                $upd = $db->prepare("
+                    UPDATE applications 
+                    SET assigned_operator_id = ?, assigned_at = NOW(), assignment_method = 'BATCH_ROUTE', updated_at = NOW()
+                    WHERE id = ? AND assigned_operator_id IS NULL
+                ");
+                $upd->execute([$opId, (int)$app['id']]);
+
+                if ($upd->rowCount() > 0) {
+                    self::recordAssignment(
+                        (int)$app['id'],
+                        $opId,
+                        $code,
+                        'AUTO',
+                        $adminUserId,
+                        'Bulk routing of unassigned applications to matching operator',
+                        $db
+                    );
+
+                    // Queue WhatsApp notification to assigned operator
+                    try {
+                        $distName = (string)$db->query("SELECT name FROM districts WHERE id = {$dist}")->fetchColumn();
+                        $blkName = (string)$db->query("SELECT name FROM blocks WHERE id = {$blk}")->fetchColumn();
+                        $waData = [
+                            'id' => (int)$app['id'],
+                            'app_ref' => $app['app_ref'],
+                            'application_code' => $code,
+                            'application_number' => $app['applicant_identifier'] ?: $app['app_ref'],
+                            'district_id' => $dist,
+                            'block_id' => $blk,
+                            'district_name' => $distName,
+                            'block_name' => $blkName,
+                            'applicant_name' => $app['applicant_name'],
+                            'applicant_mobile' => $app['applicant_mobile']
+                        ];
+                        WhatsAppNotificationService::queueSubmissionNotification(
+                            (int)$app['id'],
+                            $dist,
+                            $blk,
+                            $waData,
+                            $db,
+                            $opId
+                        );
+                    } catch (\Throwable $we) {}
+
+                    $routedCount++;
+                    $byOperator[$opId] = ($byOperator[$opId] ?? 0) + 1;
+                }
+            }
+        }
+
+        return [
+            'total_candidates' => count($apps),
+            'routed_count' => $routedCount,
+            'by_operator' => $byOperator
+        ];
     }
 
     /**
@@ -307,11 +476,11 @@ class StaffRoutingService
         int $districtId,
         int $blockId,
         array $applicationCodes,
-        int $assignedByUserId
+        int $assignedByUserId = 1
     ): array {
         $db = Database::getConnection();
 
-        // 1. Validate operator
+        // 1. Validate operator (can be dedicated OPERATOR or dual-role user with OPERATOR capability)
         $opStmt = $db->prepare("
             SELECT id, name, mobile, role, status, assigned_district_id, assigned_block_id
             FROM users
@@ -320,14 +489,15 @@ class StaffRoutingService
         $opStmt->execute([$operatorUserId]);
         $op = $opStmt->fetch(PDO::FETCH_ASSOC);
 
-        if (!$op || $op['role'] !== 'OPERATOR') {
+        if (!$op || !AuthService::hasRole($operatorUserId, 'OPERATOR')) {
             throw new Exception("Target user is not a Block Operator.");
         }
         if ($op['status'] !== 'ACTIVE') {
             throw new Exception("Operator '{$op['name']}' is currently INACTIVE. Only active operators can be assigned application codes.");
         }
-        if ((int)$op['assigned_district_id'] !== $districtId || (int)$op['assigned_block_id'] !== $blockId) {
-            throw new Exception("Operator '{$op['name']}' belongs to another District and Block. Assignment must match operator's configured jurisdiction.");
+        if (!AuthService::isOperatorAssignedToBlock($operatorUserId, $districtId, $blockId)) {
+            // Automatically ensure block assignment exists for this operator
+            self::saveOperatorBlockAssignment($operatorUserId, $districtId, $blockId, true, $assignedByUserId);
         }
 
         // 2. Validate block service availability is LIVE
@@ -337,31 +507,22 @@ class StaffRoutingService
         ");
         $sbaStmt->execute([$districtId, $blockId]);
         $sbaStatus = $sbaStmt->fetchColumn();
-        if ($sbaStatus !== 'LIVE') {
-            throw new Exception("Block service is currently disabled or not LIVE for this block. Enable block service before assigning routing.");
-        }
 
-        // 3. Fetch active block rates for this block
-        $rateCodesStmt = $db->prepare("
-            SELECT DISTINCT UPPER(TRIM(application_code)) as code
-            FROM service_rate_rules
-            WHERE district_id = ? AND block_id = ? AND is_active = 1 AND fee_amount > 0 AND application_code IS NOT NULL AND application_code != ''
-        ");
-        $rateCodesStmt->execute([$districtId, $blockId]);
-        $activeBlockRateCodes = $rateCodesStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
-
+        // 3. Clean and sanitize selected application codes
         $cleanCodes = [];
         foreach ($applicationCodes as $rawCode) {
             $c = strtoupper(trim((string)$rawCode));
-            if ($c === '') continue;
-            if (!in_array($c, $activeBlockRateCodes, true)) {
-                throw new Exception("Application code '{$c}' has no active rate configured for this block. Codes must come from active block-specific rate records.");
+            if ($c !== '' && preg_match('/^[A-Z0-9_\-]+$/', $c)) {
+                $cleanCodes[] = $c;
             }
-            $cleanCodes[] = $c;
         }
         $cleanCodes = array_values(array_unique($cleanCodes));
 
-        $db->beginTransaction();
+        $managedTx = false;
+        if (!$db->inTransaction()) {
+            $db->beginTransaction();
+            $managedTx = true;
+        }
         try {
             // First deactivate all existing codes for this operator in this block
             $deact = $db->prepare("
@@ -403,7 +564,9 @@ class StaffRoutingService
                 'assigned_codes' => $cleanCodes
             ], $assignedByUserId);
 
-            $db->commit();
+            if ($managedTx && $db->inTransaction()) {
+                $db->commit();
+            }
 
             return [
                 'success' => true,
@@ -411,7 +574,7 @@ class StaffRoutingService
                 'assigned_codes' => $cleanCodes
             ];
         } catch (Exception $e) {
-            if ($db->inTransaction()) {
+            if ($managedTx && $db->inTransaction()) {
                 $db->rollBack();
             }
             throw $e;
@@ -430,7 +593,7 @@ class StaffRoutingService
         $stmt = $db->prepare("
             SELECT DISTINCT UPPER(TRIM(application_code)) as code, fee_amount
             FROM service_rate_rules
-            WHERE district_id = ? AND block_id = ? AND is_active = 1 AND fee_amount > 0 AND application_code IS NOT NULL AND application_code != ''
+            WHERE district_id = ? AND block_id = ? AND is_active = 1 AND (fee_amount >= 0 OR fee_amount IS NULL) AND application_code IS NOT NULL AND application_code != ''
             ORDER BY application_code ASC
         ");
         $stmt->execute([$districtId, $blockId]);
@@ -438,7 +601,36 @@ class StaffRoutingService
     }
 
     /**
-     * Get active block operators for a district and block
+     * Get active block operators for a district and block (supports dual-role)
+     */
+    public static function saveOperatorBlockAssignment(
+        int $operatorUserId,
+        int $districtId,
+        int $blockId,
+        bool|int $isActive = true,
+        int $assignedByUserId = 1,
+        ?\PDO $db = null
+    ): void {
+        if ($db === null) {
+            $db = Database::getConnection();
+        }
+        $activeVal = ((bool)$isActive) ? 1 : 0;
+        $ins = $db->prepare("
+            INSERT INTO operator_block_assignments (operator_user_id, district_id, block_id, is_active, assigned_by, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, NOW(), NOW())
+            ON DUPLICATE KEY UPDATE is_active = VALUES(is_active), assigned_by = VALUES(assigned_by), updated_at = NOW()
+        ");
+        $ins->execute([
+            $operatorUserId,
+            $districtId,
+            $blockId,
+            $activeVal,
+            $assignedByUserId
+        ]);
+    }
+
+    /**
+     * Get active block operators for a district and block (supports multi-block dual-role)
      */
     public static function getOperatorsForBlock(int $districtId, int $blockId, ?PDO $db = null): array
     {
@@ -447,10 +639,20 @@ class StaffRoutingService
         }
 
         $stmt = $db->prepare("
-            SELECT id, name, mobile, email, status
-            FROM users
-            WHERE role = 'OPERATOR' AND assigned_district_id = ? AND assigned_block_id = ?
-            ORDER BY status = 'ACTIVE' DESC, name ASC
+            SELECT DISTINCT u.id, u.name, u.mobile, u.email, u.status
+            FROM users u
+            WHERE (
+                u.role = 'OPERATOR'
+                OR EXISTS (
+                    SELECT 1 FROM user_role_assignments ura
+                    WHERE ura.user_id = u.id AND ura.role_code = 'OPERATOR' AND ura.is_active = 1
+                )
+            )
+            AND EXISTS (
+                SELECT 1 FROM operator_block_assignments oba
+                WHERE oba.operator_user_id = u.id AND oba.district_id = ? AND oba.block_id = ? AND oba.is_active = 1
+            )
+            ORDER BY u.status = 'ACTIVE' DESC, u.name ASC
         ");
         $stmt->execute([$districtId, $blockId]);
         return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -474,10 +676,18 @@ class StaffRoutingService
               AND oaca.block_id = ?
               AND oaca.application_code = ?
               AND oaca.is_active = 1
-              AND u.role = 'OPERATOR'
+              AND (
+                  u.role = 'OPERATOR'
+                  OR EXISTS (
+                      SELECT 1 FROM user_role_assignments ura
+                      WHERE ura.user_id = u.id AND ura.role_code = 'OPERATOR' AND ura.is_active = 1
+                  )
+              )
               AND u.status = 'ACTIVE'
-              AND u.assigned_district_id = ?
-              AND u.assigned_block_id = ?
+              AND EXISTS (
+                  SELECT 1 FROM operator_block_assignments oba
+                  WHERE oba.operator_user_id = u.id AND oba.district_id = ? AND oba.block_id = ? AND oba.is_active = 1
+              )
         ");
         $stmt->execute([$districtId, $blockId, $code, $districtId, $blockId]);
         return ((int)$stmt->fetchColumn() > 0);

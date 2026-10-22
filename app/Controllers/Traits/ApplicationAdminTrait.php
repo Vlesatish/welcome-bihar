@@ -6,6 +6,7 @@ namespace App\Controllers\Traits;
 use App\Config\Database;
 use App\Services\AuthService;
 use App\Services\StaffRoutingService;
+use App\Services\OperatorAuthorizationService;
 use PDO;
 
 trait ApplicationAdminTrait
@@ -13,9 +14,17 @@ trait ApplicationAdminTrait
 public function adminApplications(): void
     {
         $user = AuthService::user();
-        $role = $user['role'];
-        if (!in_array($role, ['ADMIN', 'OPERATOR'], true)) {
-            $_SESSION['flash_error'] = 'Administrative privilege required.';
+        if (!$user) {
+            header('Location: /login');
+            exit;
+        }
+
+        $isAdmin = AuthService::isAdmin();
+        $hasOperatorAccess = AuthService::canAccessOperatorMode((int)$user['id']);
+        $activeMode = AuthService::activePortalMode();
+
+        if (!$isAdmin && (!$hasOperatorAccess || $activeMode !== 'OPERATOR')) {
+            $_SESSION['flash_error'] = 'Administrative privilege or Staff Mode required.';
             header('Location: /user/dashboard');
             exit;
         }
@@ -27,10 +36,12 @@ public function adminApplications(): void
         $dataTypeId = $dtRow ? (int)$dtRow['id'] : 4;
 
         // Operator scoping & zero access check
-        $isOperator = ($role === 'OPERATOR');
+        $isOperator = !$isAdmin;
+        $userId = (int)$user['id'];
         $operatorDistrictId = $isOperator ? (int)($user['assigned_district_id'] ?? 0) : 0;
         $operatorBlockId = $isOperator ? (int)($user['assigned_block_id'] ?? 0) : 0;
-        $unassignedOperator = ($isOperator && ($operatorDistrictId <= 0 || $operatorBlockId <= 0));
+        $assignedBlocks = $isOperator ? AuthService::getOperatorAssignedBlocks($userId) : [];
+        $unassignedOperator = ($isOperator && empty($assignedBlocks));
 
         if ($unassignedOperator) {
             $tabCounts = ['ALL' => 0, 'PENDING' => 0, 'IN_PROCESS' => 0, 'APPROVED' => 0, 'REJECTED' => 0];
@@ -53,17 +64,27 @@ public function adminApplications(): void
             return;
         }
 
-        $userId = (int)$user['id'];
-        $opWhere = $isOperator ? " AND assigned_operator_id = {$userId} AND district_id = {$operatorDistrictId} AND block_id = {$operatorBlockId}" : "";
+        $assignedCodes = [];
+        if ($isOperator) {
+            $assignedCodes = $db->query("
+                SELECT DISTINCT application_code
+                FROM operator_application_code_assignments
+                WHERE operator_user_id = {$userId} AND is_active = 1
+            ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+        }
 
-        // 2. Tab counts for All | Pending | In Process | Approved | Rejected
-        $tabCounts = [
-            'ALL' => (int)$db->query("SELECT COUNT(*) FROM applications WHERE data_type_id = {$dataTypeId} {$opWhere}")->fetchColumn(),
-            'PENDING' => (int)$db->query("SELECT COUNT(*) FROM applications WHERE data_type_id = {$dataTypeId} AND status = 'PENDING' {$opWhere}")->fetchColumn(),
-            'IN_PROCESS' => (int)$db->query("SELECT COUNT(*) FROM applications WHERE data_type_id = {$dataTypeId} AND status IN ('IN_PROCESS', 'UNDER_REVIEW') {$opWhere}")->fetchColumn(),
-            'APPROVED' => (int)$db->query("SELECT COUNT(*) FROM applications WHERE data_type_id = {$dataTypeId} AND status IN ('APPROVED', 'COMPLETED') {$opWhere}")->fetchColumn(),
-            'REJECTED' => (int)$db->query("SELECT COUNT(*) FROM applications WHERE data_type_id = {$dataTypeId} AND status = 'REJECTED' {$opWhere}")->fetchColumn(),
-        ];
+        // 2. Tab counts for All | Pending | In Process | Approved | Rejected (Unified Single-Query)
+        if ($isOperator) {
+            $tabCounts = OperatorAuthorizationService::getStatusCounts($userId);
+        } else {
+            $tabCounts = [
+                'ALL' => (int)$db->query("SELECT COUNT(*) FROM applications WHERE data_type_id = {$dataTypeId}")->fetchColumn(),
+                'PENDING' => (int)$db->query("SELECT COUNT(*) FROM applications WHERE data_type_id = {$dataTypeId} AND status = 'PENDING'")->fetchColumn(),
+                'IN_PROCESS' => (int)$db->query("SELECT COUNT(*) FROM applications WHERE data_type_id = {$dataTypeId} AND status IN ('IN_PROCESS', 'UNDER_REVIEW')")->fetchColumn(),
+                'APPROVED' => (int)$db->query("SELECT COUNT(*) FROM applications WHERE data_type_id = {$dataTypeId} AND status IN ('APPROVED', 'COMPLETED')")->fetchColumn(),
+                'REJECTED' => (int)$db->query("SELECT COUNT(*) FROM applications WHERE data_type_id = {$dataTypeId} AND status = 'REJECTED'")->fetchColumn(),
+            ];
+        }
 
         // 3. Query filters
         $currentTab = strtoupper(trim($_GET['status'] ?? 'ALL'));
@@ -79,84 +100,30 @@ public function adminApplications(): void
         $retailerId = !empty($_GET['retailer_id']) ? (int)$_GET['retailer_id'] : 0;
         $assignmentStatus = strtoupper(trim($_GET['assignment_status'] ?? 'ALL'));
 
-        if ($isOperator) {
-            $districtId = $operatorDistrictId;
-            $blockId = $operatorBlockId;
+        $filterParams = [
+            'status' => $currentTab,
+            'search' => $search,
+            'date_filter' => $dateFilter,
+            'district_id' => $districtId,
+            'block_id' => $blockId,
+            'app_code' => $appCode,
+            'retailer_id' => $retailerId,
+            'assignment_status' => $assignmentStatus,
+        ];
+
+        $filterBuild = OperatorAuthorizationService::buildFilterConditions($filterParams, $isOperator, $userId, 'a');
+        $where = $filterBuild['where'];
+        $params = $filterBuild['params'];
+
+        if (!$isOperator) {
+            $where[] = "a.data_type_id = :admin_data_type_id";
+            $params[':admin_data_type_id'] = $dataTypeId;
         }
 
-        $where = ["a.data_type_id = :data_type_id"];
-        $params = [':data_type_id' => $dataTypeId];
-
-        if ($isOperator) {
-            $where[] = "a.assigned_operator_id = :op_id AND a.district_id = :op_dist AND a.block_id = :op_block";
-            $params[':op_id'] = $userId;
-            $params[':op_dist'] = $operatorDistrictId;
-            $params[':op_block'] = $operatorBlockId;
-        }
-
-        if ($currentTab === 'PENDING') {
-            $where[] = "a.status = 'PENDING'";
-        } elseif ($currentTab === 'IN_PROCESS') {
-            $where[] = "a.status IN ('IN_PROCESS', 'UNDER_REVIEW')";
-        } elseif ($currentTab === 'APPROVED') {
-            $where[] = "a.status IN ('APPROVED', 'COMPLETED')";
-        } elseif ($currentTab === 'REJECTED') {
-            $where[] = "a.status = 'REJECTED'";
-        }
-
-        if (!empty($search)) {
-            $where[] = "(a.applicant_identifier LIKE :search_number OR a.applicant_name LIKE :search_name OR a.applicant_mobile LIKE :search_mobile OR a.app_ref LIKE :search_ref OR a.batch_ref LIKE :search_batch OR u.name LIKE :search_uname OR u.mobile LIKE :search_umobile)";
-            $searchVal = "%{$search}%";
-            $params[':search_number'] = $searchVal;
-            $params[':search_name'] = $searchVal;
-            $params[':search_mobile'] = $searchVal;
-            $params[':search_ref'] = $searchVal;
-            $params[':search_batch'] = $searchVal;
-            $params[':search_uname'] = $searchVal;
-            $params[':search_umobile'] = $searchVal;
-        }
-
-        if ($dateFilter === 'TODAY') {
-            $where[] = "DATE(a.created_at) = CURDATE()";
-        } elseif ($dateFilter === 'WEEK') {
-            $where[] = "a.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
-        } elseif ($dateFilter === 'MONTH') {
-            $where[] = "a.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
-        }
-
-        if (!$isOperator && $districtId > 0) {
-            $where[] = "a.district_id = :district_id";
-            $params[':district_id'] = $districtId;
-        }
-
-        if (!$isOperator && $blockId > 0) {
-            $where[] = "a.block_id = :block_id";
-            $params[':block_id'] = $blockId;
-        }
-
-        if (!empty($appCode)) {
-            $where[] = "(a.applicant_identifier LIKE :app_code_like OR EXISTS (SELECT 1 FROM application_field_values afv WHERE afv.application_id = a.id AND afv.field_name = 'application_code' AND UPPER(afv.field_value) = :app_code_exact))";
-            $params[':app_code_like'] = $appCode . '%';
-            $params[':app_code_exact'] = $appCode;
-        }
-
-        if ($retailerId > 0) {
-            $where[] = "a.user_id = :retailer_id";
-            $params[':retailer_id'] = $retailerId;
-        }
-
-        if (!$isOperator && in_array($assignmentStatus, ['ASSIGNED', 'UNASSIGNED'], true)) {
-            if ($assignmentStatus === 'UNASSIGNED') {
-                $where[] = "a.assigned_operator_id IS NULL";
-            } else {
-                $where[] = "a.assigned_operator_id IS NOT NULL";
-            }
-        }
-
-        $whereClause = implode(' AND ', $where);
+        $whereClause = !empty($where) ? implode(' AND ', $where) : '1=1';
 
         // Count total for pagination on complete authorized dataset
-        $countSql = "SELECT COUNT(*) FROM applications a JOIN users u ON a.user_id = u.id WHERE {$whereClause}";
+        $countSql = "SELECT COUNT(*) FROM applications a LEFT JOIN users u ON a.user_id = u.id WHERE {$whereClause}";
         $countStmt = $db->prepare($countSql);
         $countStmt->execute($params);
         $totalRecords = (int)$countStmt->fetchColumn();
@@ -167,7 +134,7 @@ public function adminApplications(): void
         if ($page > $totalPages) $page = $totalPages;
         $offset = ($page - 1) * $limit;
 
-        // Fetch applications
+        // Fetch applications with LEFT JOINs to prevent dropped rows
         $sql = "
             SELECT a.id, a.app_ref, a.batch_ref, a.applicant_name, a.applicant_mobile, a.applicant_identifier,
                    a.fee_debited, a.commission_credited, a.status, a.admin_remarks, a.remarks,
@@ -179,9 +146,9 @@ public function adminApplications(): void
                    b.name as block_name, b.name_hi as block_name_hi,
                    op.name as assigned_operator_name, op.mobile as assigned_operator_mobile
             FROM applications a
-            JOIN users u ON a.user_id = u.id
-            JOIN districts d ON a.district_id = d.id
-            JOIN blocks b ON a.block_id = b.id
+            LEFT JOIN users u ON a.user_id = u.id
+            LEFT JOIN districts d ON a.district_id = d.id
+            LEFT JOIN blocks b ON a.block_id = b.id
             LEFT JOIN users op ON a.assigned_operator_id = op.id
             WHERE {$whereClause}
             ORDER BY a.updated_at DESC, a.id DESC
@@ -242,8 +209,8 @@ public function adminApplications(): void
         unset($app);
 
         if ($isOperator) {
-            $districts = $db->query("SELECT id, name, name_hi, state FROM districts WHERE id = {$operatorDistrictId}")->fetchAll(PDO::FETCH_ASSOC);
-            $blocks = $db->query("SELECT id, name, name_hi FROM blocks WHERE id = {$operatorBlockId}")->fetchAll(PDO::FETCH_ASSOC);
+            $districts = AuthService::getOperatorAssignedDistricts($userId);
+            $blocks = AuthService::getOperatorAssignedBlocks($userId, $districtId > 0 ? $districtId : null);
         } else {
             $districts = $db->query("SELECT id, name, name_hi, state FROM districts WHERE is_active = 1 ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
             $blocks = [];
@@ -254,17 +221,25 @@ public function adminApplications(): void
             }
         }
 
-        $retailersQuery = "
-            SELECT DISTINCT u.id, u.name, u.mobile, u.center_name
-            FROM users u
-            JOIN applications a ON a.user_id = u.id
-            WHERE a.data_type_id = {$dataTypeId}
-        ";
         if ($isOperator) {
-            $retailersQuery .= " AND a.district_id = {$operatorDistrictId} AND a.block_id = {$operatorBlockId}";
+            $opCond = OperatorAuthorizationService::getAuthorizedSqlCondition($userId, 'a');
+            $retailersQuery = "
+                SELECT DISTINCT u.id, u.name, u.mobile, u.center_name
+                FROM users u
+                JOIN applications a ON a.user_id = u.id
+                WHERE {$opCond}
+                ORDER BY u.name ASC
+            ";
+        } else {
+            $retailersQuery = "
+                SELECT DISTINCT u.id, u.name, u.mobile, u.center_name
+                FROM users u
+                JOIN applications a ON a.user_id = u.id
+                WHERE a.data_type_id = {$dataTypeId}
+                ORDER BY u.name ASC
+            ";
         }
-        $retailersQuery .= " ORDER BY u.name ASC";
-        $retailers = $db->query($retailersQuery)->fetchAll(PDO::FETCH_ASSOC);
+        $retailers = $db->query($retailersQuery)->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         $appCodes = $this->getApplicationCodes();
 
@@ -309,4 +284,37 @@ public function reassignStaff(): void
         exit;
     }
 
+    public function routeUnassignedApplications(): void
+    {
+        $user = AuthService::user();
+        if (!$user || $user['role'] !== 'ADMIN') {
+            $_SESSION['flash_error'] = 'Access denied: Admin only.';
+            header('Location: /admin/applications');
+            exit;
+        }
+
+        if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
+            $_SESSION['flash_error'] = 'Invalid CSRF token.';
+            header('Location: /admin/applications');
+            exit;
+        }
+
+        $districtId = !empty($_POST['district_id']) ? (int)$_POST['district_id'] : null;
+        $blockId = !empty($_POST['block_id']) ? (int)$_POST['block_id'] : null;
+
+        try {
+            $res = \App\Services\StaffRoutingService::routeUnassignedApplications($districtId, $blockId, (int)$user['id']);
+            if ($res['routed_count'] > 0) {
+                $_SESSION['flash_success'] = "Successfully routed {$res['routed_count']} unassigned applications to matching active operators.";
+            } else {
+                $_SESSION['flash_info'] = "No unassigned applications matched active operators.";
+            }
+        } catch (\Throwable $e) {
+            $_SESSION['flash_error'] = "Routing failed: " . $e->getMessage();
+        }
+
+        $redirect = !empty($_POST['redirect_to']) ? $_POST['redirect_to'] : '/admin/applications?assignment_status=UNASSIGNED';
+        header('Location: ' . $redirect);
+        exit;
+    }
 }

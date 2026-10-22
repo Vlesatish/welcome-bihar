@@ -94,6 +94,9 @@ if (\App\Services\AuthService::check()) {
         header('Location: /login');
         exit;
     }
+
+    // Server-side active portal mode validation and immediate revocation enforcement
+    \App\Services\AuthService::validateAndSyncActiveMode();
 }
 
 // Route Dispatcher
@@ -103,7 +106,8 @@ try {
         case '/':
             if (\App\Services\AuthService::check()) {
                 $role = \App\Services\AuthService::role();
-                if ($role === 'ADMIN' || $role === 'OPERATOR') header('Location: /admin/dashboard');
+                $activeMode = \App\Services\AuthService::activePortalMode();
+                if ($role === 'ADMIN' || $role === 'OPERATOR' || $activeMode === 'OPERATOR') header('Location: /admin/dashboard');
                 elseif ($role === 'DISTRIBUTOR') header('Location: /distributor/dashboard');
                 else header('Location: /user/dashboard');
             } else {
@@ -133,7 +137,8 @@ try {
         case '/dashboard':
             if (\App\Services\AuthService::check()) {
                 $role = \App\Services\AuthService::role();
-                if ($role === 'ADMIN' || $role === 'OPERATOR') {
+                $activeMode = \App\Services\AuthService::activePortalMode();
+                if ($role === 'ADMIN' || $role === 'OPERATOR' || $activeMode === 'OPERATOR') {
                     header('Location: /admin/dashboard' . (!empty($_SERVER['QUERY_STRING']) ? '?' . $_SERVER['QUERY_STRING'] : ''));
                     exit;
                 } elseif ($role === 'DISTRIBUTOR') {
@@ -148,6 +153,11 @@ try {
                 header('Location: /login');
                 exit;
             }
+
+        case '/switch-mode':
+            $ctrl = new \App\Controllers\AuthController();
+            $ctrl->switchMode();
+            break;
 
         // User
         case '/user/dashboard':
@@ -218,6 +228,12 @@ try {
             $ctrl->reassignStaff();
             break;
 
+        case '/admin/applications/route-unassigned':
+        case '/admin/staff-routing/route-unassigned':
+            $ctrl = new \App\Controllers\ApplicationController();
+            $ctrl->routeUnassignedApplications();
+            break;
+
         case '/admin/staff-routing':
             $ctrl = new \App\Controllers\AdminController();
             $ctrl->staffRouting();
@@ -261,6 +277,51 @@ try {
         case '/admin/operators/reassign':
             $ctrl = new \App\Controllers\AdminController();
             $ctrl->reassignOperator();
+            break;
+
+        case '/admin/operators/grant-access':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->grantOperatorAccess();
+            break;
+
+        case '/admin/operators/edit-assignment':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->editOperatorAssignment();
+            break;
+
+        case '/admin/operators/api-assignments':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->apiOperatorAssignments();
+            break;
+
+        case '/admin/operators/save-block-assignment':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->saveOperatorBlockAssignment();
+            break;
+
+        case '/admin/operators/toggle-block-assignment':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->toggleOperatorBlockAssignment();
+            break;
+
+        case '/admin/operators/remove-block-assignment':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->removeOperatorBlockAssignment();
+            break;
+
+        case '/admin/operators/suspend-access':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->suspendOperatorAccess();
+            break;
+
+        case '/admin/operators/restore-access':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->restoreOperatorAccess();
+            break;
+
+        case '/admin/operators/remove-access':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->removeOperatorAccess();
             break;
 
         case '/admin/users/add-perm':

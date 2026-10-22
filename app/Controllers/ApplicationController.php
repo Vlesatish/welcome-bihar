@@ -6,6 +6,7 @@ use App\Services\AuthService;
 use App\Services\ApplicationService;
 use App\Services\PricingService;
 use App\Services\CsvService;
+use App\Services\OperatorAuthorizationService;
 use Exception;
 use PDO;
 
@@ -378,8 +379,9 @@ class ApplicationController
         $user = AuthService::user();
         $userId = $user['id'];
         $role = $user['role'];
+        $activeMode = AuthService::activePortalMode();
 
-        if ($role === 'ADMIN' || $role === 'OPERATOR') {
+        if ($role === 'ADMIN' || ($activeMode === 'OPERATOR' && AuthService::canAccessOperatorMode($userId))) {
             $this->adminApplications();
             return;
         }
@@ -581,24 +583,34 @@ class ApplicationController
             exit;
         }
 
-        // Scope check
-        if ($role === 'USER' && (int)$app['user_id'] !== $userId) {
-            $_SESSION['flash_error'] = 'Access denied. You can only view your own applications.';
-            header('Location: /applications');
-            exit;
-        }
+        // Mode-aware scope check
+        $activeMode = AuthService::activePortalMode();
+        $isStaff = ($role === 'ADMIN') || ($role === 'OPERATOR') || ($activeMode === 'OPERATOR' && AuthService::canAccessOperatorMode($userId));
 
-        if ($role === 'DISTRIBUTOR' && (int)$app['distributor_id'] !== $userId) {
-            $_SESSION['flash_error'] = 'Access denied. You can only view applications in your team scope.';
-            header('Location: /applications');
-            exit;
-        }
-
-        if ($role === 'OPERATOR') {
+        if ($isStaff && $role !== 'ADMIN') {
+            // Self-processing protection: a dual-role user must NEVER view/process their own application in staff mode
+            if ((int)$app['user_id'] === $userId) {
+                $_SESSION['flash_error'] = 'You cannot process an application submitted by your own retailer account.';
+                header('Location: /admin/applications');
+                exit;
+            }
             if (!AuthService::canOperatorAccessApplication($userId, $appId)) {
                 http_response_code(403);
-                $_SESSION['flash_error'] = 'Access denied: You do not have permission to view applications outside your assigned District and Block.';
+                $_SESSION['flash_error'] = 'Access denied: You do not have permission to view applications outside your assigned District and Block or not assigned to you.';
                 header('Location: /admin/applications');
+                exit;
+            }
+        } elseif ($role === 'DISTRIBUTOR') {
+            if ((int)$app['distributor_id'] !== $userId) {
+                $_SESSION['flash_error'] = 'Access denied. You can only view applications in your team scope.';
+                header('Location: /applications');
+                exit;
+            }
+        } else {
+            // Retailer mode: user views only their own submitted applications
+            if ((int)$app['user_id'] !== $userId) {
+                $_SESSION['flash_error'] = 'Access denied. You can only view your own applications.';
+                header('Location: /applications');
                 exit;
             }
         }
@@ -654,17 +666,37 @@ class ApplicationController
         $rejectionReason = trim($_POST['rejection_reason'] ?? '');
 
         $user = AuthService::user();
+        $userId = (int)$user['id'];
+        $isAdmin = AuthService::isAdmin();
+        $activeMode = AuthService::activePortalMode();
+        $isStaff = $isAdmin || ($user['role'] === 'OPERATOR') || ($activeMode === 'OPERATOR' && AuthService::canAccessOperatorMode($userId));
 
-        if (!in_array($user['role'], ['ADMIN', 'OPERATOR', 'DISTRIBUTOR'], true)) {
+        if (!$isStaff && $user['role'] !== 'DISTRIBUTOR') {
             $_SESSION['flash_error'] = 'Access denied: Regular users are not authorized to update application status.';
             header('Location: /applications/view?id=' . $appId);
             exit;
         }
 
-        if ($user['role'] === 'OPERATOR') {
-            if (!AuthService::canOperatorAccessApplication((int)$user['id'], $appId)) {
+        // Strict Self-Processing Protection: Check if application was created by the logged in user
+        $db = Database::getConnection();
+        $appCreatorStmt = $db->prepare("SELECT user_id FROM applications WHERE id = ? LIMIT 1");
+        $appCreatorStmt->execute([$appId]);
+        $appCreatorId = (int)$appCreatorStmt->fetchColumn();
+
+        if ($appCreatorId === $userId && !$isAdmin) {
+            \App\Services\AuditService::log('SELF_ASSIGNMENT_PREVENTED', 'APPLICATION', (string)$appId, [
+                'user_id' => $userId,
+                'reason' => 'User attempted to update status of own submitted application'
+            ], $userId);
+            $_SESSION['flash_error'] = 'You cannot process an application submitted by your own retailer account.';
+            header('Location: /admin/applications');
+            exit;
+        }
+
+        if ($isStaff && !$isAdmin) {
+            if (!AuthService::canOperatorAccessApplication($userId, $appId)) {
                 http_response_code(403);
-                $_SESSION['flash_error'] = 'Access denied: You cannot update applications outside your assigned District and Block.';
+                $_SESSION['flash_error'] = 'Access denied: You cannot update applications outside your assigned District and Block or not assigned to you.';
                 header('Location: /admin/applications');
                 exit;
             }
@@ -718,12 +750,13 @@ class ApplicationController
             }
         }
 
+        $effectiveRole = $isAdmin ? 'ADMIN' : (($isStaff) ? 'OPERATOR' : $user['role']);
         try {
             $result = ApplicationService::updateStatus(
                 $appId,
                 $newStatus,
-                $user['id'],
-                $user['role'],
+                $userId,
+                $effectiveRole,
                 $user['name'],
                 $remarks,
                 $rejectionReason,
@@ -757,23 +790,23 @@ class ApplicationController
         $where = ["1=1"];
         $params = [];
 
-        if ($role === 'USER') {
+        $activeMode = AuthService::activePortalMode();
+        $isOperatorMode = ($activeMode === 'OPERATOR' && AuthService::canAccessOperatorMode());
+        $effectiveRole = $role;
+        if ($isOperatorMode) {
+            $effectiveRole = 'OPERATOR';
+        } elseif ($role === 'USER') {
+            $effectiveRole = 'USER';
+        }
+
+        if ($effectiveRole === 'USER') {
             $where[] = "a.user_id = :scope_user_id";
             $params[':scope_user_id'] = $userId;
-        } elseif ($role === 'DISTRIBUTOR') {
+        } elseif ($effectiveRole === 'DISTRIBUTOR') {
             $where[] = "a.distributor_id = :scope_dist_id";
             $params[':scope_dist_id'] = $userId;
-        } elseif ($role === 'OPERATOR') {
-            $opDist = (int)($user['assigned_district_id'] ?? 0);
-            $opBlk = (int)($user['assigned_block_id'] ?? 0);
-            if ($opDist <= 0 || $opBlk <= 0) {
-                $where[] = "1 = 0";
-            } else {
-                $where[] = "a.assigned_operator_id = :op_user_id AND a.district_id = :op_dist AND a.block_id = :op_blk";
-                $params[':op_user_id'] = $userId;
-                $params[':op_dist'] = $opDist;
-                $params[':op_blk'] = $opBlk;
-            }
+        } elseif ($effectiveRole === 'OPERATOR') {
+            $where[] = OperatorAuthorizationService::getAuthorizedSqlCondition((int)$userId, 'a');
         }
 
         if (!empty($status)) {

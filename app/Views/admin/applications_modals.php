@@ -349,34 +349,37 @@ document.addEventListener('DOMContentLoaded', function () {
     // Dynamic Block Cascading in Filter Form
     const distSelect = document.getElementById('filter_district_id');
     const blkSelect = document.getElementById('filter_block_id');
+    const isOperatorFilter = <?= !empty($isOperator) ? 'true' : 'false' ?>;
+    const defaultBlockText = isOperatorFilter ? 'All Assigned Blocks' : 'All Blocks';
+
     if (distSelect && blkSelect) {
         distSelect.addEventListener('change', function () {
             const distId = this.value;
-            if (!distId) {
-                blkSelect.innerHTML = '<option value="">All Blocks</option>';
+            if (!distId && !isOperatorFilter) {
+                blkSelect.innerHTML = '<option value="">' + defaultBlockText + '</option>';
                 blkSelect.disabled = true;
                 return;
             }
             blkSelect.innerHTML = '<option value="">Loading blocks...</option>';
             blkSelect.disabled = true;
-            fetch('/api/blocks?district_id=' + encodeURIComponent(distId))
+            fetch('/api/blocks?district_id=' + encodeURIComponent(distId || 0))
                 .then(res => res.json())
                 .then(data => {
-                    blkSelect.innerHTML = '<option value="">All Blocks</option>';
+                    blkSelect.innerHTML = '<option value="">' + defaultBlockText + '</option>';
                     if (Array.isArray(data) && data.length > 0) {
                         data.forEach(b => {
                             const opt = document.createElement('option');
-                            opt.value = b.id;
-                            opt.textContent = b.name;
+                            opt.value = b.id || b.block_id;
+                            opt.textContent = b.name || b.block_name;
                             blkSelect.appendChild(opt);
                         });
                         blkSelect.disabled = false;
                     } else {
-                        blkSelect.disabled = false;
+                        blkSelect.disabled = !isOperatorFilter && !distId;
                     }
                 })
                 .catch(() => {
-                    blkSelect.innerHTML = '<option value="">All Blocks</option>';
+                    blkSelect.innerHTML = '<option value="">' + defaultBlockText + '</option>';
                     blkSelect.disabled = false;
                 });
         });

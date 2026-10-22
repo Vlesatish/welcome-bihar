@@ -52,7 +52,6 @@ CREATE TABLE IF NOT EXISTS `users` (
   INDEX `idx_users_assigned_block` (`assigned_block_id`),
   CONSTRAINT `fk_users_distributor` FOREIGN KEY (`parent_distributor_id`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
 -- 3. DISTRICTS TABLE
 CREATE TABLE IF NOT EXISTS `districts` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
@@ -160,8 +159,11 @@ CREATE TABLE IF NOT EXISTS `applications` (
   `user_id` INT NOT NULL,
   `distributor_id` INT NULL,
   `assigned_operator_id` INT NULL,
+  `assigned_at` DATETIME NULL,
+  `assignment_method` VARCHAR(32) NULL,
   `claimed_at` DATETIME NULL,
   `data_type_id` INT NOT NULL,
+  `application_code` VARCHAR(64) NULL,
   `district_id` INT NOT NULL,
   `block_id` INT NOT NULL,
   `applicant_name` VARCHAR(150) NOT NULL,
@@ -196,6 +198,9 @@ CREATE TABLE IF NOT EXISTS `applications` (
   INDEX `idx_apps_ref` (`app_ref`),
   INDEX `idx_apps_mobile` (`applicant_mobile`),
   INDEX `idx_apps_identifier` (`data_type_id`, `applicant_identifier`),
+  INDEX `idx_app_code` (`application_code`),
+  INDEX `idx_dist_blk_app_code` (`district_id`, `block_id`, `application_code`),
+  INDEX `idx_status_assigned_op` (`status`, `assigned_operator_id`),
   CONSTRAINT `fk_apps_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE RESTRICT,
   CONSTRAINT `fk_apps_distributor` FOREIGN KEY (`distributor_id`) REFERENCES `users` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_apps_datatype` FOREIGN KEY (`data_type_id`) REFERENCES `data_types` (`id`) ON DELETE RESTRICT,
@@ -487,6 +492,65 @@ CREATE TABLE IF NOT EXISTS `service_block_availability` (
   CONSTRAINT `fk_sba_block` FOREIGN KEY (`block_id`) REFERENCES `blocks` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_sba_activated_by` FOREIGN KEY (`activated_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_sba_deactivated_by` FOREIGN KEY (`deactivated_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 21. USER ROLE ASSIGNMENTS (Dual Capability: RETAILER / OPERATOR)
+CREATE TABLE IF NOT EXISTS `user_role_assignments` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `user_id` INT NOT NULL,
+  `role_code` ENUM('USER', 'OPERATOR') NOT NULL,
+  `is_active` TINYINT(1) NOT NULL DEFAULT 1,
+  `granted_by` INT NULL,
+  `granted_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `revoked_by` INT NULL,
+  `revoked_at` DATETIME NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY `uk_user_role` (`user_id`, `role_code`),
+  INDEX `idx_role_active` (`role_code`, `is_active`),
+  INDEX `idx_ura_user_id` (`user_id`),
+  CONSTRAINT `fk_ura_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_ura_granted_by` FOREIGN KEY (`granted_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `fk_ura_revoked_by` FOREIGN KEY (`revoked_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 22. OPERATOR BLOCK ASSIGNMENTS (Multi-District & Multi-Block Staff Assignments)
+CREATE TABLE IF NOT EXISTS `operator_block_assignments` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `operator_user_id` INT NOT NULL,
+  `district_id` INT NOT NULL,
+  `block_id` INT NOT NULL,
+  `is_active` TINYINT(1) NOT NULL DEFAULT 1,
+  `assigned_by` INT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY `uq_op_dist_blk` (`operator_user_id`, `district_id`, `block_id`),
+  INDEX `idx_op_block_user` (`operator_user_id`, `is_active`),
+  INDEX `idx_op_block_dist_blk` (`district_id`, `block_id`, `is_active`),
+  CONSTRAINT `fk_oba_operator` FOREIGN KEY (`operator_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_oba_district` FOREIGN KEY (`district_id`) REFERENCES `districts` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_oba_block` FOREIGN KEY (`block_id`) REFERENCES `blocks` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 23. OPERATOR APPLICATION CODE ASSIGNMENTS
+CREATE TABLE IF NOT EXISTS `operator_application_code_assignments` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `operator_user_id` INT NOT NULL,
+  `district_id` INT NOT NULL,
+  `block_id` INT NOT NULL,
+  `application_code` VARCHAR(64) NOT NULL,
+  `is_active` TINYINT(1) NOT NULL DEFAULT 1,
+  `priority` INT NOT NULL DEFAULT 1,
+  `assigned_by` INT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY `uq_op_dist_blk_code` (`operator_user_id`, `district_id`, `block_id`, `application_code`),
+  INDEX `idx_oaca_operator` (`operator_user_id`),
+  INDEX `idx_oaca_dist_blk` (`district_id`, `block_id`),
+  INDEX `idx_routing_lookup` (`district_id`, `block_id`, `application_code`, `is_active`),
+  CONSTRAINT `fk_oaca_operator` FOREIGN KEY (`operator_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_oaca_district` FOREIGN KEY (`district_id`) REFERENCES `districts` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_oaca_block` FOREIGN KEY (`block_id`) REFERENCES `blocks` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;

@@ -185,7 +185,8 @@ $sub2 = ApplicationService::submit($retailerId, $dataTypeId, $districtId, $block
     'applicant_name' => 'Suresh Yadav (Labour Test)',
     'applicant_mobile' => '9876543211',
     'application_code' => 'LABOURCARD',
-    'application_number' => $labourAppNum
+    'application_number' => $labourAppNum,
+    'aadhaar_number' => sprintf('%012d', mt_rand(100000000000, 999999999999))
 ]);
 $appLabour = $db->query("SELECT id, assigned_operator_id, application_code FROM applications WHERE id = {$sub2['application_id']}")->fetch(PDO::FETCH_ASSOC);
 $c4Pass = ((int)$appLabour['assigned_operator_id'] === $staffBId && $appLabour['application_code'] === 'LABOURCARD');
@@ -223,7 +224,8 @@ $batchItems = [
         'block_id' => $blockId,
         'application_code' => 'LABOURCARD',
         'application_number' => 'LC/BATCH/' . rand(10000, 99999),
-        'applicant_name' => 'Batch Person 2'
+        'applicant_name' => 'Batch Person 2',
+        'aadhaar_number' => sprintf('%012d', mt_rand(100000000000, 999999999999))
     ],
     [
         'district_id' => $districtId,
@@ -285,7 +287,8 @@ recordResult('10', 'Missing routing leaves the application unassigned and alerts
 // -------------------------------------------------------------------------
 // CASE 11: Manual reassignment removes old staff access
 // -------------------------------------------------------------------------
-// Reassign the BICCO app from Staff A to Staff B manually
+// Reassign the BICCO app from Staff A to Staff B manually (Staff B must be permitted for BICCO)
+StaffRoutingService::saveOperatorCodeAssignments($staffBId, $districtId, $blockId, ['LABOURCARD', 'BICCO'], 1);
 StaffRoutingService::reassignApplication((int)$appBicco['id'], $staffBId, 'Shift workload to Staff B', 1);
 $appBiccoAfterReassign = $db->query("SELECT assigned_operator_id FROM applications WHERE id = {$appBicco['id']}")->fetch(PDO::FETCH_ASSOC);
 $staffAAccessAfter = AuthService::canOperatorAccessApplication($staffAId, (int)$appBicco['id']);

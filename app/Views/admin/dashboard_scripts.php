@@ -38,6 +38,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const filterPageInput = document.getElementById('filterPageInput');
     const filterStatusInput = document.getElementById('filterStatusInput');
 
+    const isOperator = <?= !empty($isOperator) ? 'true' : 'false' ?>;
     const allBlocksByDistrict = <?= json_encode($allBlocksGrouped ?? []) ?>;
 
     // 1. Status dropdown change listener -> resets page and auto-submits
@@ -49,13 +50,13 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
-    // 2. District change listener (only for admin where filterDistrict is a select)
+    // 2. District change listener
     if (filterDistrict && filterDistrict.tagName === 'SELECT') {
         filterDistrict.addEventListener('change', function () {
             if (filterPageInput) filterPageInput.value = '1';
             const distId = this.value;
             if (filterBlock) {
-                filterBlock.innerHTML = '<option value="">All Blocks</option>';
+                filterBlock.innerHTML = '<option value="">' + (isOperator ? 'All Assigned Blocks' : 'All Blocks') + '</option>';
                 if (distId && allBlocksByDistrict[distId]) {
                     filterBlock.disabled = false;
                     allBlocksByDistrict[distId].forEach(b => {
@@ -64,8 +65,16 @@ document.addEventListener('DOMContentLoaded', function () {
                         opt.textContent = b.name;
                         filterBlock.appendChild(opt);
                     });
+                } else if (!distId && isOperator) {
+                    filterBlock.disabled = false;
+                    Object.values(allBlocksByDistrict).flat().forEach(b => {
+                        const opt = document.createElement('option');
+                        opt.value = b.id;
+                        opt.textContent = b.name;
+                        filterBlock.appendChild(opt);
+                    });
                 } else {
-                    filterBlock.disabled = true;
+                    filterBlock.disabled = !isOperator;
                 }
                 filterBlock.value = '';
             }

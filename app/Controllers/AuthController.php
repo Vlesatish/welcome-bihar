@@ -217,13 +217,73 @@ class AuthController
         exit;
     }
 
+    /**
+     * Switch active portal mode for dual-role users (POST + CSRF strictly required)
+     */
+    public function switchMode(): void
+    {
+        if (!AuthService::check()) {
+            header('Location: /login');
+            exit;
+        }
+
+        if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
+            $_SESSION['flash_error'] = 'Invalid request security token (CSRF).';
+            header('Location: /');
+            exit;
+        }
+
+        $userId = AuthService::id();
+        $targetMode = strtoupper(trim((string)($_POST['mode'] ?? '')));
+        $previousMode = AuthService::activePortalMode();
+
+        if ($targetMode === 'OPERATOR') {
+            if (!AuthService::canAccessOperatorMode($userId)) {
+                $_SESSION['flash_error'] = 'Access denied: You do not have active operator permissions.';
+                header('Location: /user/dashboard');
+                exit;
+            }
+            AuthService::setActivePortalMode('OPERATOR');
+            AuditService::log('PORTAL_MODE_CHANGED', 'USER', (string)$userId, [
+                'previous_mode' => $previousMode,
+                'new_mode' => 'OPERATOR',
+                'user_id' => $userId
+            ], $userId, 'USER');
+            $_SESSION['flash_success'] = 'Switched to Staff Mode.';
+            header('Location: /admin/dashboard');
+            exit;
+        }
+
+        if ($targetMode === 'RETAILER') {
+            if (!AuthService::canAccessRetailerMode($userId)) {
+                $_SESSION['flash_error'] = 'Access denied: You do not have retailer permissions.';
+                header('Location: /admin/dashboard');
+                exit;
+            }
+            AuthService::setActivePortalMode('RETAILER');
+            AuditService::log('PORTAL_MODE_CHANGED', 'USER', (string)$userId, [
+                'previous_mode' => $previousMode,
+                'new_mode' => 'RETAILER',
+                'user_id' => $userId
+            ], $userId, 'USER');
+            $_SESSION['flash_success'] = 'Switched to Retailer Mode.';
+            header('Location: /user/dashboard');
+            exit;
+        }
+
+        header('Location: /');
+        exit;
+    }
+
     private function redirectBasedOnRole(): void
     {
         $role = AuthService::role();
-        if ($role === 'ADMIN' || $role === 'OPERATOR') {
+        if ($role === 'ADMIN') {
             header('Location: /admin/dashboard');
         } elseif ($role === 'DISTRIBUTOR') {
             header('Location: /distributor/dashboard');
+        } elseif (AuthService::activePortalMode() === 'OPERATOR') {
+            header('Location: /admin/dashboard');
         } else {
             header('Location: /user/dashboard');
         }

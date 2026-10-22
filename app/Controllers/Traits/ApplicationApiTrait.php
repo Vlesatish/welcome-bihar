@@ -7,6 +7,7 @@ use App\Config\Database;
 use App\Services\AuthService;
 use App\Services\ApplicationService;
 use App\Services\PricingService;
+use App\Services\OperatorAuthorizationService;
 use Exception;
 use PDO;
 
@@ -29,24 +30,24 @@ public function apiGetRequests(): void
         $where = ["1=1"];
         $params = [];
 
+        $activeMode = AuthService::activePortalMode();
+        $isOperatorMode = ($activeMode === 'OPERATOR' && AuthService::canAccessOperatorMode());
+        $effectiveRole = $role;
+        if ($isOperatorMode) {
+            $effectiveRole = 'OPERATOR';
+        } elseif ($role === 'USER') {
+            $effectiveRole = 'USER';
+        }
+
         // Scope
-        if ($role === 'USER') {
+        if ($effectiveRole === 'USER') {
             $where[] = "a.user_id = :scope_uid";
             $params[':scope_uid'] = $userId;
-        } elseif ($role === 'DISTRIBUTOR') {
+        } elseif ($effectiveRole === 'DISTRIBUTOR') {
             $where[] = "a.distributor_id = :scope_did";
             $params[':scope_did'] = $userId;
-        } elseif ($role === 'OPERATOR') {
-            $opDist = (int)($user['assigned_district_id'] ?? 0);
-            $opBlk = (int)($user['assigned_block_id'] ?? 0);
-            if ($opDist <= 0 || $opBlk <= 0) {
-                $where[] = "1 = 0";
-            } else {
-                $where[] = "a.assigned_operator_id = :op_user_id AND a.district_id = :op_dist AND a.block_id = :op_blk";
-                $params[':op_user_id'] = $userId;
-                $params[':op_dist'] = $opDist;
-                $params[':op_blk'] = $opBlk;
-            }
+        } elseif ($effectiveRole === 'OPERATOR') {
+            $where[] = OperatorAuthorizationService::getAuthorizedSqlCondition((int)$userId, 'a');
         }
 
         // Filters
@@ -372,8 +373,14 @@ public function apiGetRequests(): void
     public function apiUpdateStatus(): void
     {
         header('Content-Type: application/json; charset=utf-8');
-        $user = AuthService::user();
-        if (!$user || !in_array($user['role'], ['ADMIN', 'OPERATOR', 'DISTRIBUTOR'], true)) {
+        $activeMode = AuthService::activePortalMode();
+        $isOperatorMode = ($activeMode === 'OPERATOR' && AuthService::canAccessOperatorMode());
+        $effectiveRole = $user['role'];
+        if ($isOperatorMode) {
+            $effectiveRole = 'OPERATOR';
+        }
+
+        if (!$user || !in_array($effectiveRole, ['ADMIN', 'OPERATOR', 'DISTRIBUTOR'], true)) {
             http_response_code(403);
             echo json_encode(['success' => false, 'error' => 'Unauthorized action.']);
             exit;
@@ -420,7 +427,7 @@ public function apiGetRequests(): void
             }
         }
 
-        if ($user['role'] === 'OPERATOR') {
+        if ($effectiveRole === 'OPERATOR') {
             if (!AuthService::canOperatorAccessApplication((int)$user['id'], $appId)) {
                 http_response_code(403);
                 echo json_encode(['success' => false, 'error' => 'Forbidden: You do not have permission to access or update applications outside your assigned District and Block.']);
@@ -446,7 +453,7 @@ public function apiGetRequests(): void
                 $appId,
                 $newStatus,
                 $user['id'],
-                $user['role'],
+                $effectiveRole,
                 $user['name'],
                 $adminRemarks,
                 $rejectionReason,
@@ -499,17 +506,30 @@ public function apiGetRequests(): void
             exit;
         }
 
-        // Retailer ownership check
-        if ($user['role'] === 'USER' && (int)$app['user_id'] !== (int)$user['id']) {
-            http_response_code(403);
-            echo json_encode(['error' => 'Unauthorized: You do not have permission to view chats for this application.']);
-            exit;
+        $activeMode = AuthService::activePortalMode();
+        $isOperatorMode = ($activeMode === 'OPERATOR' && AuthService::canAccessOperatorMode());
+        $effectiveRole = $user['role'];
+        if ($isOperatorMode) {
+            $effectiveRole = 'OPERATOR';
+        } elseif ($user['role'] === 'USER') {
+            $effectiveRole = 'USER';
         }
 
         // Operator authorization check
-        if ($user['role'] === 'OPERATOR' && !AuthService::canOperatorAccessApplication((int)$user['id'], $appId)) {
+        if ($effectiveRole === 'OPERATOR') {
+            if ((int)$app['user_id'] === (int)$user['id']) {
+                http_response_code(403);
+                echo json_encode(['error' => 'You cannot view chats as operator on an application submitted by your own retailer account.']);
+                exit;
+            }
+            if (!AuthService::canOperatorAccessApplication((int)$user['id'], $appId)) {
+                http_response_code(403);
+                echo json_encode(['error' => 'Forbidden: You do not have permission to view chats for applications outside your assigned District and Block.']);
+                exit;
+            }
+        } elseif ($effectiveRole === 'USER' && (int)$app['user_id'] !== (int)$user['id']) {
             http_response_code(403);
-            echo json_encode(['error' => 'Forbidden: You do not have permission to view chats for applications outside your assigned District and Block.']);
+            echo json_encode(['error' => 'Unauthorized: You do not have permission to view chats for this application.']);
             exit;
         }
 
@@ -555,11 +575,27 @@ public function apiGetRequests(): void
             exit;
         }
 
+        $activeMode = AuthService::activePortalMode();
+        $isOperatorMode = ($activeMode === 'OPERATOR' && AuthService::canAccessOperatorMode());
+        $effectiveRole = $user['role'];
+        if ($isOperatorMode) {
+            $effectiveRole = 'OPERATOR';
+        } elseif ($user['role'] === 'USER') {
+            $effectiveRole = 'USER';
+        }
+
         // Operator authorization check
-        if ($user['role'] === 'OPERATOR' && !AuthService::canOperatorAccessApplication((int)$user['id'], $appId)) {
-            http_response_code(403);
-            echo json_encode(['error' => 'Forbidden: You do not have permission to send chat messages for applications outside your assigned District and Block.']);
-            exit;
+        if ($effectiveRole === 'OPERATOR') {
+            if ((int)$app['user_id'] === (int)$user['id']) {
+                http_response_code(403);
+                echo json_encode(['error' => 'You cannot process or send chat as operator on an application submitted by your own retailer account.']);
+                exit;
+            }
+            if (!AuthService::canOperatorAccessApplication((int)$user['id'], $appId)) {
+                http_response_code(403);
+                echo json_encode(['error' => 'Forbidden: You do not have permission to send chat messages for applications outside your assigned District and Block.']);
+                exit;
+            }
         }
 
         // Check if chat is enabled
@@ -570,7 +606,7 @@ public function apiGetRequests(): void
         }
 
         // Retailer ownership check
-        if ($user['role'] === 'USER' && (int)$app['user_id'] !== (int)$user['id']) {
+        if ($effectiveRole === 'USER' && (int)$app['user_id'] !== (int)$user['id']) {
             http_response_code(403);
             echo json_encode(['error' => 'Unauthorized: You do not own this application.']);
             exit;
@@ -581,7 +617,7 @@ public function apiGetRequests(): void
                 $appId,
                 $user['id'],
                 $user['name'],
-                $user['role'],
+                $effectiveRole,
                 $message,
                 $attachmentUrl ?: null
             );

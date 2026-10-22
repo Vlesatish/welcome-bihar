@@ -161,44 +161,27 @@
 
             <div class="admin-filters-grid pt-1">
                 <!-- 1. District -->
-                <?php if ($currentUser['role'] === 'OPERATOR'): ?>
-                    <div class="filter-col filter-col-district">
-                        <label class="filter-label">District</label>
-                        <div class="input-group input-group-sm">
-                            <span class="input-group-text bg-light text-secondary filter-ctrl" style="border-radius: 6px 0 0 6px !important;"><i class="bi bi-lock-fill"></i></span>
-                            <input type="text" class="form-control bg-light filter-ctrl fw-semibold text-secondary" style="border-radius: 0 6px 6px 0 !important;" value="<?= e($districts[0]['name'] ?? 'Assigned') ?>" readonly disabled title="Locked to assigned district">
-                        </div>
-                    </div>
+                <div class="filter-col filter-col-district">
+                    <label for="filterDistrict" class="filter-label">District</label>
+                    <select name="district_id" id="filterDistrict" class="form-select form-select-sm filter-select filter-ctrl w-100">
+                        <option value=""><?= $isOperator ? 'All Assigned Districts' : 'All Districts' ?></option>
+                        <?php foreach ($districts as $d): ?>
+                            <option value="<?= $d['id'] ?>" <?= $districtId === (int)$d['id'] ? 'selected' : '' ?>><?= e($d['name']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
 
-                    <!-- 2. Block -->
-                    <div class="filter-col filter-col-block">
-                        <label class="filter-label">Block</label>
-                        <div class="input-group input-group-sm">
-                            <span class="input-group-text bg-light text-secondary filter-ctrl" style="border-radius: 6px 0 0 6px !important;"><i class="bi bi-lock-fill"></i></span>
-                            <input type="text" class="form-control bg-light filter-ctrl fw-semibold text-secondary" style="border-radius: 0 6px 6px 0 !important;" value="<?= e($availableBlocks[0]['name'] ?? 'Assigned') ?>" readonly disabled title="Locked to assigned block">
-                        </div>
-                    </div>
-                <?php else: ?>
-                    <div class="filter-col filter-col-district">
-                        <label for="filterDistrict" class="filter-label">District</label>
-                        <select name="district_id" id="filterDistrict" class="form-select form-select-sm filter-select filter-ctrl w-100">
-                            <option value="">All Districts</option>
-                            <?php foreach ($districts as $d): ?>
-                                <option value="<?= $d['id'] ?>" <?= $districtId === (int)$d['id'] ? 'selected' : '' ?>><?= e($d['name']) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-
-                    <div class="filter-col filter-col-block">
-                        <label for="filterBlock" class="filter-label">Block</label>
-                        <select name="block_id" id="filterBlock" class="form-select form-select-sm filter-select filter-ctrl w-100" <?= empty($districtId) ? 'disabled' : '' ?>>
-                            <option value="">All Blocks</option>
-                            <?php foreach ($availableBlocks as $b): ?>
-                                <option value="<?= $b['id'] ?>" <?= $blockId === (int)$b['id'] ? 'selected' : '' ?>><?= e($b['name']) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-                <?php endif; ?>
+                <!-- 2. Block -->
+                <div class="filter-col filter-col-block">
+                    <label for="filterBlock" class="filter-label">Block</label>
+                    <select name="block_id" id="filterBlock" class="form-select form-select-sm filter-select filter-ctrl w-100" <?= empty($availableBlocks) && empty($districtId) && !$isOperator ? 'disabled' : '' ?>>
+                        <option value=""><?= $isOperator ? 'All Assigned Blocks' : 'All Blocks' ?></option>
+                        <?php foreach ($availableBlocks as $b): ?>
+                            <?php $bId = (int)($b['id'] ?? $b['block_id']); ?>
+                            <option value="<?= $bId ?>" <?= $blockId === $bId ? 'selected' : '' ?>><?= e($b['name'] ?? $b['block_name']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
 
                 <!-- 3. Status -->
                 <div class="filter-col filter-col-status">

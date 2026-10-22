@@ -456,8 +456,10 @@ class WhatsAppNotificationService
     {
         $applicantName = trim((string)($data['applicant_name'] ?? 'Applicant'));
         $applicationNumber = trim((string)($data['application_number'] ?? ($data['applicant_identifier'] ?? '')));
+        $applicationCode = trim((string)($data['application_code'] ?? ''));
         $districtName = trim((string)($data['district_name'] ?? ''));
         $blockName = trim((string)($data['block_name'] ?? ''));
+        $appRef = trim((string)($data['app_ref'] ?? ''));
 
         $lines = [];
         if ($applicantName !== '') {
@@ -466,10 +468,16 @@ class WhatsAppNotificationService
         if ($applicationNumber !== '') {
             $lines[] = "Application No: {$applicationNumber}";
         }
+        if ($applicationCode !== '') {
+            $lines[] = "Application Code: {$applicationCode}";
+        }
         if ($districtName !== '' && $blockName !== '') {
-            $lines[] = "Location: {$districtName} > {$blockName}";
+            $lines[] = "District: {$districtName}\nBlock: {$blockName}";
         } elseif ($districtName !== '') {
-            $lines[] = "Location: {$districtName}";
+            $lines[] = "District: {$districtName}";
+        }
+        if ($appRef !== '') {
+            $lines[] = "Application Ref: {$appRef}";
         }
 
         // Keys to strictly exclude (system internals, boilerplate, references, status)
@@ -534,6 +542,41 @@ class WhatsAppNotificationService
     }
 
     /**
+     * Optional notification when operator access is enabled for a user account
+     * Does NOT include passwords, Aadhaar, wallet details or sensitive form data.
+     */
+    public static function queueOperatorAccessNotification(
+        int $userId,
+        string $mobile,
+        PDO $db
+    ): void {
+        try {
+            $settings = self::getSettings();
+            $normalizedMobile = self::normalizePhone($mobile, $settings['default_country_code']);
+            if (!$normalizedMobile) {
+                return;
+            }
+
+            $message = "Operator access has been enabled for your account.";
+            $eventKey = "OPERATOR_ACCESS_ENABLED:{$userId}:" . time();
+
+            $outboxInsert = $db->prepare("
+                INSERT INTO whatsapp_notification_outbox (
+                    event_key, event_type, application_id, recipient_user_id, recipient_mobile,
+                    message_body, status, attempts, next_attempt_at, last_error, created_at, updated_at
+                ) VALUES (
+                    ?, 'OPERATOR_ACCESS_GRANTED', 0, ?, ?,
+                    ?, 'PENDING', 0, NOW(), NULL, NOW(), NOW()
+                )
+                ON DUPLICATE KEY UPDATE updated_at = NOW()
+            ");
+            $outboxInsert->execute([$eventKey, $userId, $normalizedMobile, $message]);
+        } catch (\Throwable $e) {
+            error_log("Failed to queue operator access notification: " . $e->getMessage());
+        }
+    }
+
+    /**
      * Queue notification inside the application submission transaction.
      * Routes ONLY to the single assigned operator (applications.assigned_operator_id).
      * If application is unassigned, records outbox status as SKIPPED with reason 'No assigned staff'.
@@ -569,7 +612,18 @@ class WhatsAppNotificationService
         $appRef = (string)($appData['app_ref'] ?? "ID #{$applicationId}");
         $districtName = (string)($appData['district_name'] ?? 'District');
         $blockName = (string)($appData['block_name'] ?? 'Block');
-        $applicationCode = (string)($appData['application_code'] ?? 'WB-PASS');
+        $applicationCode = (string)($appData['application_code'] ?? '');
+        if (empty($applicationCode) || $applicationCode === 'WB-PASS') {
+            try {
+                $dbCode = (string)$db->query("SELECT application_code FROM applications WHERE id = " . (int)$applicationId)->fetchColumn();
+                if (!empty($dbCode)) {
+                    $applicationCode = $dbCode;
+                }
+            } catch (\Throwable $e) {}
+        }
+        if (empty($applicationCode)) {
+            $applicationCode = 'WB-PASS';
+        }
 
         if ($targetOperatorId === null && !empty($appData['assigned_operator_id'])) {
             $targetOperatorId = (int)$appData['assigned_operator_id'];
@@ -627,17 +681,69 @@ class WhatsAppNotificationService
         }
 
         // Case 2: Fetch the single assigned operator, confirming active status and matching block
+        // Exclude the submitting account from receiving assignment WhatsApp
+        $submittingUserId = (int)($appData['user_id'] ?? 0);
+        if ($submittingUserId > 0 && $targetOperatorId === $submittingUserId) {
+            $skipKey = "APPLICATION_SUBMITTED_CREATOR_EXCLUDED:{$applicationId}:{$targetOperatorId}";
+            $reason = 'Submitting retailer excluded from operator notification';
+            $outboxInsert->execute([
+                $skipKey,
+                $applicationId,
+                $targetOperatorId,
+                'CREATOR',
+                $messageBody,
+                'SKIPPED',
+                0,
+                null,
+                $reason
+            ]);
+            return [
+                'operators_found' => 0,
+                'queued_count' => 0,
+                'skipped_count' => 1,
+                'warning' => $reason
+            ];
+        }
+
         $opStmt = $db->prepare("
-            SELECT id, name, mobile
-            FROM users
-            WHERE id = ?
-              AND role = 'OPERATOR'
-              AND status = 'ACTIVE'
-              AND assigned_district_id = ?
-              AND assigned_block_id = ?
+            SELECT u.id, u.name, u.mobile
+            FROM users u
+            WHERE u.id = ?
+              AND (
+                  u.role = 'OPERATOR'
+                  OR EXISTS (
+                      SELECT 1 FROM user_role_assignments ura
+                      WHERE ura.user_id = u.id AND ura.role_code = 'OPERATOR' AND ura.is_active = 1
+                  )
+              )
+              AND u.status = 'ACTIVE'
+              AND (
+                  EXISTS (
+                      SELECT 1 FROM operator_block_assignments oba
+                      WHERE oba.operator_user_id = u.id AND oba.district_id = ? AND oba.block_id = ? AND oba.is_active = 1
+                  )
+                  OR (u.assigned_district_id = ? AND u.assigned_block_id = ?)
+              )
+              AND (
+                  NOT EXISTS (
+                      SELECT 1 FROM operator_application_code_assignments oaca_chk
+                      WHERE oaca_chk.operator_user_id = u.id AND oaca_chk.district_id = ? AND oaca_chk.block_id = ? AND oaca_chk.is_active = 1
+                  )
+                  OR EXISTS (
+                      SELECT 1 FROM operator_application_code_assignments oaca
+                      WHERE oaca.operator_user_id = u.id AND oaca.district_id = ? AND oaca.block_id = ? AND UPPER(TRIM(oaca.application_code)) = UPPER(TRIM(?)) AND oaca.is_active = 1
+                  )
+              )
             LIMIT 1
         ");
-        $opStmt->execute([$targetOperatorId, $districtId, $blockId]);
+        $opStmt->execute([
+            $targetOperatorId,
+            $districtId, $blockId,
+            $districtId, $blockId,
+            $districtId, $blockId,
+            $districtId, $blockId,
+            $applicationCode
+        ]);
         $op = $opStmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$op) {
