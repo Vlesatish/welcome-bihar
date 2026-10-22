@@ -209,10 +209,18 @@ require dirname(__DIR__) . '/layouts/header.php';
                                 </td>
 
                                 <td>
+                                    <?php
+                                        $displayCode = !empty($row['application_code']) && $row['application_code'] !== 'OTHER'
+                                            ? $row['application_code']
+                                            : (preg_match('/^([A-Z]{3,10})/i', (string)$row['application_number'], $m) ? strtoupper($m[1]) : ($row['application_code'] ?: 'RTPS'));
+                                        $displayService = !empty($row['service_type']) && $row['service_type'] !== 'OTHER'
+                                            ? $row['service_type']
+                                            : (preg_match('/^(BCC|BRC|BIC|BOBC|NCL|EWS|RTPS)/i', (string)$row['application_number']) ? 'RTPS' : ($row['service_type'] ?: 'RTPS'));
+                                    ?>
                                     <span class="badge bg-primary-subtle text-primary border border-primary-subtle fw-semibold px-2 py-1">
-                                        <?= e($row['application_code']) ?>
+                                        <?= e($displayCode) ?>
                                     </span>
-                                    <div class="text-muted mt-0.5" style="font-size: 0.7rem;">Portal: <?= e($row['service_type']) ?></div>
+                                    <div class="text-muted mt-0.5" style="font-size: 0.7rem;">Portal: <?= e($displayService) ?></div>
                                 </td>
 
                                 <td>

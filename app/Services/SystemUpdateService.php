@@ -502,6 +502,41 @@ class SystemUpdateService
                 ");
             }
 
+            // Auto-heal existing applications and RTPS queue entries where application_code was empty or service_type was 'OTHER' for RTPS application numbers
+            try {
+                $db->exec("
+                    UPDATE `applications` 
+                    SET `application_code` = CASE
+                        WHEN `applicant_identifier` LIKE 'BCCCO%' THEN 'BCCCO'
+                        WHEN `applicant_identifier` LIKE 'BRCCO%' THEN 'BRCCO'
+                        WHEN `applicant_identifier` LIKE 'BICCO%' THEN 'BICCO'
+                        WHEN `applicant_identifier` LIKE 'BOBC%' THEN 'BOBC'
+                        WHEN `applicant_identifier` LIKE 'NCLCO%' THEN 'NCLCO'
+                        WHEN `applicant_identifier` LIKE 'EWS%' THEN 'EWSCO'
+                        ELSE `application_code`
+                    END
+                    WHERE (`application_code` IS NULL OR `application_code` = '' OR `application_code` = 'OTHER')
+                      AND (`applicant_identifier` LIKE 'BCC%' OR `applicant_identifier` LIKE 'BRC%' OR `applicant_identifier` LIKE 'BIC%' OR `applicant_identifier` LIKE 'BOBC%' OR `applicant_identifier` LIKE 'NCL%' OR `applicant_identifier` LIKE 'EWS%')
+                ");
+                $db->exec("
+                    UPDATE `rtps_certificate_queue` 
+                    SET `service_type` = 'RTPS',
+                        `application_code` = CASE
+                            WHEN `application_number` LIKE 'BCCCO%' THEN 'BCCCO'
+                            WHEN `application_number` LIKE 'BRCCO%' THEN 'BRCCO'
+                            WHEN `application_number` LIKE 'BICCO%' THEN 'BICCO'
+                            WHEN `application_number` LIKE 'BOBC%' THEN 'BOBC'
+                            WHEN `application_number` LIKE 'NCLCO%' THEN 'NCLCO'
+                            WHEN `application_number` LIKE 'EWS%' THEN 'EWSCO'
+                            ELSE `application_code`
+                        END
+                    WHERE (`service_type` = 'OTHER' OR `application_code` IS NULL OR `application_code` = '' OR `application_code` = 'OTHER')
+                      AND (`application_number` LIKE 'BCC%' OR `application_number` LIKE 'BRC%' OR `application_number` LIKE 'BIC%' OR `application_number` LIKE 'BOBC%' OR `application_number` LIKE 'NCL%' OR `application_number` LIKE 'EWS%')
+                ");
+            } catch (Exception $e) {
+                // Ignore if tables not yet populated
+            }
+
             self::$schemaChecked = true;
         } catch (Exception $e) {
             error_log("Schema auto-heal warning: " . $e->getMessage());

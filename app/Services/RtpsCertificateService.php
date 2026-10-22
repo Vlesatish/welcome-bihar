@@ -17,20 +17,48 @@ class RtpsCertificateService
     /**
      * Resolve the service type for the RTPS Portal form ('RTPS' or 'OTHER')
      */
-    public static function resolveServiceType(string $applicationCode): string
+    /**
+     * Detect specific application code from code and/or application number (e.g. BCCCO/2026/12721009 -> BCCCO)
+     */
+    public static function detectApplicationCode(string $applicationCode = '', string $applicationNumber = ''): string
     {
         $code = strtoupper(trim($applicationCode));
-        $rtpsCodes = [
-            'BRCCO', // Residence Certificate - Revenue Officer / Circle Officer
-            'BICCO', // Income Certificate
-            'BCCCO', // Caste Certificate
-            'BOBC',  // OBC Certificate
-            'NCLCO', // Non-Creamy Layer Certificate
-            'ROTI',  // RTPS Other
-            'RTPS'   // Generic RTPS
-        ];
+        $appNum = strtoupper(trim($applicationNumber));
 
-        return in_array($code, $rtpsCodes, true) ? 'RTPS' : 'OTHER';
+        if (!empty($code) && $code !== 'OTHER' && $code !== 'RTPS') {
+            return $code;
+        }
+
+        if (preg_match('/^([A-Z]{3,10})/i', $appNum, $m)) {
+            return strtoupper($m[1]);
+        }
+
+        return !empty($code) ? $code : 'RTPS';
+    }
+
+    /**
+     * Resolve the service type for the RTPS Portal form ('RTPS' or 'OTHER')
+     */
+    public static function resolveServiceType(string $applicationCode = '', string $applicationNumber = ''): string
+    {
+        $code = strtoupper(trim($applicationCode));
+        $appNum = strtoupper(trim($applicationNumber));
+
+        if (empty($code) || $code === 'OTHER' || $code === 'RTPS') {
+            if (preg_match('/^([A-Z]{3,10})/i', $appNum, $m)) {
+                $code = strtoupper($m[1]);
+            }
+        }
+
+        // Known Bihar RTPS prefixes:
+        // BCCCO (Caste), BRCCO (Residence), BICCO (Income), BOBC (OBC), NCLCO (Non-Creamy Layer),
+        // EWSCO (Economically Weaker Section), DMCO, SDMCO, ROTI, RTPS
+        if (preg_match('/^(BCC|BRC|BIC|BOBC|NCL|EWS|DM|SDM|ROTI|RTPS)/i', $code)
+            || preg_match('/^(BCC|BRC|BIC|BOBC|NCL|EWS|DM|SDM|ROTI|RTPS)/i', $appNum)) {
+            return 'RTPS';
+        }
+
+        return 'OTHER';
     }
 
     /**
@@ -79,12 +107,18 @@ class RtpsCertificateService
             return null;
         }
 
-        $appCode = strtoupper(trim((string)$app['application_code']));
         $appNum = trim((string)$app['applicant_identifier']);
+        $appCode = self::detectApplicationCode((string)$app['application_code'], $appNum);
+
+        // Auto-heal applications table if code was empty or OTHER
+        if ((empty($app['application_code']) || $app['application_code'] === 'OTHER') && !empty($appCode) && $appCode !== 'OTHER') {
+            $db->prepare("UPDATE applications SET application_code = ? WHERE id = ?")->execute([$appCode, $appId]);
+        }
+
         $applicantName = trim((string)$app['applicant_name']);
         $districtId = (int)$app['district_id'];
         $blockId = (int)$app['block_id'];
-        $serviceType = self::resolveServiceType($appCode);
+        $serviceType = self::resolveServiceType($appCode, $appNum);
         $nextCheckAt = self::calculateNextCheckTime();
 
         // Check if queue entry exists
@@ -173,8 +207,7 @@ class RtpsCertificateService
         string $serviceType = 'RTPS'
     ): array {
         $appNum = trim($applicationNumber);
-        $cleanName = ucwords(strtolower(trim($applicantName)));
-        $service = strtoupper(trim($serviceType)) ?: 'RTPS';
+        $cleanName = trim(preg_replace('/\s+/', ' ', $applicantName));
 
         if (empty($appNum) || empty($cleanName)) {
             return [
@@ -182,6 +215,28 @@ class RtpsCertificateService
                 'message' => 'Missing Application Number or Applicant Name for portal check.'
             ];
         }
+
+        // Clean any punctuation or salutations (e.g. Mr., Shri, Smt.)
+        $cleanNameNormalized = trim(preg_replace('/^(Mr\.?|Mrs\.?|Ms\.?|Shri\.?|Smt\.?)\s+/i', '', $cleanName));
+
+        // Smart candidate service types
+        $isRtpsFormat = (bool)preg_match('/^(BCC|BRC|BIC|BOBC|NCL|EWS|DM|SDM|ROTI|RTPS)/i', $appNum);
+        if ($isRtpsFormat) {
+            $candidateServices = ['RTPS', 'OTHER'];
+        } else {
+            $incoming = strtoupper(trim($serviceType)) ?: 'RTPS';
+            $candidateServices = [$incoming, $incoming === 'RTPS' ? 'OTHER' : 'RTPS'];
+        }
+        $candidateServices = array_unique($candidateServices);
+
+        // Name casing variants - Bihar portal requires strict casing match
+        $nameVariants = [
+            ucwords(strtolower($cleanNameNormalized)), // Title Case (Standard official format, e.g. Vikash Kumar)
+            $cleanNameNormalized,                      // As entered without honorific
+            $cleanName,                                // Raw string
+            strtoupper($cleanNameNormalized)           // UPPERCASE
+        ];
+        $nameVariants = array_unique(array_filter($nameVariants));
 
         $cookieJar = tempnam(sys_get_temp_dir(), 'rtps_ck_');
 
@@ -216,38 +271,44 @@ class RtpsCertificateService
                 }
             }
 
-            // Step 2: Post payload to certificate download handler
-            $postData = [
-                'serviceType' => $service,
-                'appl_ref_no' => $appNum,
-                'applicant_name_en' => $cleanName,
-                'captcha' => ''
-            ];
+            // Step 2: Try combinations of candidate services and name variants
+            foreach ($candidateServices as $service) {
+                foreach ($nameVariants as $name) {
+                    $postData = [
+                        'serviceType' => $service,
+                        'appl_ref_no' => $appNum,
+                        'applicant_name_en' => $name,
+                        'captcha' => ''
+                    ];
 
-            $ch2 = curl_init($actionUrl);
-            curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch2, CURLOPT_COOKIEJAR, $cookieJar);
-            curl_setopt($ch2, CURLOPT_COOKIEFILE, $cookieJar);
-            curl_setopt($ch2, CURLOPT_SSL_VERIFYPEER, false);
-            curl_setopt($ch2, CURLOPT_POST, true);
-            curl_setopt($ch2, CURLOPT_POSTFIELDS, http_build_query($postData));
-            curl_setopt($ch2, CURLOPT_TIMEOUT, 30);
-            curl_setopt($ch2, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
-            $resp = curl_exec($ch2);
-            $httpCode = curl_getinfo($ch2, CURLINFO_HTTP_CODE);
-            curl_close($ch2);
+                    $ch2 = curl_init($actionUrl);
+                    curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
+                    curl_setopt($ch2, CURLOPT_COOKIEJAR, $cookieJar);
+                    curl_setopt($ch2, CURLOPT_COOKIEFILE, $cookieJar);
+                    curl_setopt($ch2, CURLOPT_SSL_VERIFYPEER, false);
+                    curl_setopt($ch2, CURLOPT_POST, true);
+                    curl_setopt($ch2, CURLOPT_POSTFIELDS, http_build_query($postData));
+                    curl_setopt($ch2, CURLOPT_TIMEOUT, 25);
+                    curl_setopt($ch2, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+                    $resp = curl_exec($ch2);
+                    $httpCode = curl_getinfo($ch2, CURLINFO_HTTP_CODE);
+                    curl_close($ch2);
 
-            // Step 3: Validate if response is genuine official PDF
-            if ($httpCode === 200 && is_string($resp) && strlen($resp) >= 500 && strncmp($resp, '%PDF-', 5) === 0) {
-                return [
-                    'success' => true,
-                    'pdf' => $resp,
-                    'size' => strlen($resp),
-                    'message' => 'Official certificate PDF successfully retrieved from Bihar RTPS portal.'
-                ];
+                    // Step 3: Validate if response is genuine official PDF
+                    if ($httpCode === 200 && is_string($resp) && strlen($resp) >= 500 && strncmp($resp, '%PDF-', 5) === 0) {
+                        return [
+                            'success' => true,
+                            'pdf' => $resp,
+                            'size' => strlen($resp),
+                            'matched_service' => $service,
+                            'matched_name' => $name,
+                            'message' => 'Official certificate PDF successfully retrieved from Bihar RTPS portal.'
+                        ];
+                    }
+                }
             }
 
-            // If not a PDF, portal returned HTML indicating pending or not generated yet
+            // If not a PDF after testing candidates, portal returned HTML indicating pending or not generated yet
             return [
                 'success' => false,
                 'message' => 'Certificate not yet generated or pending on RTPS portal. Next check scheduled at 12:00 AM.'
@@ -290,15 +351,27 @@ class RtpsCertificateService
 
         $appNum = trim((string)$app['applicant_identifier']);
         $applicantName = trim((string)$app['applicant_name']);
-        $serviceType = self::resolveServiceType((string)$app['application_code']);
+        $detectedCode = self::detectApplicationCode((string)$app['application_code'], $appNum);
+        $serviceType = self::resolveServiceType($detectedCode, $appNum);
 
-        // Update queue item to CHECKING
-        $db->prepare("UPDATE rtps_certificate_queue SET status = 'CHECKING', updated_at = NOW() WHERE application_id = ?")
-           ->execute([$appId]);
+        // Auto-heal application code in applications table if needed
+        if ((empty($app['application_code']) || $app['application_code'] === 'OTHER') && !empty($detectedCode) && $detectedCode !== 'OTHER') {
+            $db->prepare("UPDATE applications SET application_code = ? WHERE id = ?")->execute([$detectedCode, $appId]);
+        }
+
+        // Update queue item to CHECKING with auto-healed code and service_type
+        $db->prepare("UPDATE rtps_certificate_queue SET status = 'CHECKING', application_code = ?, service_type = ?, updated_at = NOW() WHERE application_id = ?")
+           ->execute([$detectedCode, $serviceType, $appId]);
 
         $fetchRes = self::fetchCertificateFromPortal($appNum, $applicantName, $serviceType);
 
         if (!empty($fetchRes['success']) && !empty($fetchRes['pdf'])) {
+            // Update queue with matched service if different
+            if (!empty($fetchRes['matched_service'])) {
+                $db->prepare("UPDATE rtps_certificate_queue SET service_type = ? WHERE application_id = ?")
+                   ->execute([$fetchRes['matched_service'], $appId]);
+            }
+
             // Attach genuine PDF and transition status to COMPLETED
             $attachRes = self::attachCertificatePdf($appId, $fetchRes['pdf'], null, null, 'SYSTEM');
             return [
