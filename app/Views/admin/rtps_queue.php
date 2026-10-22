@@ -354,16 +354,34 @@ require dirname(__DIR__) . '/layouts/header.php';
 
             <div class="modal-body p-3">
                 <div class="alert alert-light border small py-2 px-3 rounded-2 mb-3">
-                    <div class="fw-bold text-dark" id="attachAppNumberText">Application: -</div>
-                    <div class="text-muted" id="attachApplicantNameText">Applicant: -</div>
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <div>Application: <strong id="attachAppNumberText" class="user-select-all font-monospace text-dark">-</strong></div>
+                        <button type="button" class="btn btn-xs btn-outline-secondary py-0.5 px-1.5" onclick="navigator.clipboard.writeText(document.getElementById('attachAppNumberText').textContent); alert('Application number copied!');">Copy</button>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <div>Applicant (Title Case): <strong id="attachApplicantNameTitleText" class="user-select-all text-dark">-</strong></div>
+                        <button type="button" class="btn btn-xs btn-outline-secondary py-0.5 px-1.5" onclick="navigator.clipboard.writeText(document.getElementById('attachApplicantNameTitleText').textContent); alert('Applicant name copied!');">Copy</button>
+                    </div>
                 </div>
 
                 <div class="mb-3">
-                    <label class="form-label small fw-semibold text-secondary">
-                        Select Official Certificate File <span class="text-danger">*</span>
+                    <label class="form-label small fw-semibold text-secondary mb-1">
+                        Option A: Upload Certificate PDF File
                     </label>
-                    <input type="file" name="certificate_pdf" class="form-control rounded-2" accept=".pdf,application/pdf" required>
-                    <small class="text-muted">Only genuine PDF certificates (starting with %PDF-) are accepted.</small>
+                    <input type="file" name="certificate_pdf" id="attachCertFile" class="form-control rounded-2" accept=".pdf,application/pdf">
+                    <small class="text-muted">Upload the original downloaded PDF certificate from your computer.</small>
+                </div>
+
+                <div class="d-flex align-items-center gap-2 mb-3">
+                    <hr class="flex-grow-1 my-0"><span class="small text-muted fw-bold">OR</span><hr class="flex-grow-1 my-0">
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label small fw-semibold text-secondary mb-1">
+                        Option B: Paste Official Certificate URL
+                    </label>
+                    <input type="url" name="certificate_url" id="attachCertUrl" class="form-control rounded-2" placeholder="https://serviceonline.bihar.gov.in/officials/t/...">
+                    <small class="text-muted">System will directly download and attach the genuine certificate from the government server.</small>
                 </div>
 
                 <div class="alert alert-info-subtle border border-info small py-2 px-3 rounded-2 mb-0">
@@ -463,10 +481,18 @@ require dirname(__DIR__) . '/layouts/header.php';
 </div>
 
 <script>
+function toTitleCase(str) {
+    return (str || '').toLowerCase().replace(/\b\w/g, function(txt) {
+        return txt.toUpperCase();
+    });
+}
+
 function openAttachModal(appId, appNumber, applicantName) {
     document.getElementById('attachAppId').value = appId;
-    document.getElementById('attachAppNumberText').textContent = 'Application: ' + appNumber;
-    document.getElementById('attachApplicantNameText').textContent = 'Applicant: ' + applicantName;
+    document.getElementById('attachAppNumberText').textContent = appNumber;
+    document.getElementById('attachApplicantNameTitleText').textContent = toTitleCase(applicantName);
+    document.getElementById('attachCertFile').value = '';
+    document.getElementById('attachCertUrl').value = '';
     new bootstrap.Modal(document.getElementById('attachCertModal')).show();
 }
 

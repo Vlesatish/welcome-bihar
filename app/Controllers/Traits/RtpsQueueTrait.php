@@ -89,25 +89,33 @@ trait RtpsQueueTrait
         $actorId = AuthService::id();
         $actorRole = AuthService::role();
 
-        if (empty($_FILES['certificate_pdf']['name']) || $_FILES['certificate_pdf']['error'] !== UPLOAD_ERR_OK) {
-            $_SESSION['flash_error'] = 'Please select a valid certificate PDF file to attach.';
-            header('Location: /admin/rtps-queue');
-            exit;
-        }
+        $certUrl = trim((string)($_POST['certificate_url'] ?? ''));
+        $hasUpload = (!empty($_FILES['certificate_pdf']['name']) && $_FILES['certificate_pdf']['error'] === UPLOAD_ERR_OK);
 
-        $file = $_FILES['certificate_pdf'];
-        $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-        if ($ext !== 'pdf') {
-            $_SESSION['flash_error'] = 'Invalid file extension. Only genuine PDF certificates (.pdf) are allowed.';
+        if (!$hasUpload && empty($certUrl)) {
+            $_SESSION['flash_error'] = 'Please either upload a certificate PDF file or provide the official download URL.';
             header('Location: /admin/rtps-queue');
             exit;
         }
 
         try {
+            if ($hasUpload) {
+                $file = $_FILES['certificate_pdf'];
+                $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+                if ($ext !== 'pdf') {
+                    throw new \Exception('Invalid file extension. Only genuine PDF certificates (.pdf) are allowed.');
+                }
+                $source = $file['tmp_name'];
+                $origName = $file['name'];
+            } else {
+                $source = $certUrl;
+                $origName = 'official_rtps_certificate.pdf';
+            }
+
             $res = RtpsCertificateService::attachCertificatePdf(
                 $appId,
-                $file['tmp_name'],
-                $file['name'],
+                $source,
+                $origName,
                 $actorId,
                 $actorRole
             );

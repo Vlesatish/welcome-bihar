@@ -188,16 +188,30 @@ class RtpsCertificateService
             throw new Exception("Application ID {$appId} not found.");
         }
 
-        // 1. Determine whether $filePathOrBinary is an existing file path or raw binary string
+        // 1. Determine whether $filePathOrBinary is a URL, an existing file path, or raw binary string
         $binary = null;
-        if (file_exists($filePathOrBinary) && is_file($filePathOrBinary)) {
+        if (preg_match('/^https?:\/\//i', trim($filePathOrBinary))) {
+            $ch = curl_init(trim($filePathOrBinary));
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+            $binary = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($httpCode !== 200 || empty($binary)) {
+                throw new Exception("Failed to download certificate from URL (HTTP {$httpCode}). Please verify the link or upload the PDF file directly.");
+            }
+        } elseif (file_exists($filePathOrBinary) && is_file($filePathOrBinary)) {
             $binary = file_get_contents($filePathOrBinary);
         } else {
             $binary = $filePathOrBinary;
         }
 
-        if (empty($binary) || strlen($binary) < 64) {
-            throw new Exception("Invalid or empty certificate file content.");
+        if (empty($binary) || strlen($binary) < 500) {
+            throw new Exception("Validation failed: Certificate file is too small (" . strlen((string)$binary) . " bytes) or empty. Please ensure a complete official certificate PDF is attached.");
         }
 
         // 2. Validate PDF signature (%PDF-)
