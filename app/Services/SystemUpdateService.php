@@ -275,6 +275,36 @@ class SystemUpdateService
                 ");
             }
 
+            // rtps_certificate_queue (RTPS Certificate Tracking & Nightly Check Queue)
+            if (!in_array('rtps_certificate_queue', $tables, true)) {
+                $db->exec("
+                    CREATE TABLE IF NOT EXISTS `rtps_certificate_queue` (
+                        `id` int(11) NOT NULL AUTO_INCREMENT,
+                        `application_id` int(11) NOT NULL,
+                        `service_type` varchar(32) NOT NULL DEFAULT 'RTPS',
+                        `application_code` varchar(64) NOT NULL,
+                        `application_number` varchar(100) NOT NULL,
+                        `applicant_name` varchar(150) NOT NULL,
+                        `district_id` int(11) NOT NULL,
+                        `block_id` int(11) NOT NULL,
+                        `status` enum('QUEUED', 'PENDING_CHECK', 'CHECKING', 'ATTACHED', 'UNAVAILABLE', 'FAILED') NOT NULL DEFAULT 'QUEUED',
+                        `portal_url` varchar(255) NOT NULL DEFAULT 'https://swcs.bihar.gov.in/RtpsReportView/certificate_download.jsp',
+                        `check_count` int(11) NOT NULL DEFAULT 0,
+                        `last_checked_at` datetime DEFAULT NULL,
+                        `next_check_at` datetime NOT NULL,
+                        `last_status_message` text DEFAULT NULL,
+                        `certificate_file` varchar(255) DEFAULT NULL,
+                        `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+                        `updated_at` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+                        PRIMARY KEY (`id`),
+                        UNIQUE KEY `uk_rtps_queue_app` (`application_id`),
+                        KEY `idx_rtps_queue_schedule` (`status`, `next_check_at`),
+                        KEY `idx_rtps_queue_app_num` (`application_number`),
+                        CONSTRAINT `fk_rtps_queue_app` FOREIGN KEY (`application_id`) REFERENCES `applications` (`id`) ON DELETE CASCADE
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+                ");
+            }
+
             // user_role_assignments (Dual Role System)
             if (!in_array('user_role_assignments', $tables, true)) {
                 $db->exec("

@@ -10,6 +10,7 @@ use App\Services\NotificationService;
 use App\Services\WhatsAppNotificationService;
 use App\Services\CommissionService;
 use App\Services\AuthService;
+use App\Services\WalletService;
 use Exception;
 use PDO;
 
@@ -284,6 +285,15 @@ trait ApplicationStatusTrait
                 $actorUserId,
                 $actorRole
             );
+
+            // Auto-enqueue into RTPS Certificate Check Queue when moved to IN_PROCESS
+            if ($newStatus === 'IN_PROCESS') {
+                try {
+                    \App\Services\RtpsCertificateService::enqueueApplication($appId);
+                } catch (\Throwable $e) {
+                    error_log("Failed to enqueue application {$appId} into RTPS queue: " . $e->getMessage());
+                }
+            }
 
             // In-app Notification to Submitting User
             $notifType = 'INFO';

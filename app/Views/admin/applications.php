@@ -455,6 +455,9 @@
                                                 <button type="button" class="btn btn-xs btn-outline-primary fw-semibold rounded-2 px-1.5 py-1" onclick="openUploadApproveModal(<?= $app['id'] ?>)" title="Upload Certificate & Approve">
                                                     <i class="bi bi-cloud-arrow-up"></i>
                                                 </button>
+                                                <a href="/admin/rtps-queue?search=<?= urlencode($app['applicant_identifier'] ?: $app['app_ref']) ?>" class="btn btn-xs btn-outline-info fw-semibold rounded-2 px-1.5 py-1 text-decoration-none" title="RTPS Certificate Queue & Portal Sync">
+                                                    <i class="bi bi-clock-history"></i> RTPS
+                                                </a>
                                                 <button type="button" class="btn btn-xs btn-outline-danger fw-semibold rounded-2 px-1.5 py-1" onclick="openRejectModal(<?= $app['id'] ?>)" title="Reject Application">
                                                     <i class="bi bi-x-circle"></i>
                                                 </button>

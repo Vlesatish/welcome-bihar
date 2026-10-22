@@ -249,6 +249,27 @@ try {
             $ctrl->apiGetBlockStaffRouting();
             break;
 
+        case '/admin/rtps-queue':
+        case '/admin/rtps':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->rtpsQueue();
+            break;
+
+        case '/admin/rtps-queue/attach':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->attachRtpsCertificate();
+            break;
+
+        case '/admin/rtps-queue/unavailable':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->markRtpsUnavailable();
+            break;
+
+        case '/admin/rtps-queue/trigger':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->triggerRtpsQueueCheck();
+            break;
+
         case '/admin/users':
             $ctrl = new \App\Controllers\AdminController();
             $ctrl->users();

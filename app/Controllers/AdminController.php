@@ -14,6 +14,7 @@ use Exception;
 class AdminController
 {
     use \App\Controllers\Traits\UserDirectoryTrait;
+    use \App\Controllers\Traits\RtpsQueueTrait;
 
     public function __construct()
     {
@@ -36,9 +37,16 @@ class AdminController
         $isOperatorMode = ($activeMode === 'OPERATOR' && AuthService::canAccessOperatorMode());
 
         if ($role === 'OPERATOR' || $isOperatorMode) {
-            if ($uri !== '/admin/dashboard' && $uri !== '/admin/applications') {
+            $allowedOperatorUris = [
+                '/admin/dashboard',
+                '/admin/applications',
+                '/admin/rtps-queue',
+                '/admin/rtps-queue/attach',
+                '/admin/rtps-queue/unavailable'
+            ];
+            if (!in_array($uri, $allowedOperatorUris, true)) {
                 http_response_code(403);
-                $_SESSION['flash_error'] = 'Access denied: Staff are restricted to Dashboard and Applications processing.';
+                $_SESSION['flash_error'] = 'Access denied: Staff are restricted to Dashboard, Applications, and RTPS Certificate processing.';
                 header('Location: /admin/dashboard');
                 exit;
             }

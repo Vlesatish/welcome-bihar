@@ -391,10 +391,14 @@ window.filterByStatus = function (st) {
                                 <div class="d-inline-flex align-items-center justify-content-end gap-1.5 flex-nowrap">
                                     <?php if (!empty($app['result_file'])): ?>
                                         <a href="<?= e($app['result_file']) ?>" target="_blank" download
-                                           class="btn btn-xs btn-outline-success fw-bold rounded-2 shadow-2xs"
-                                           title="Download Result Document">
-                                            <i class="bi bi-download"></i>
+                                           class="btn btn-xs btn-success fw-bold rounded-2 px-2 shadow-2xs text-nowrap"
+                                           title="Download RTPS Certificate">
+                                            <i class="bi bi-file-earmark-pdf-fill me-1"></i>Download Certificate
                                         </a>
+                                    <?php elseif ($app['status'] === 'IN_PROCESS'): ?>
+                                        <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle py-1 px-1.5 text-nowrap" style="font-size: 0.68rem;" title="Automatic RTPS Check Scheduled for 12:00 AM">
+                                            <i class="bi bi-clock-history me-1"></i>RTPS Check (12 AM)
+                                        </span>
                                     <?php endif; ?>
 
                                     <button type="button"
@@ -719,10 +723,12 @@ document.addEventListener('DOMContentLoaded', function () {
         }
         if (app.admin_remarks || app.remarks) addDetailRow(tbody, 'REMARKS / NOTE', app.admin_remarks || app.remarks);
         if (app.result_file) {
-            addDetailRow(tbody, 'RESULT DOCUMENT', `<div class="d-flex gap-2 align-items-center">
-                <button type="button" class="btn btn-xs btn-outline-success py-1 px-2.5 rounded-pill fw-bold" onclick="viewResultFile('${app.result_file}', '${app.app_ref || app.id}')"><i class="bi bi-file-earmark-check"></i> View Result</button>
-                <a href="${app.result_file}" target="_blank" download class="btn btn-xs btn-success py-1 px-2.5 rounded-pill fw-bold"><i class="bi bi-download"></i> Download</a>
+            addDetailRow(tbody, 'CERTIFICATE (PDF)', `<div class="d-flex gap-2 align-items-center">
+                <a href="${app.result_file}" target="_blank" download class="btn btn-sm btn-success py-1 px-3 rounded-2 fw-bold shadow-sm"><i class="bi bi-file-earmark-pdf-fill me-1"></i> Download Certificate (PDF)</a>
+                <button type="button" class="btn btn-sm btn-outline-success py-1 px-2.5 rounded-2 fw-bold" onclick="viewResultFile('${app.result_file}', '${app.app_ref || app.id}')"><i class="bi bi-eye me-1"></i> Preview</button>
             </div>`);
+        } else if (app.status === 'IN_PROCESS') {
+            addDetailRow(tbody, 'RTPS QUEUE STATUS', `<span class="badge bg-info-subtle text-info-emphasis border border-info-subtle px-2 py-1"><i class="bi bi-clock-history me-1"></i> Queued for automatic nightly check (Every night at 12:00 AM Asia/Kolkata)</span>`);
         }
 
         // Extra dynamic fields

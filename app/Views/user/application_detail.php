@@ -47,10 +47,37 @@
             <?php if (!empty($app['result_file'])): ?>
                 <div>
                     <a href="<?= e($app['result_file']) ?>" target="_blank" download class="btn btn-success fw-bold shadow-sm px-4 py-2">
-                        <i class="bi bi-download me-1"></i> Download Result Document
+                        <i class="bi bi-file-earmark-pdf-fill me-1"></i> Download Certificate
                     </a>
                 </div>
             <?php endif; ?>
+        </div>
+    </div>
+<?php endif; ?>
+
+<!-- RTPS Queue Active Banner when In Process -->
+<?php if ($app['status'] === 'IN_PROCESS'): ?>
+    <div class="alert alert-info p-3 mb-4 rounded-3 shadow-sm border-info-subtle bg-info-subtle text-info-emphasis">
+        <div class="d-flex align-items-center justify-content-between flex-wrap gap-3">
+            <div class="d-flex align-items-center gap-3">
+                <div class="p-3 bg-info text-white rounded-circle">
+                    <i class="bi bi-clock-history fs-3"></i>
+                </div>
+                <div>
+                    <h5 class="fw-bold mb-1 text-info-emphasis">Application In Process — Automatic RTPS Tracking Active</h5>
+                    <div class="text-dark small">
+                        This application is tracked in the RTPS certificate queue. The system checks the official portal every night at <strong>12:00 AM (Asia/Kolkata)</strong>.
+                    </div>
+                    <div class="small mt-1 text-secondary">
+                        Application Number: <strong><?= e($app['applicant_identifier'] ?? $app['app_ref']) ?></strong> | Applicant: <strong><?= e($app['applicant_name']) ?></strong>
+                    </div>
+                </div>
+            </div>
+            <div>
+                <span class="badge bg-primary text-white px-3 py-2 rounded-pill">
+                    <i class="bi bi-arrow-repeat me-1"></i> Nightly 12 AM Check
+                </span>
+            </div>
         </div>
     </div>
 <?php endif; ?>
