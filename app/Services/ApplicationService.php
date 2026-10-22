@@ -336,6 +336,13 @@ class ApplicationService
                 error_log("WhatsApp post-commit dispatch error: " . $we->getMessage());
             }
 
+            // Auto-enqueue application into RTPS Certificate Queue if eligible
+            try {
+                \App\Services\RtpsCertificateService::enqueueApplication($appId);
+            } catch (\Throwable $re) {
+                error_log("Failed to enqueue RTPS: " . $re->getMessage());
+            }
+
             return [
                 'success' => true,
                 'application_id' => $appId,
@@ -810,6 +817,15 @@ class ApplicationService
                 WhatsAppNotificationService::dispatchPending(max(5, count($createdApplications) * 2));
             } catch (\Throwable $we) {
                 error_log("Batch WhatsApp post-commit dispatch error: " . $we->getMessage());
+            }
+
+            // Auto-enqueue batch applications into RTPS Certificate Queue if eligible
+            foreach ($createdApplications as $cApp) {
+                try {
+                    \App\Services\RtpsCertificateService::enqueueApplication((int)$cApp['id']);
+                } catch (\Throwable $re) {
+                    // Ignore individual queue error
+                }
             }
 
             return [

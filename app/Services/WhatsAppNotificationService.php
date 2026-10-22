@@ -1489,6 +1489,13 @@ class WhatsAppNotificationService
                                 'outbox_id' => $rowId,
                                 'trigger' => 'WHATSAPP_CONFIRMED_SENT'
                             ]);
+
+                            // Auto-enqueue application into RTPS Certificate Check Queue if eligible
+                            try {
+                                \App\Services\RtpsCertificateService::enqueueApplication($appId);
+                            } catch (\Throwable $qe) {
+                                error_log("Failed to enqueue application {$appId} to RTPS Queue: " . $qe->getMessage());
+                            }
                         }
                     }
                 } catch (\Throwable $e) {

@@ -50,7 +50,7 @@ trait ApplicationStatusTrait
             $currentStatus = $app['status'];
 
             // Strict Self-Processing Protection: A user must never process their own submitted application
-            if ((int)$app['user_id'] === $actorUserId && $actorRole !== 'ADMIN') {
+            if ((int)$app['user_id'] === $actorUserId && !in_array($actorRole, ['ADMIN', 'SYSTEM'], true)) {
                 AuditService::log('SELF_ASSIGNMENT_PREVENTED', 'APPLICATION', (string)$appId, [
                     'user_id' => $actorUserId,
                     'reason' => 'Attempted to process/update status on self-submitted application'
@@ -64,7 +64,7 @@ trait ApplicationStatusTrait
             }
 
             // 1. Role-based authorization: Pure USER cannot update status
-            if ($actorRole === 'USER' || !in_array($actorRole, ['ADMIN', 'OPERATOR', 'DISTRIBUTOR'], true)) {
+            if ($actorRole === 'USER' || !in_array($actorRole, ['ADMIN', 'OPERATOR', 'DISTRIBUTOR', 'SYSTEM'], true)) {
                 throw new Exception("Unauthorized: Role '{$actorRole}' is not permitted to update application status.");
             }
 

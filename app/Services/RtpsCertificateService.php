@@ -164,6 +164,163 @@ class RtpsCertificateService
     }
 
     /**
+     * Connects to Bihar RTPS portal session, fetches form token,
+     * submits application reference & applicant name, and returns PDF binary if ready.
+     */
+    public static function fetchCertificateFromPortal(
+        string $applicationNumber,
+        string $applicantName,
+        string $serviceType = 'RTPS'
+    ): array {
+        $appNum = trim($applicationNumber);
+        $cleanName = ucwords(strtolower(trim($applicantName)));
+        $service = strtoupper(trim($serviceType)) ?: 'RTPS';
+
+        if (empty($appNum) || empty($cleanName)) {
+            return [
+                'success' => false,
+                'message' => 'Missing Application Number or Applicant Name for portal check.'
+            ];
+        }
+
+        $cookieJar = tempnam(sys_get_temp_dir(), 'rtps_ck_');
+
+        try {
+            // Step 1: Open initial portal page to obtain valid session cookie and form action
+            $ch1 = curl_init(self::PORTAL_URL);
+            curl_setopt($ch1, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch1, CURLOPT_COOKIEJAR, $cookieJar);
+            curl_setopt($ch1, CURLOPT_COOKIEFILE, $cookieJar);
+            curl_setopt($ch1, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch1, CURLOPT_TIMEOUT, 20);
+            curl_setopt($ch1, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+            $html = curl_exec($ch1);
+            $initHttpCode = curl_getinfo($ch1, CURLINFO_HTTP_CODE);
+            curl_close($ch1);
+
+            if ($initHttpCode !== 200 || empty($html)) {
+                return [
+                    'success' => false,
+                    'message' => "Government RTPS portal unreachable (HTTP {$initHttpCode}). Will retry at scheduled time."
+                ];
+            }
+
+            // Extract dynamic action URL (contains ;jsessionid=...)
+            $actionUrl = self::PORTAL_DOWNLOAD_ACTION;
+            if (preg_match('/action="([^"]+)"/i', $html, $m)) {
+                $rawAction = trim($m[1]);
+                if (strpos($rawAction, 'http') === 0) {
+                    $actionUrl = $rawAction;
+                } else {
+                    $actionUrl = 'https://swcs.bihar.gov.in' . (strpos($rawAction, '/') === 0 ? '' : '/') . $rawAction;
+                }
+            }
+
+            // Step 2: Post payload to certificate download handler
+            $postData = [
+                'serviceType' => $service,
+                'appl_ref_no' => $appNum,
+                'applicant_name_en' => $cleanName,
+                'captcha' => ''
+            ];
+
+            $ch2 = curl_init($actionUrl);
+            curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch2, CURLOPT_COOKIEJAR, $cookieJar);
+            curl_setopt($ch2, CURLOPT_COOKIEFILE, $cookieJar);
+            curl_setopt($ch2, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch2, CURLOPT_POST, true);
+            curl_setopt($ch2, CURLOPT_POSTFIELDS, http_build_query($postData));
+            curl_setopt($ch2, CURLOPT_TIMEOUT, 30);
+            curl_setopt($ch2, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+            $resp = curl_exec($ch2);
+            $httpCode = curl_getinfo($ch2, CURLINFO_HTTP_CODE);
+            curl_close($ch2);
+
+            // Step 3: Validate if response is genuine official PDF
+            if ($httpCode === 200 && is_string($resp) && strlen($resp) >= 500 && strncmp($resp, '%PDF-', 5) === 0) {
+                return [
+                    'success' => true,
+                    'pdf' => $resp,
+                    'size' => strlen($resp),
+                    'message' => 'Official certificate PDF successfully retrieved from Bihar RTPS portal.'
+                ];
+            }
+
+            // If not a PDF, portal returned HTML indicating pending or not generated yet
+            return [
+                'success' => false,
+                'message' => 'Certificate not yet generated or pending on RTPS portal. Next check scheduled at 12:00 AM.'
+            ];
+        } catch (\Throwable $e) {
+            return [
+                'success' => false,
+                'message' => 'Portal communication exception: ' . $e->getMessage()
+            ];
+        } finally {
+            if (file_exists($cookieJar)) {
+                @unlink($cookieJar);
+            }
+        }
+    }
+
+    /**
+     * Perform an immediate portal check for a single application and attach if ready
+     */
+    public static function checkAndProcessApplication(int $appId): array
+    {
+        $db = Database::getConnection();
+
+        $stmt = $db->prepare("
+            SELECT id, app_ref, application_code, applicant_identifier, applicant_name, status, result_file
+            FROM applications
+            WHERE id = ?
+            LIMIT 1
+        ");
+        $stmt->execute([$appId]);
+        $app = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$app) {
+            return ['success' => false, 'message' => "Application ID {$appId} not found."];
+        }
+
+        if (!empty($app['result_file']) && $app['status'] === 'COMPLETED') {
+            return ['success' => true, 'already_completed' => true, 'result_file' => $app['result_file']];
+        }
+
+        $appNum = trim((string)$app['applicant_identifier']);
+        $applicantName = trim((string)$app['applicant_name']);
+        $serviceType = self::resolveServiceType((string)$app['application_code']);
+
+        // Update queue item to CHECKING
+        $db->prepare("UPDATE rtps_certificate_queue SET status = 'CHECKING', updated_at = NOW() WHERE application_id = ?")
+           ->execute([$appId]);
+
+        $fetchRes = self::fetchCertificateFromPortal($appNum, $applicantName, $serviceType);
+
+        if (!empty($fetchRes['success']) && !empty($fetchRes['pdf'])) {
+            // Attach genuine PDF and transition status to COMPLETED
+            $attachRes = self::attachCertificatePdf($appId, $fetchRes['pdf'], null, null, 'SYSTEM');
+            return [
+                'success' => true,
+                'status' => 'ATTACHED',
+                'app_id' => $appId,
+                'result_file' => $attachRes['result_file'],
+                'message' => 'Official certificate PDF downloaded and attached automatically in background.'
+            ];
+        }
+
+        // Not ready yet: mark unavailable and reschedule for 12:00 AM
+        self::markCertificateUnavailable($appId, $fetchRes['message'] ?? 'Certificate not yet generated on portal');
+        return [
+            'success' => false,
+            'status' => 'UNAVAILABLE',
+            'app_id' => $appId,
+            'message' => $fetchRes['message'] ?? 'Certificate pending on portal; scheduled for 12:00 AM check.'
+        ];
+    }
+
+    /**
      * Attach downloaded certificate PDF to application and mark it APPROVED/COMPLETED
      */
     public static function attachCertificatePdf(
@@ -367,10 +524,46 @@ class RtpsCertificateService
     }
 
     /**
+     * Auto-enqueues any applications in IN_PROCESS or PENDING state with RTPS codes
+     * that are not yet in rtps_certificate_queue
+     */
+    public static function syncMissingApplications(): int
+    {
+        $db = Database::getConnection();
+        $stmt = $db->query("
+            SELECT a.id
+            FROM applications a
+            LEFT JOIN rtps_certificate_queue q ON q.application_id = a.id
+            WHERE q.id IS NULL
+              AND a.status IN ('IN_PROCESS', 'PENDING', 'UNDER_REVIEW')
+              AND a.result_file IS NULL
+              AND a.applicant_identifier IS NOT NULL
+              AND a.applicant_identifier != ''
+              AND (
+                  a.application_code IN ('BRCCO', 'BCCCO', 'BICCO', 'BOBC', 'NCLCO', 'ROTI', 'RTPS')
+                  OR a.applicant_identifier LIKE 'B%/%'
+              )
+            ORDER BY a.id DESC
+            LIMIT 100
+        ");
+        $missing = $stmt->fetchAll(PDO::FETCH_COLUMN);
+        $count = 0;
+        foreach ($missing as $appId) {
+            if (self::enqueueApplication((int)$appId)) {
+                $count++;
+            }
+        }
+        return $count;
+    }
+
+    /**
      * Process scheduled queue checks (12:00 AM scheduled runner or manual trigger)
      */
     public static function processScheduledQueue(int $limit = 50, bool $force = false): array
     {
+        // First sync any missing applications
+        self::syncMissingApplications();
+
         $db = Database::getConnection();
 
         $sql = "
@@ -401,25 +594,32 @@ class RtpsCertificateService
             $processed++;
             $appId = (int)$item['application_id'];
 
-            // Prepare checking payload
-            $payload = [
-                'serviceType' => $item['service_type'],
-                'appl_ref_no' => $item['application_number'],
-                'applicant_name_en' => $item['applicant_name']
-            ];
-
             // Mark status CHECKING
             $db->prepare("UPDATE rtps_certificate_queue SET status = 'CHECKING', updated_at = NOW() WHERE id = ?")
                ->execute([$item['id']]);
 
-            // Note: Since Government portal uses CAPTCHA that must not be automatically solved or bypassed,
-            // this scheduled run prepares the item for authorized operator / browser portal session checking.
-            // If the certificate is not yet ready or verified, next check is scheduled for 12:00 AM.
-            self::markCertificateUnavailable(
-                $appId,
-                'Checked on ' . date('d M Y, h:i A') . ' (12:00 AM cycle). Certificate pending on portal; next check scheduled for 12:00 AM.'
-            );
-            $unavailable++;
+            try {
+                // Fetch certificate from Bihar RTPS official portal
+                $fetchRes = self::fetchCertificateFromPortal(
+                    (string)$item['application_number'],
+                    (string)$item['applicant_name'],
+                    (string)$item['service_type']
+                );
+
+                if (!empty($fetchRes['success']) && !empty($fetchRes['pdf'])) {
+                    self::attachCertificatePdf($appId, $fetchRes['pdf'], null, null, 'SYSTEM');
+                    $ready++;
+                } else {
+                    self::markCertificateUnavailable(
+                        $appId,
+                        $fetchRes['message'] ?? 'Certificate pending on portal; next check scheduled for 12:00 AM.'
+                    );
+                    $unavailable++;
+                }
+            } catch (\Throwable $e) {
+                self::markPortalError($appId, 'Verification error: ' . $e->getMessage());
+                $errors++;
+            }
         }
 
         return [
@@ -437,6 +637,7 @@ class RtpsCertificateService
      */
     public static function getQueueStats(): array
     {
+        self::syncMissingApplications();
         $db = Database::getConnection();
 
         $row = $db->query("
@@ -468,6 +669,7 @@ class RtpsCertificateService
      */
     public static function getQueueItems(array $filters = [], int $page = 1, int $perPage = 25): array
     {
+        self::syncMissingApplications();
         $db = Database::getConnection();
 
         $where = ["1=1"];
