@@ -1,84 +1,264 @@
 <?php require dirname(__DIR__) . '/layouts/header.php'; ?>
 
+<!-- Page Title & Primary Actions -->
 <div class="row align-items-center mb-4 g-3">
-    <div class="col-md-7">
-        <h1 class="h3 fw-bold mb-1">
-            <i class="bi bi-people-fill text-primary me-2"></i>Users & Block Operators
+    <div class="col-md-6">
+        <h1 class="h3 fw-bold mb-1 d-flex align-items-center gap-2">
+            <i class="bi bi-people-fill text-primary"></i>
+            <span>Users & Location Directory</span>
         </h1>
-        <p class="text-muted mb-0">Manage Block Operators, Regional Distributors, Kiosks & Administrator Accounts</p>
+        <p class="text-muted mb-0">District & Block Directory of Kiosks, Retailers, Operators & Administrators</p>
     </div>
-    <div class="col-md-5 text-md-end d-flex gap-2 justify-content-md-end">
+    <div class="col-md-6 text-md-end d-flex gap-2 justify-content-md-end flex-wrap">
+        <a href="/admin/users/location-report" class="btn btn-warning fw-bold shadow-sm text-dark">
+            <i class="bi bi-geo-alt-fill me-1"></i> Location Report
+        </a>
+        <a href="/admin/users/export-csv?<?= e($queryString) ?>" class="btn btn-outline-success fw-bold shadow-sm bg-white">
+            <i class="bi bi-file-earmark-spreadsheet me-1"></i> Export CSV
+        </a>
         <button type="button" class="btn btn-success fw-bold shadow-sm" data-bs-toggle="modal" data-bs-target="#grantOperatorModal">
-            <i class="bi bi-person-gear me-1"></i> Grant Operator Access
+            <i class="bi bi-person-gear me-1"></i> Grant Operator
         </button>
         <button type="button" class="btn btn-primary fw-bold shadow-sm" data-bs-toggle="modal" data-bs-target="#addOperatorModal">
-            <i class="bi bi-person-plus-fill me-1"></i> Add Block Operator
+            <i class="bi bi-person-plus-fill me-1"></i> Add Operator
         </button>
     </div>
 </div>
 
-<!-- Filters Card -->
-<div class="wb-card mb-4">
-    <div class="card-body p-3">
-        <form method="GET" action="/admin/users" class="row g-2 align-items-center">
-            <div class="col-md-4">
-                <input type="text" name="search" class="form-control" placeholder="Search Name / Mobile / Email / Center..." value="<?= e($search) ?>">
+<!-- Summary KPI Cards -->
+<div class="row g-3 mb-4">
+    <!-- Total Registered Users -->
+    <div class="col-6 col-md-2">
+        <a href="/admin/users" class="text-decoration-none">
+            <div class="wb-card h-100 p-3 border rounded-3 bg-white shadow-2xs hover-shadow transition">
+                <div class="d-flex align-items-center justify-content-between mb-1">
+                    <span class="text-muted small fw-semibold">Total Users</span>
+                    <span class="badge bg-primary-subtle text-primary rounded-circle p-1"><i class="bi bi-people fs-6"></i></span>
+                </div>
+                <div class="fs-4 fw-bold text-dark"><?= number_format($statTotal) ?></div>
+                <div class="small text-muted">Registered in Portal</div>
             </div>
+        </a>
+    </div>
+
+    <!-- Location Set -->
+    <div class="col-6 col-md-2">
+        <a href="/admin/users?location_status=SET" class="text-decoration-none">
+            <div class="wb-card h-100 p-3 border rounded-3 bg-white shadow-2xs hover-shadow transition <?= $locationStatus === 'SET' ? 'border-success border-2' : '' ?>">
+                <div class="d-flex align-items-center justify-content-between mb-1">
+                    <span class="text-success small fw-semibold">Location Set</span>
+                    <span class="badge bg-success-subtle text-success rounded-circle p-1"><i class="bi bi-geo-alt-fill fs-6"></i></span>
+                </div>
+                <div class="fs-4 fw-bold text-success"><?= number_format($statLocationSet) ?></div>
+                <div class="small text-muted">Dist & Block Configured</div>
+            </div>
+        </a>
+    </div>
+
+    <!-- Location Not Set -->
+    <div class="col-6 col-md-2">
+        <a href="/admin/users?location_status=NOT_SET" class="text-decoration-none">
+            <div class="wb-card h-100 p-3 border rounded-3 bg-white shadow-2xs hover-shadow transition <?= $locationStatus === 'NOT_SET' ? 'border-warning border-2' : '' ?>">
+                <div class="d-flex align-items-center justify-content-between mb-1">
+                    <span class="text-warning-emphasis small fw-semibold">Location Missing</span>
+                    <span class="badge bg-warning-subtle text-warning-emphasis rounded-circle p-1"><i class="bi bi-exclamation-triangle-fill fs-6"></i></span>
+                </div>
+                <div class="fs-4 fw-bold text-warning-emphasis"><?= number_format($statLocationNotSet) ?></div>
+                <div class="small text-muted">Needs Location Setup</div>
+            </div>
+        </a>
+    </div>
+
+    <!-- Active Users -->
+    <div class="col-6 col-md-2">
+        <a href="/admin/users?status=ACTIVE" class="text-decoration-none">
+            <div class="wb-card h-100 p-3 border rounded-3 bg-white shadow-2xs hover-shadow transition <?= $status === 'ACTIVE' ? 'border-primary border-2' : '' ?>">
+                <div class="d-flex align-items-center justify-content-between mb-1">
+                    <span class="text-primary small fw-semibold">Active Users</span>
+                    <span class="badge bg-primary-subtle text-primary rounded-circle p-1"><i class="bi bi-check2-circle fs-6"></i></span>
+                </div>
+                <div class="fs-4 fw-bold text-primary"><?= number_format($statActive) ?></div>
+                <div class="small text-muted">Enabled Accounts</div>
+            </div>
+        </a>
+    </div>
+
+    <!-- Inactive Users -->
+    <div class="col-6 col-md-2">
+        <a href="/admin/users?status=INACTIVE" class="text-decoration-none">
+            <div class="wb-card h-100 p-3 border rounded-3 bg-white shadow-2xs hover-shadow transition <?= $status === 'INACTIVE' ? 'border-danger border-2' : '' ?>">
+                <div class="d-flex align-items-center justify-content-between mb-1">
+                    <span class="text-danger small fw-semibold">Inactive / Blocked</span>
+                    <span class="badge bg-danger-subtle text-danger rounded-circle p-1"><i class="bi bi-slash-circle fs-6"></i></span>
+                </div>
+                <div class="fs-4 fw-bold text-danger"><?= number_format($statInactive) ?></div>
+                <div class="small text-muted">Suspended Accounts</div>
+            </div>
+        </a>
+    </div>
+
+    <!-- Invalid Location Flag (if any exists) -->
+    <div class="col-6 col-md-2">
+        <a href="/admin/users?location_status=INVALID" class="text-decoration-none">
+            <div class="wb-card h-100 p-3 border rounded-3 bg-white shadow-2xs hover-shadow transition <?= $locationStatus === 'INVALID' ? 'border-danger border-2' : '' ?>">
+                <div class="d-flex align-items-center justify-content-between mb-1">
+                    <span class="text-danger small fw-semibold">Invalid Pairs</span>
+                    <span class="badge bg-danger-subtle text-danger rounded-circle p-1"><i class="bi bi-shuffle fs-6"></i></span>
+                </div>
+                <div class="fs-4 fw-bold <?= $statInvalid > 0 ? 'text-danger' : 'text-secondary' ?>"><?= number_format($statInvalid) ?></div>
+                <div class="small text-muted">Cross-Dist Blocks</div>
+            </div>
+        </a>
+    </div>
+</div>
+
+<?php if (!empty($locationMismatch)): ?>
+    <div class="alert alert-warning border shadow-xs d-flex align-items-center py-2 px-3 mb-4 rounded-3">
+        <i class="bi bi-exclamation-triangle-fill fs-5 text-warning me-2"></i>
+        <div>The selected Block does not belong to the selected District. The Block filter was automatically cleared to prevent invalid results.</div>
+    </div>
+<?php endif; ?>
+
+<!-- Compact Separate Filter Section -->
+<div class="wb-card mb-4 border rounded-3 bg-white shadow-2xs">
+    <div class="card-header bg-white py-2.5 px-3 border-bottom d-flex align-items-center justify-content-between">
+        <div class="d-flex align-items-center gap-2">
+            <i class="bi bi-funnel-fill text-primary"></i>
+            <span class="fw-bold small text-dark">Directory Filters & Search</span>
+        </div>
+        <div class="small text-muted">
+            Found <strong><?= number_format($totalRecords) ?></strong> matching user(s)
+        </div>
+    </div>
+    <div class="card-body p-3">
+        <form method="GET" action="/admin/users" id="userDirectoryFilterForm" class="row g-2 align-items-end">
+            <!-- Search -->
             <div class="col-md-3">
-                <select name="role" class="form-select">
+                <label class="form-label small fw-semibold text-secondary mb-1">Search Keywords</label>
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text bg-light border-end-0"><i class="bi bi-search text-muted"></i></span>
+                    <input type="text" name="search" class="form-control border-start-0" placeholder="Name / Mobile / Email / Center..." value="<?= e($search) ?>">
+                </div>
+            </div>
+
+            <!-- Role Filter -->
+            <div class="col-6 col-md-2">
+                <label class="form-label small fw-semibold text-secondary mb-1">User Role</label>
+                <select name="role" class="form-select form-select-sm">
                     <option value="">-- All Roles --</option>
+                    <option value="USER" <?= $role === 'USER' ? 'selected' : '' ?>>Retailer / Kiosk</option>
                     <option value="OPERATOR" <?= $role === 'OPERATOR' ? 'selected' : '' ?>>Block Operator</option>
-                    <option value="USER" <?= $role === 'USER' ? 'selected' : '' ?>><?= e(__('role_user')) ?></option>
-                    <option value="DISTRIBUTOR" <?= $role === 'DISTRIBUTOR' ? 'selected' : '' ?>><?= e(__('role_distributor')) ?></option>
-                    <option value="ADMIN" <?= $role === 'ADMIN' ? 'selected' : '' ?>><?= e(__('role_admin')) ?></option>
+                    <option value="DISTRIBUTOR" <?= $role === 'DISTRIBUTOR' ? 'selected' : '' ?>>Distributor</option>
+                    <option value="ADMIN" <?= $role === 'ADMIN' ? 'selected' : '' ?>>Administrator</option>
                 </select>
             </div>
-            <div class="col-md-3">
-                <select name="status" class="form-select">
-                    <option value="">-- All Statuses --</option>
+
+            <!-- Status Filter -->
+            <div class="col-6 col-md-1">
+                <label class="form-label small fw-semibold text-secondary mb-1">Status</label>
+                <select name="status" class="form-select form-select-sm">
+                    <option value="">-- All --</option>
                     <option value="ACTIVE" <?= $status === 'ACTIVE' ? 'selected' : '' ?>>ACTIVE</option>
                     <option value="INACTIVE" <?= $status === 'INACTIVE' ? 'selected' : '' ?>>INACTIVE</option>
                     <option value="BLOCKED" <?= $status === 'BLOCKED' ? 'selected' : '' ?>>BLOCKED</option>
                 </select>
             </div>
-            <div class="col-md-2 d-flex gap-2">
-                <button type="submit" class="btn btn-primary w-100 fw-semibold">
-                    <i class="bi bi-filter"></i> Filter
+
+            <!-- Location Status Filter -->
+            <div class="col-6 col-md-2">
+                <label class="form-label small fw-semibold text-secondary mb-1">Location Status</label>
+                <select name="location_status" class="form-select form-select-sm">
+                    <option value="">-- All Locations --</option>
+                    <option value="SET" <?= $locationStatus === 'SET' ? 'selected' : '' ?>>Configured (Location Set)</option>
+                    <option value="NOT_SET" <?= $locationStatus === 'NOT_SET' ? 'selected' : '' ?>>Location Not Set</option>
+                    <option value="INVALID" <?= $locationStatus === 'INVALID' ? 'selected' : '' ?>>Invalid District/Block</option>
+                </select>
+            </div>
+
+            <!-- District Dropdown -->
+            <div class="col-6 col-md-2">
+                <label class="form-label small fw-semibold text-secondary mb-1">Profile District</label>
+                <select name="district_id" id="filter_district_id" class="form-select form-select-sm" onchange="onFilterDistrictChange(this.value)">
+                    <option value="">-- All Districts --</option>
+                    <?php foreach ($districts as $d): ?>
+                        <option value="<?= (int)$d['id'] ?>" <?= (int)$districtId === (int)$d['id'] ? 'selected' : '' ?>>
+                            <?= e($d['name']) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+
+            <!-- Block Dropdown (Cascading) -->
+            <div class="col-6 col-md-2">
+                <label class="form-label small fw-semibold text-secondary mb-1">Profile Block</label>
+                <select name="block_id" id="filter_block_id" class="form-select form-select-sm" <?= empty($districtId) ? 'disabled' : '' ?>>
+                    <option value="">-- All Blocks --</option>
+                    <?php foreach ($availableFilterBlocks as $b): ?>
+                        <option value="<?= (int)$b['id'] ?>" <?= (int)$blockId === (int)$b['id'] ? 'selected' : '' ?>>
+                            <?= e($b['name']) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+
+            <!-- Registration Date Filter -->
+            <div class="col-6 col-md-2">
+                <label class="form-label small fw-semibold text-secondary mb-1">Registered Date</label>
+                <select name="date_filter" class="form-select form-select-sm">
+                    <option value="ALL" <?= $dateFilter === 'ALL' ? 'selected' : '' ?>>All Time</option>
+                    <option value="TODAY" <?= $dateFilter === 'TODAY' ? 'selected' : '' ?>>Registered Today</option>
+                    <option value="WEEK" <?= $dateFilter === 'WEEK' ? 'selected' : '' ?>>Last 7 Days</option>
+                    <option value="MONTH" <?= $dateFilter === 'MONTH' ? 'selected' : '' ?>>Last 30 Days</option>
+                </select>
+            </div>
+
+            <!-- Filter & Reset Buttons -->
+            <div class="col-12 col-md-3 d-flex gap-2 ms-auto">
+                <button type="submit" class="btn btn-primary btn-sm w-100 fw-semibold">
+                    <i class="bi bi-filter"></i> Apply Filter
                 </button>
-                <a href="/admin/users" class="btn btn-outline-secondary" title="Reset Filters">
-                    <i class="bi bi-arrow-counterclockwise"></i>
+                <a href="/admin/users" class="btn btn-outline-secondary btn-sm px-3" title="Clear All Filters">
+                    <i class="bi bi-arrow-counterclockwise"></i> Reset
                 </a>
             </div>
         </form>
     </div>
 </div>
 
-<!-- Users Table -->
-<div class="wb-card">
+<!-- Users Table Card -->
+<div class="wb-card border rounded-3 bg-white shadow-2xs mb-4">
     <div class="card-body p-0">
         <div class="table-responsive">
             <table class="table table-hover align-middle mb-0">
-                <thead class="table-light">
-                    <tr>
-                        <th>User</th>
+                <thead class="table-light border-bottom">
+                    <tr class="small text-uppercase text-secondary">
+                        <th>User Name</th>
+                        <th>Mobile</th>
+                        <th>Center / Kiosk</th>
                         <th>Role</th>
-                        <th>Assigned District</th>
-                        <th>Assigned Block</th>
+                        <th>Profile District</th>
+                        <th>Profile Block</th>
                         <th>Status</th>
+                        <th>Registered Date</th>
+                        <th class="text-center">Applications</th>
                         <th class="text-end">Manage</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php if (empty($users)): ?>
                         <tr>
-                            <td colspan="6" class="text-center py-4 text-muted">
-                                <i class="bi bi-inbox fs-3 d-block mb-1 text-secondary"></i>
-                                No users or operators found matching the criteria.
+                            <td colspan="10" class="text-center py-5 text-muted">
+                                <i class="bi bi-inbox fs-2 d-block mb-2 text-secondary"></i>
+                                <span class="fw-semibold">No users or operators found matching the criteria.</span>
+                                <div class="mt-2">
+                                    <a href="/admin/users" class="btn btn-sm btn-outline-primary">Reset Filters</a>
+                                </div>
                             </td>
                         </tr>
                     <?php else: ?>
                         <?php foreach ($users as $u): ?>
                             <tr>
+                                <!-- User Name -->
                                 <td>
                                     <div class="fw-bold text-dark">
                                         <a href="/admin/users/detail?id=<?= $u['id'] ?>" class="text-decoration-none">
@@ -86,15 +266,31 @@
                                         </a>
                                     </div>
                                     <div class="small text-muted">
-                                        <i class="bi bi-telephone me-1"></i><?= e($u['mobile']) ?>
                                         <?php if (!empty($u['email'])): ?>
-                                            &bull; <?= e($u['email']) ?>
-                                        <?php endif; ?>
-                                        <?php if (!empty($u['center_name'])): ?>
-                                            &bull; <span class="badge bg-light text-secondary border"><?= e($u['center_name']) ?></span>
+                                            <span><?= e($u['email']) ?></span>
                                         <?php endif; ?>
                                     </div>
                                 </td>
+
+                                <!-- Mobile -->
+                                <td>
+                                    <span class="font-monospace small fw-semibold text-dark">
+                                        <?= e($u['mobile']) ?>
+                                    </span>
+                                </td>
+
+                                <!-- Center / Kiosk Name -->
+                                <td>
+                                    <?php if (!empty($u['center_name'])): ?>
+                                        <span class="fw-semibold text-dark small">
+                                            <i class="bi bi-shop me-1 text-secondary"></i><?= e($u['center_name']) ?>
+                                        </span>
+                                    <?php else: ?>
+                                        <span class="text-muted small">-</span>
+                                    <?php endif; ?>
+                                </td>
+
+                                <!-- Role -->
                                 <td>
                                     <?php if ($u['role'] === 'OPERATOR'): ?>
                                         <span class="badge bg-primary-subtle text-primary border border-primary-subtle fw-bold px-2 py-1">
@@ -102,11 +298,11 @@
                                         </span>
                                     <?php elseif ($u['role'] === 'USER' && (int)($u['operator_access_active'] ?? 0) === 1): ?>
                                         <span class="badge bg-warning-subtle text-warning-emphasis border border-warning fw-bold px-2 py-1" title="Dual Role: Retailer with active Operator permissions">
-                                            <i class="bi bi-person-gear me-1"></i>Retailer + Operator
+                                            <i class="bi bi-person-gear me-1"></i>Retailer + Op
                                         </span>
                                     <?php elseif ($u['role'] === 'USER' && (int)($u['has_operator_assignment'] ?? 0) > 0): ?>
                                         <span class="badge bg-secondary-subtle text-secondary border px-2 py-1" title="Operator permissions suspended">
-                                            <i class="bi bi-shop me-1"></i>Retailer <span class="text-danger small">(Op Suspended)</span>
+                                            <i class="bi bi-shop me-1"></i>Retailer <span class="text-danger small">(Op Off)</span>
                                         </span>
                                     <?php elseif ($u['role'] === 'USER'): ?>
                                         <span class="badge bg-light text-secondary border px-2 py-1">
@@ -120,46 +316,65 @@
                                         <span class="badge bg-light text-secondary border px-2 py-1"><?= e($u['role']) ?></span>
                                     <?php endif; ?>
                                 </td>
+
+                                <!-- Profile District -->
                                 <td>
-                                    <?php 
-                                    $uBlocks = $userAssignedBlocks[(int)$u['id']] ?? [];
-                                    if (!empty($uBlocks)): 
-                                        $dNames = array_unique(array_column($uBlocks, 'district_name'));
-                                    ?>
-                                        <span class="fw-semibold text-dark"><i class="bi bi-geo-alt-fill text-danger me-1 small"></i><?= e(implode(', ', $dNames)) ?></span>
-                                    <?php elseif (!empty($u['assigned_district_name'])): ?>
-                                        <span class="fw-semibold text-dark"><i class="bi bi-geo-alt-fill text-danger me-1 small"></i><?= e($u['assigned_district_name']) ?></span>
-                                    <?php elseif ((int)$u['assigned_all_districts'] === 1): ?>
-                                        <span class="badge bg-success-subtle text-success border border-success">All Districts</span>
+                                    <?php if (!empty($u['profile_district_name'])): ?>
+                                        <span class="fw-semibold text-dark">
+                                            <i class="bi bi-geo-alt-fill text-danger me-1 small"></i><?= e($u['profile_district_name']) ?>
+                                        </span>
                                     <?php else: ?>
-                                        <span class="text-muted">-</span>
+                                        <span class="badge bg-secondary-subtle text-secondary border">Location Not Set</span>
                                     <?php endif; ?>
                                 </td>
+
+                                <!-- Profile Block -->
                                 <td>
-                                    <?php if (!empty($uBlocks)): ?>
-                                        <div class="d-flex flex-wrap gap-1">
-                                            <?php foreach ($uBlocks as $ub): ?>
-                                                <span class="badge <?= (int)$ub['is_active'] === 1 ? 'bg-light text-dark border' : 'bg-secondary-subtle text-secondary border' ?>" title="<?= (int)$ub['is_active'] === 1 ? 'Active Block Assignment' : 'Inactive Block Assignment' ?>">
-                                                    <?= e($ub['block_name']) ?>
-                                                    <?= (int)$ub['is_active'] === 0 ? '<span class="text-danger small">(Off)</span>' : '' ?>
-                                                </span>
-                                            <?php endforeach; ?>
-                                        </div>
-                                    <?php elseif (!empty($u['assigned_block_name'])): ?>
-                                        <span class="badge bg-light text-dark border fw-bold"><?= e($u['assigned_block_name']) ?></span>
-                                    <?php elseif ((int)$u['assigned_all_districts'] === 1): ?>
-                                        <span class="text-muted small">All Blocks</span>
+                                    <?php if (!empty($u['profile_block_name'])): ?>
+                                        <span class="badge bg-light text-dark border fw-bold"><?= e($u['profile_block_name']) ?></span>
+                                        <?php if (!empty($u['profile_district_id']) && !empty($u['block_actual_district_id']) && (int)$u['block_actual_district_id'] !== (int)$u['profile_district_id']): ?>
+                                            <span class="badge bg-danger-subtle text-danger border small" title="Block belongs to another district">Cross-Dist Mismatch</span>
+                                        <?php endif; ?>
                                     <?php else: ?>
-                                        <span class="text-muted">-</span>
+                                        <span class="badge bg-secondary-subtle text-secondary border">Location Not Set</span>
                                     <?php endif; ?>
                                 </td>
+
+                                <!-- Status -->
                                 <td>
                                     <span class="badge <?= $u['status'] === 'ACTIVE' ? 'bg-success-subtle text-success border border-success' : 'bg-danger-subtle text-danger border border-danger' ?>">
                                         <?= e($u['status']) ?>
                                     </span>
                                 </td>
+
+                                <!-- Registered Date -->
+                                <td>
+                                    <span class="small text-muted font-monospace">
+                                        <?= date('d M Y', strtotime($u['created_at'])) ?>
+                                    </span>
+                                </td>
+
+                                <!-- Applications Count -->
+                                <td class="text-center">
+                                    <?php if ((int)$u['app_count'] > 0): ?>
+                                        <a href="/admin/applications?user_id=<?= (int)$u['id'] ?>" class="badge bg-primary-subtle text-primary border text-decoration-none px-2 py-1 fw-bold">
+                                            <?= (int)$u['app_count'] ?>
+                                        </a>
+                                    <?php else: ?>
+                                        <span class="text-muted small">0</span>
+                                    <?php endif; ?>
+                                </td>
+
+                                <!-- Manage Actions -->
                                 <td class="text-end">
                                     <div class="btn-group btn-group-sm">
+                                        <!-- Quick Edit Profile Location Button -->
+                                        <button type="button" class="btn btn-outline-info btn-sm"
+                                                onclick="openEditLocationModal(<?= (int)$u['id'] ?>, '<?= htmlspecialchars($u['name'], ENT_QUOTES) ?>', '<?= htmlspecialchars($u['center_name'] ?? '', ENT_QUOTES) ?>', <?= (int)($u['profile_district_id'] ?? 0) ?>, <?= (int)($u['profile_block_id'] ?? 0) ?>, '<?= htmlspecialchars($u['center_address'] ?? '', ENT_QUOTES) ?>')"
+                                                title="Edit User Profile Location">
+                                            <i class="bi bi-geo-alt"></i> Location
+                                        </button>
+
                                         <?php if ($u['role'] === 'OPERATOR'): ?>
                                             <!-- Status Toggle Form -->
                                             <form method="POST" action="/admin/users/update-status" class="d-inline">
@@ -171,7 +386,6 @@
                                                         title="<?= $u['status'] === 'ACTIVE' ? 'Deactivate Operator' : 'Activate Operator' ?>"
                                                         onclick="return confirm('Change status of operator <?= htmlspecialchars($u['name'], ENT_QUOTES) ?> to <?= $u['status'] === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE' ?>?');">
                                                     <i class="bi <?= $u['status'] === 'ACTIVE' ? 'bi-pause-fill' : 'bi-play-fill' ?>"></i>
-                                                    <?= $u['status'] === 'ACTIVE' ? 'Deactivate' : 'Activate' ?>
                                                 </button>
                                             </form>
 
@@ -179,69 +393,29 @@
                                             <button type="button" class="btn btn-outline-primary btn-sm"
                                                     onclick="openManageOperatorModal(<?= (int)$u['id'] ?>, '<?= htmlspecialchars($u['name'], ENT_QUOTES) ?>')"
                                                     title="Manage Multi-Block & Code Assignments">
-                                                <i class="bi bi-geo-alt-fill"></i> Blocks & Codes
+                                                <i class="bi bi-diagram-3"></i>
                                             </button>
 
                                             <!-- Password Reset Button -->
                                             <button type="button" class="btn btn-outline-danger btn-sm"
                                                     onclick="openResetPasswordModal(<?= (int)$u['id'] ?>, '<?= htmlspecialchars($u['name'], ENT_QUOTES) ?>')"
                                                     title="Reset Password">
-                                                <i class="bi bi-key-fill"></i> Reset
+                                                <i class="bi bi-key-fill"></i>
                                             </button>
 
                                         <?php elseif ($u['role'] === 'USER'): ?>
                                             <?php if ((int)($u['operator_access_active'] ?? 0) === 1): ?>
-                                                <!-- Manage Operator Access -->
                                                 <button type="button" class="btn btn-outline-warning btn-sm"
                                                         onclick="openManageOperatorModal(<?= (int)$u['id'] ?>, '<?= htmlspecialchars($u['name'], ENT_QUOTES) ?>')"
                                                         title="Manage Operator Access & Multi-Block Assignments">
-                                                    <i class="bi bi-person-gear"></i> Manage Op
-                                                </button>
-
-                                                <!-- Suspend Operator Access Form -->
-                                                <form method="POST" action="/admin/operators/suspend-access" class="d-inline" onsubmit="return confirm('Suspend operator access for <?= htmlspecialchars($u['name'], ENT_QUOTES) ?>? Retailer login and wallet remain active.');">
-                                                    <?= csrf_field() ?>
-                                                    <input type="hidden" name="user_id" value="<?= $u['id'] ?>">
-                                                    <button type="submit" class="btn btn-outline-secondary btn-sm" title="Suspend Operator Access">
-                                                        <i class="bi bi-pause-circle"></i> Suspend
-                                                    </button>
-                                                </form>
-
-                                                <!-- Remove Operator Access Form -->
-                                                <form method="POST" action="/admin/operators/remove-access" class="d-inline" onsubmit="return confirm('Remove operator access for <?= htmlspecialchars($u['name'], ENT_QUOTES) ?>? Retailer wallet, submitted applications, and history remain completely intact.');">
-                                                    <?= csrf_field() ?>
-                                                    <input type="hidden" name="user_id" value="<?= $u['id'] ?>">
-                                                    <button type="submit" class="btn btn-outline-danger btn-sm" title="Remove Operator Access">
-                                                        <i class="bi bi-trash"></i> Remove Op
-                                                    </button>
-                                                </form>
-                                            <?php elseif ((int)($u['has_operator_assignment'] ?? 0) > 0): ?>
-                                                <!-- Reactivate / Manage Operator Assignment -->
-                                                <button type="button" class="btn btn-outline-success btn-sm"
-                                                        onclick="openManageOperatorModal(<?= (int)$u['id'] ?>, '<?= htmlspecialchars($u['name'], ENT_QUOTES) ?>')"
-                                                        title="Re-activate / Manage Operator Assignment">
-                                                    <i class="bi bi-play-circle"></i> Enable Op
-                                                </button>
-                                                <!-- Remove Operator Access Form -->
-                                                <form method="POST" action="/admin/operators/remove-access" class="d-inline" onsubmit="return confirm('Remove operator access for <?= htmlspecialchars($u['name'], ENT_QUOTES) ?>?');">
-                                                    <?= csrf_field() ?>
-                                                    <input type="hidden" name="user_id" value="<?= $u['id'] ?>">
-                                                    <button type="submit" class="btn btn-outline-danger btn-sm" title="Remove Operator Access">
-                                                        <i class="bi bi-trash"></i> Remove Op
-                                                    </button>
-                                                </form>
-                                            <?php else: ?>
-                                                <!-- Grant Operator Access -->
-                                                <button type="button" class="btn btn-outline-success btn-sm"
-                                                        onclick="openManageOperatorModal(<?= (int)$u['id'] ?>, '<?= htmlspecialchars($u['name'], ENT_QUOTES) ?>')"
-                                                        title="Grant Operator Access to this Retailer">
-                                                    <i class="bi bi-shield-plus"></i> Grant Op
+                                                    <i class="bi bi-person-gear"></i> Op
                                                 </button>
                                             <?php endif; ?>
                                         <?php endif; ?>
 
+                                        <!-- Full Details Button -->
                                         <a href="/admin/users/detail?id=<?= $u['id'] ?>" class="btn btn-outline-primary btn-sm fw-semibold" title="Full User Details">
-                                            <i class="bi bi-gear-fill"></i> Manage
+                                            <i class="bi bi-gear-fill"></i> Detail
                                         </a>
                                     </div>
                                 </td>
@@ -250,6 +424,98 @@
                     <?php endif; ?>
                 </tbody>
             </table>
+        </div>
+
+        <!-- Pagination Bar -->
+        <?php if ($totalPages > 1): ?>
+            <div class="card-footer bg-white border-top py-3 px-4 d-flex align-items-center justify-content-between flex-wrap gap-2">
+                <div class="small text-muted">
+                    Showing <strong><?= ($offset + 1) ?></strong> to <strong><?= min($totalRecords, $offset + $limit) ?></strong> of <strong><?= number_format($totalRecords) ?></strong> users
+                </div>
+                <nav aria-label="Users pagination">
+                    <ul class="pagination pagination-sm mb-0">
+                        <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>">
+                            <a class="page-link" href="/admin/users?<?= $queryString ?>&page=<?= ($page - 1) ?>">&laquo; Prev</a>
+                        </li>
+                        <?php
+                        $startPage = max(1, $page - 3);
+                        $endPage = min($totalPages, $page + 3);
+                        for ($p = $startPage; $p <= $endPage; $p++):
+                        ?>
+                            <li class="page-item <?= $p === $page ? 'active' : '' ?>">
+                                <a class="page-link" href="/admin/users?<?= $queryString ?>&page=<?= $p ?>"><?= $p ?></a>
+                            </li>
+                        <?php endfor; ?>
+                        <li class="page-item <?= $page >= $totalPages ? 'disabled' : '' ?>">
+                            <a class="page-link" href="/admin/users?<?= $queryString ?>&page=<?= ($page + 1) ?>">Next &raquo;</a>
+                        </li>
+                    </ul>
+                </nav>
+            </div>
+        <?php endif; ?>
+    </div>
+</div>
+
+<!-- Modal: Edit Profile Location (Center Home) -->
+<div class="modal fade" id="editLocationModal" tabindex="-1" aria-labelledby="editLocationModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content shadow-lg border-0 rounded-4">
+            <div class="modal-header bg-dark text-white py-3 px-4 rounded-top-4">
+                <h5 class="modal-title fw-bold" id="editLocationModalLabel">
+                    <i class="bi bi-geo-alt-fill text-warning me-2"></i>Update User Profile Location
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="POST" action="/admin/users/update-profile-location">
+                <?= csrf_field() ?>
+                <input type="hidden" name="user_id" id="edit_loc_user_id" value="">
+                
+                <div class="modal-body p-4">
+                    <div class="alert alert-light border small text-muted py-2 px-3 mb-3 rounded-3">
+                        <i class="bi bi-info-circle text-primary me-1"></i>
+                        Sets the registered Center / Kiosk permanent location. This is separate from Operator work assignments.
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold small">User Account</label>
+                        <input type="text" id="edit_loc_user_name" class="form-control bg-light" readonly>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold small">Center / Kiosk Name</label>
+                        <input type="text" name="center_name" id="edit_loc_center_name" class="form-control" placeholder="e.g. Maa Sharda Digital Kendra">
+                    </div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold small">Profile District <span class="text-danger">*</span></label>
+                            <select name="profile_district_id" id="edit_loc_district_id" class="form-select" onchange="onEditLocDistrictChange(this.value)" required>
+                                <option value="">-- Choose District --</option>
+                                <?php foreach ($districts as $d): ?>
+                                    <option value="<?= (int)$d['id'] ?>"><?= e($d['name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold small">Profile Block <span class="text-danger">*</span></label>
+                            <select name="profile_block_id" id="edit_loc_block_id" class="form-select" required>
+                                <option value="">-- Select District First --</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="mb-2">
+                        <label class="form-label fw-bold small">Center / Shop Full Address</label>
+                        <textarea name="center_address" id="edit_loc_center_address" class="form-control" rows="2" placeholder="Market, Shop No., Landmark, Pincode"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light px-4 py-3 rounded-bottom-4">
+                    <button type="button" class="btn btn-outline-secondary fw-semibold" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary fw-bold">
+                        <i class="bi bi-save me-1"></i> Save Profile Location
+                    </button>
+                </div>
+            </form>
         </div>
     </div>
 </div>
@@ -914,6 +1180,63 @@ async function handleSaveBlockAssignment(e) {
         btn.innerHTML = '<i class="bi bi-save me-1"></i> Save Block Assignment';
     }
 }
+
+// Directory Cascading Dropdown
+function onFilterDistrictChange(distId) {
+    const blkSelect = document.getElementById('filter_block_id');
+    if (!blkSelect) return;
+    blkSelect.innerHTML = '<option value="">-- All Blocks --</option>';
+    if (!distId || !window.allBlocksGrouped || !window.allBlocksGrouped[distId]) {
+        blkSelect.disabled = true;
+        return;
+    }
+    const blocks = window.allBlocksGrouped[distId];
+    blocks.forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b.id;
+        opt.textContent = b.name + (b.name_hi ? ' (' + b.name_hi + ')' : '');
+        blkSelect.appendChild(opt);
+    });
+    blkSelect.disabled = false;
+}
+
+// Edit Location Modal Helper
+function openEditLocationModal(userId, userName, centerName, distId, blockId, address) {
+    document.getElementById('edit_loc_user_id').value = userId;
+    document.getElementById('edit_loc_user_name').value = userName;
+    document.getElementById('edit_loc_center_name').value = centerName || '';
+    document.getElementById('edit_loc_center_address').value = address || '';
+
+    const distSelect = document.getElementById('edit_loc_district_id');
+    distSelect.value = distId || '';
+
+    onEditLocDistrictChange(distId, blockId);
+
+    const modal = new bootstrap.Modal(document.getElementById('editLocationModal'));
+    modal.show();
+}
+
+function onEditLocDistrictChange(distId, selectedBlockId = 0) {
+    const blkSelect = document.getElementById('edit_loc_block_id');
+    if (!blkSelect) return;
+    blkSelect.innerHTML = '<option value="">-- Select Block --</option>';
+    if (!distId || !window.allBlocksGrouped || !window.allBlocksGrouped[distId]) {
+        blkSelect.disabled = true;
+        return;
+    }
+    const blocks = window.allBlocksGrouped[distId];
+    blocks.forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b.id;
+        opt.textContent = b.name + (b.name_hi ? ' (' + b.name_hi + ')' : '');
+        if (selectedBlockId && parseInt(b.id) === parseInt(selectedBlockId)) {
+            opt.selected = true;
+        }
+        blkSelect.appendChild(opt);
+    });
+    blkSelect.disabled = false;
+}
+
 </script>
 
 <?php require dirname(__DIR__) . '/layouts/footer.php'; ?>

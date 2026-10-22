@@ -247,8 +247,8 @@ class UserController
         $name = trim($_POST['name'] ?? '');
         $centerName = trim($_POST['center_name'] ?? '');
         $profileState = trim($_POST['profile_state'] ?? 'Bihar') ?: 'Bihar';
-        $profileDistrictId = !empty($_POST['profile_district_id']) ? (int)$_POST['profile_district_id'] : null;
-        $profileBlockId = !empty($_POST['profile_block_id']) ? (int)$_POST['profile_block_id'] : null;
+        $profileDistrictId = !empty($_POST['profile_district_id']) ? (int)$_POST['profile_district_id'] : 0;
+        $profileBlockId = !empty($_POST['profile_block_id']) ? (int)$_POST['profile_block_id'] : 0;
         $centerAddress = trim($_POST['center_address'] ?? '');
         $newPassword = (string)($_POST['new_password'] ?? '');
 
@@ -259,29 +259,33 @@ class UserController
                 throw new \Exception('Full Name is required.');
             }
 
-            // Validate profile district if provided
-            if ($profileDistrictId !== null && $profileDistrictId > 0) {
-                $dChk = $db->prepare("SELECT id FROM districts WHERE id = ? AND is_active = 1 LIMIT 1");
-                $dChk->execute([$profileDistrictId]);
-                if (!$dChk->fetch()) {
-                    throw new \Exception('Please select a valid active District.');
-                }
-            } else {
-                $profileDistrictId = null;
+            // Fetch current user location for audit trail
+            $curStmt = $db->prepare("SELECT profile_district_id, profile_block_id FROM users WHERE id = ?");
+            $curStmt->execute([$userId]);
+            $curUser = $curStmt->fetch(PDO::FETCH_ASSOC);
+            $oldDistrictId = $curUser ? $curUser['profile_district_id'] : null;
+            $oldBlockId = $curUser ? $curUser['profile_block_id'] : null;
+
+            // Strict Rules: District and Block are required for Center Profile
+            if (empty($profileDistrictId)) {
+                throw new \Exception('Center District is required.');
+            }
+            if (empty($profileBlockId)) {
+                throw new \Exception('Center Block is required.');
             }
 
-            // Validate profile block belongs to profile district
-            if ($profileBlockId !== null && $profileBlockId > 0) {
-                if (!$profileDistrictId) {
-                    throw new \Exception('Please select a District before selecting a Block.');
-                }
-                $bChk = $db->prepare("SELECT id FROM blocks WHERE id = ? AND district_id = ? AND is_active = 1 LIMIT 1");
-                $bChk->execute([$profileBlockId, $profileDistrictId]);
-                if (!$bChk->fetch()) {
-                    throw new \Exception('Selected Block does not belong to the selected District.');
-                }
-            } else {
-                $profileBlockId = null;
+            // Validate active District
+            $dChk = $db->prepare("SELECT id FROM districts WHERE id = ? AND is_active = 1 LIMIT 1");
+            $dChk->execute([$profileDistrictId]);
+            if (!$dChk->fetch()) {
+                throw new \Exception('Please select a valid active District.');
+            }
+
+            // Validate active Block belongs to District
+            $bChk = $db->prepare("SELECT id FROM blocks WHERE id = ? AND district_id = ? AND is_active = 1 LIMIT 1");
+            $bChk->execute([$profileBlockId, $profileDistrictId]);
+            if (!$bChk->fetch()) {
+                throw new \Exception('Selected Block does not belong to the selected District or is invalid.');
             }
 
             if (!empty($newPassword)) {
@@ -307,12 +311,14 @@ class UserController
             }
 
             $_SESSION['user_name'] = $name;
-            AuditService::log('PROFILE_UPDATE', 'USER', (string)$userId, [
+            AuditService::log('USER_LOCATION_UPDATED', 'users', (string)$userId, [
                 'name' => $name,
                 'center_name' => $centerName,
-                'profile_district_id' => $profileDistrictId,
-                'profile_block_id' => $profileBlockId
-            ]);
+                'old_district_id' => $oldDistrictId,
+                'new_district_id' => $profileDistrictId,
+                'old_block_id' => $oldBlockId,
+                'new_block_id' => $profileBlockId
+            ], $userId, 'USER');
 
             $_SESSION['flash_success'] = 'Profile and Center Location updated successfully.';
         } catch (\Exception $e) {

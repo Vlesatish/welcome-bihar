@@ -254,6 +254,28 @@ try {
             $ctrl->users();
             break;
 
+        case '/admin/users/export-csv':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->exportUsersCsv();
+            break;
+
+        case '/admin/users/update-profile-location':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->updateUserProfileLocation();
+            break;
+
+        case '/admin/users/location-report':
+        case '/admin/location-report':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->locationReport();
+            break;
+
+        case '/admin/users/location-report/export-csv':
+        case '/admin/location-report/export-csv':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->exportLocationReportCsv();
+            break;
+
         case '/admin/users/detail':
             $ctrl = new \App\Controllers\AdminController();
             $ctrl->userDetail();

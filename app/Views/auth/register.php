@@ -72,9 +72,9 @@
                     <!-- Operating Block -->
                     <div class="col-md-6">
                         <label class="form-label small fw-semibold text-secondary">
-                            Center Block
+                            Center Block <span class="text-danger">*</span>
                         </label>
-                        <select name="block_id" id="register_block_id" class="form-select form-select-lg fs-6 py-2 px-3 border rounded-3" disabled>
+                        <select name="block_id" id="register_block_id" class="form-select form-select-lg fs-6 py-2 px-3 border rounded-3" disabled required>
                             <option value="">-- Select Block --</option>
                         </select>
                     </div>

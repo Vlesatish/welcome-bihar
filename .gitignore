@@ -25,4 +25,5 @@ Thumbs.db
 *.bak
 *.swp
 cli/cookie*.txt
+scratch/
 

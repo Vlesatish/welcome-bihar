@@ -89,6 +89,70 @@
         </div>
 
         <!-- ========================================== -->
+                <!-- ========================================== -->
+        <!-- SECTION: PROFILE LOCATION (CENTER HOME)    -->
+        <!-- ========================================== -->
+        <div class="wb-card mb-4 shadow-sm border rounded-3 bg-white">
+            <div class="wb-card-header bg-white border-bottom py-3 px-4 d-flex align-items-center justify-content-between">
+                <span class="fw-bold text-dark fs-6 d-flex align-items-center gap-2">
+                    <i class="bi bi-geo-alt-fill text-danger fs-5"></i>
+                    <span>Profile Location (Center / Shop Home)</span>
+                </span>
+                <button type="button" class="btn btn-sm btn-outline-primary fw-semibold rounded-pill px-3 shadow-2xs" data-bs-toggle="modal" data-bs-target="#editUserDetailLocationModal">
+                    <i class="bi bi-pencil-square me-1"></i> Edit Location
+                </button>
+            </div>
+            <div class="card-body p-4">
+                <div class="row g-3">
+                    <div class="col-sm-6">
+                        <div class="text-muted small fw-semibold text-uppercase">Center / Kiosk Name</div>
+                        <div class="fw-bold text-dark fs-6 mt-1">
+                            <?= !empty($targetUser['center_name']) ? e($targetUser['center_name']) : '<span class="text-muted fst-italic">Not Configured</span>' ?>
+                        </div>
+                    </div>
+                    <div class="col-sm-6">
+                        <div class="text-muted small fw-semibold text-uppercase">Operating State</div>
+                        <div class="fw-semibold text-dark mt-1">
+                            <?= e($targetUser['profile_state'] ?? 'Bihar') ?>
+                        </div>
+                    </div>
+                    <div class="col-sm-6">
+                        <div class="text-muted small fw-semibold text-uppercase">Registered District</div>
+                        <div class="mt-1">
+                            <?php if (!empty($targetUser['profile_district_name'])): ?>
+                                <span class="badge bg-primary-subtle text-primary border border-primary-subtle fs-6 px-2.5 py-1">
+                                    <i class="bi bi-geo-alt-fill text-danger me-1"></i><?= e($targetUser['profile_district_name']) ?>
+                                </span>
+                            <?php else: ?>
+                                <span class="badge bg-secondary-subtle text-secondary border">Location Not Set</span>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                    <div class="col-sm-6">
+                        <div class="text-muted small fw-semibold text-uppercase">Registered Block</div>
+                        <div class="mt-1">
+                            <?php if (!empty($targetUser['profile_block_name'])): ?>
+                                <span class="badge bg-light text-dark border fs-6 px-2.5 py-1">
+                                    <?= e($targetUser['profile_block_name']) ?>
+                                </span>
+                                <?php if (!empty($targetUser['profile_district_id']) && !empty($targetUser['block_actual_district_id']) && (int)$targetUser['block_actual_district_id'] !== (int)$targetUser['profile_district_id']): ?>
+                                    <span class="badge bg-danger-subtle text-danger border small ms-1" title="Block belongs to another district">Mismatch</span>
+                                <?php endif; ?>
+                            <?php else: ?>
+                                <span class="badge bg-secondary-subtle text-secondary border">Location Not Set</span>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <div class="text-muted small fw-semibold text-uppercase">Center / Shop Full Address</div>
+                        <div class="p-2.5 bg-light rounded-2 border mt-1 small">
+                            <?= !empty($targetUser['center_address']) ? nl2br(e($targetUser['center_address'])) : '<span class="text-muted fst-italic">No physical shop address configured yet.</span>' ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- SECTION 2: RETAILER ACCESS                 -->
         <!-- ========================================== -->
         <div class="wb-card mb-4 shadow-sm border rounded-3">
@@ -221,7 +285,7 @@
             <div class="wb-card-header bg-white border-bottom py-3 px-4 d-flex align-items-center justify-content-between">
                 <span class="fw-bold text-dark fs-6">
                     <span class="badge bg-primary rounded-circle me-2 px-2 py-1">4</span>
-                    Assigned Locations & Codes
+                    Assigned Work Locations & Codes (Staff Processing Scoping)
                 </span>
                 <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-2.5 py-1">
                     <?= count($assignedBlockRows) ?> Assigned
@@ -646,6 +710,106 @@ function toggleAllEditCodes(checkState) {
     const chks = document.querySelectorAll('#edit_modal_codes_container input[type="checkbox"]');
     chks.forEach(c => c.checked = checkState);
 }
+</script>
+
+
+<!-- Modal: Edit User Profile Location in User Detail -->
+<div class="modal fade" id="editUserDetailLocationModal" tabindex="-1" aria-labelledby="editUserDetailLocationModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content shadow-lg border-0 rounded-4">
+            <div class="modal-header bg-dark text-white py-3 px-4 rounded-top-4">
+                <h5 class="modal-title fw-bold" id="editUserDetailLocationModalLabel">
+                    <i class="bi bi-geo-alt-fill text-warning me-2"></i>Update Profile Location
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="POST" action="/admin/users/update-profile-location">
+                <?= csrf_field() ?>
+                <input type="hidden" name="user_id" value="<?= (int)$targetUser['id'] ?>">
+
+                <div class="modal-body p-4">
+                    <div class="alert alert-light border small text-muted py-2 px-3 mb-3 rounded-3">
+                        <i class="bi bi-info-circle text-primary me-1"></i>
+                        Sets the registered Center / Shop permanent home location. This does <strong>not</strong> restrict or alter Operator application processing assignments.
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold small">User Account</label>
+                        <input type="text" class="form-control bg-light" value="<?= e($targetUser['name']) ?> (<?= e($targetUser['mobile']) ?>)" readonly>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold small">Center / Kiosk Name</label>
+                        <input type="text" name="center_name" class="form-control" value="<?= e($targetUser['center_name'] ?? '') ?>" placeholder="e.g. Digital Seva Kendra">
+                    </div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold small">Center District <span class="text-danger">*</span></label>
+                            <select name="profile_district_id" id="detail_edit_district_id" class="form-select" onchange="onUserDetailDistrictChange(this.value)" required>
+                                <option value="">-- Choose District --</option>
+                                <?php foreach ($districts as $d): ?>
+                                    <option value="<?= (int)$d['id'] ?>" <?= (int)($targetUser['profile_district_id'] ?? 0) === (int)$d['id'] ? 'selected' : '' ?>>
+                                        <?= e($d['name']) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold small">Center Block <span class="text-danger">*</span></label>
+                            <select name="profile_block_id" id="detail_edit_block_id" class="form-select" required>
+                                <option value="">-- Select District First --</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="mb-2">
+                        <label class="form-label fw-bold small">Center / Shop Full Address</label>
+                        <textarea name="center_address" class="form-control" rows="2" placeholder="Market, Shop No., Landmark, Pincode"><?= e($targetUser['center_address'] ?? '') ?></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light px-4 py-3 rounded-bottom-4">
+                    <button type="button" class="btn btn-outline-secondary fw-semibold" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary fw-bold">
+                        <i class="bi bi-save me-1"></i> Save Profile Location
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+window.userDetailBlocksGrouped = <?= json_encode($allBlocksGrouped ?? []) ?>;
+
+function onUserDetailDistrictChange(distId, selectedBlockId = 0) {
+    const blkSelect = document.getElementById('detail_edit_block_id');
+    if (!blkSelect) return;
+    blkSelect.innerHTML = '<option value="">-- Select Block --</option>';
+    if (!distId || !window.userDetailBlocksGrouped || !window.userDetailBlocksGrouped[distId]) {
+        blkSelect.disabled = true;
+        return;
+    }
+    const blocks = window.userDetailBlocksGrouped[distId];
+    blocks.forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b.id;
+        opt.textContent = b.name + (b.name_hi ? ' (' + b.name_hi + ')' : '');
+        if (selectedBlockId && parseInt(b.id) === parseInt(selectedBlockId)) {
+            opt.selected = true;
+        }
+        blkSelect.appendChild(opt);
+    });
+    blkSelect.disabled = false;
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    const currentDist = <?= (int)($targetUser['profile_district_id'] ?? 0) ?>;
+    const currentBlock = <?= (int)($targetUser['profile_block_id'] ?? 0) ?>;
+    if (currentDist > 0) {
+        onUserDetailDistrictChange(currentDist, currentBlock);
+    }
+});
 </script>
 
 <?php require dirname(__DIR__) . '/layouts/footer.php'; ?>

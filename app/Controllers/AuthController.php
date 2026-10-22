@@ -75,13 +75,13 @@ class AuthController
         $password = (string)($_POST['password'] ?? '');
         $centerName = trim($_POST['center_name'] ?? '');
         $districtId = (int)($_POST['district_id'] ?? 0);
-        $blockId = !empty($_POST['block_id']) ? (int)$_POST['block_id'] : null;
+        $blockId = (int)($_POST['block_id'] ?? 0);
         $centerAddress = trim($_POST['center_address'] ?? '');
         $profileState = trim($_POST['profile_state'] ?? 'Bihar') ?: 'Bihar';
         $distributorId = null; // Public registration is always direct; distributors add retailers from their panel
 
-        if (empty($name) || strlen($mobile) !== 10 || empty($email) || strlen($password) < 6 || empty($districtId)) {
-            $_SESSION['flash_error'] = 'Please fill all required registration fields correctly.';
+        if (empty($name) || strlen($mobile) !== 10 || empty($email) || strlen($password) < 6 || empty($districtId) || empty($blockId)) {
+            $_SESSION['flash_error'] = 'Please fill all required registration fields, including District and Block.';
             header('Location: /register');
             exit;
         }
@@ -97,15 +97,13 @@ class AuthController
             exit;
         }
 
-        // Validate block belongs to district if provided
-        if ($blockId !== null) {
-            $chkBlk = $db->prepare("SELECT id FROM blocks WHERE id = ? AND district_id = ? AND is_active = 1 LIMIT 1");
-            $chkBlk->execute([$blockId, $districtId]);
-            if (!$chkBlk->fetch()) {
-                $_SESSION['flash_error'] = 'The selected Block does not belong to the selected District.';
-                header('Location: /register');
-                exit;
-            }
+        // Validate block belongs to district and is active (Strict Rule: Selected Block must belong to selected District)
+        $chkBlk = $db->prepare("SELECT id FROM blocks WHERE id = ? AND district_id = ? AND is_active = 1 LIMIT 1");
+        $chkBlk->execute([$blockId, $districtId]);
+        if (!$chkBlk->fetch()) {
+            $_SESSION['flash_error'] = 'The selected Block does not belong to the selected District or is invalid.';
+            header('Location: /register');
+            exit;
         }
 
         // Check unique mobile or email

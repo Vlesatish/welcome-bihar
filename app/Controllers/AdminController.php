@@ -13,6 +13,8 @@ use Exception;
 
 class AdminController
 {
+    use \App\Controllers\Traits\UserDirectoryTrait;
+
     public function __construct()
     {
         if (!AuthService::check()) {
@@ -378,107 +380,8 @@ class AdminController
 
         require dirname(__DIR__) . '/Views/admin/dashboard.php';
     }
+    // users() and directory methods provided by UserDirectoryTrait
 
-    public function users(): void
-    {
-        $db = Database::getConnection();
-
-        $role = $_GET['role'] ?? '';
-        $status = $_GET['status'] ?? '';
-        $search = trim($_GET['search'] ?? '');
-
-        $where = ["1=1"];
-        $params = [];
-
-        if (!empty($role)) {
-            $where[] = "u.role = :role";
-            $params[':role'] = $role;
-        }
-
-        if (!empty($status)) {
-            $where[] = "u.status = :status";
-            $params[':status'] = $status;
-        }
-
-        if (!empty($search)) {
-            $where[] = "(u.name LIKE :search_name OR u.mobile LIKE :search_mobile OR u.email LIKE :search_email OR u.center_name LIKE :search_center)";
-            $searchVal = "%{$search}%";
-            $params[':search_name'] = $searchVal;
-            $params[':search_mobile'] = $searchVal;
-            $params[':search_email'] = $searchVal;
-            $params[':search_center'] = $searchVal;
-        }
-
-        $whereClause = implode(' AND ', $where);
-
-        $sql = "
-            SELECT u.id, u.uuid, u.role, u.name, u.mobile, u.email, u.status, u.center_name,
-                   u.assigned_all_districts, u.assigned_district_id, u.assigned_block_id, u.created_at,
-                   d.name as assigned_district_name,
-                   b.name as assigned_block_name,
-                   p.name as distributor_name,
-                   w.balance,
-                   (SELECT COUNT(*) FROM applications WHERE user_id = u.id) as app_count,
-                   (SELECT is_active FROM user_role_assignments WHERE user_id = u.id AND role_code = 'OPERATOR' LIMIT 1) as operator_access_active,
-                   (SELECT COUNT(*) FROM user_role_assignments WHERE user_id = u.id AND role_code = 'OPERATOR') as has_operator_assignment,
-                   (SELECT GROUP_CONCAT(application_code SEPARATOR ', ') FROM operator_application_code_assignments WHERE operator_user_id = u.id AND is_active = 1) as assigned_codes
-            FROM users u
-            LEFT JOIN districts d ON u.assigned_district_id = d.id
-            LEFT JOIN blocks b ON u.assigned_block_id = b.id
-            LEFT JOIN users p ON u.parent_distributor_id = p.id
-            LEFT JOIN wallets w ON u.id = w.user_id
-            WHERE {$whereClause}
-            ORDER BY u.id DESC
-        ";
-        $stmt = $db->prepare($sql);
-        $stmt->execute($params);
-        $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-        $distributors = $db->query("SELECT id, name FROM users WHERE role = 'DISTRIBUTOR' AND status = 'ACTIVE' ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
-        $districts = $db->query("SELECT id, name, name_hi FROM districts WHERE is_active = 1 ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
-
-        $allBlocksGrouped = [];
-        $blocksRows = $db->query("SELECT id, name, district_id FROM blocks WHERE is_active = 1 ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
-        foreach ($blocksRows as $br) {
-            $allBlocksGrouped[$br['district_id']][] = [
-                'id' => (int)$br['id'],
-                'name' => $br['name']
-            ];
-        }
-
-        $applicationCodes = $db->query("SELECT DISTINCT application_code FROM service_rate_rules WHERE application_code IS NOT NULL AND application_code != '' AND is_active = 1 ORDER BY application_code ASC")->fetchAll(PDO::FETCH_COLUMN);
-        if (empty($applicationCodes)) {
-            $applicationCodes = ['BICCO', 'BCCCO', 'BRCCO', 'BOBC', 'NCLCO', 'RTPS', 'OTHER'];
-        }
-
-        // Fetch all assigned blocks for operators
-        $userAssignedBlocks = [];
-        $opBlockRows = $db->query("
-            SELECT oba.id, oba.operator_user_id, oba.district_id, oba.block_id, oba.is_active,
-                   d.name as district_name, b.name as block_name
-            FROM operator_block_assignments oba
-            JOIN districts d ON oba.district_id = d.id
-            JOIN blocks b ON oba.block_id = b.id
-            ORDER BY oba.is_active DESC, d.name ASC, b.name ASC
-        ")->fetchAll(PDO::FETCH_ASSOC);
-        foreach ($opBlockRows as $obr) {
-            $userAssignedBlocks[(int)$obr['operator_user_id']][] = $obr;
-        }
-
-        // Fetch active codes per operator block
-        $opCodesRows = $db->query("
-            SELECT operator_user_id, district_id, block_id, application_code, is_active
-            FROM operator_application_code_assignments
-            WHERE is_active = 1
-        ")->fetchAll(PDO::FETCH_ASSOC);
-        $userBlockCodes = [];
-        foreach ($opCodesRows as $ocr) {
-            $key = (int)$ocr['operator_user_id'] . '_' . (int)$ocr['district_id'] . '_' . (int)$ocr['block_id'];
-            $userBlockCodes[$key][] = $ocr['application_code'];
-        }
-
-        require dirname(__DIR__) . '/Views/admin/users.php';
-    }
 
     /**
      * Create dedicated Block Operator account
@@ -1586,8 +1489,13 @@ class AdminController
         $db = Database::getConnection();
 
         $stmt = $db->prepare("
-            SELECT u.*, p.name as distributor_name, w.balance, w.total_credited, w.total_debited
+            SELECT u.*, p.name as distributor_name, w.balance, w.total_credited, w.total_debited,
+                   pd.name as profile_district_name, pd.name_hi as profile_district_name_hi,
+                   pb.name as profile_block_name, pb.name_hi as profile_block_name_hi,
+                   pb.district_id as block_actual_district_id
             FROM users u
+            LEFT JOIN districts pd ON u.profile_district_id = pd.id
+            LEFT JOIN blocks pb ON u.profile_block_id = pb.id
             LEFT JOIN users p ON u.parent_distributor_id = p.id
             LEFT JOIN wallets w ON u.id = w.user_id
             WHERE u.id = ?
@@ -1671,6 +1579,16 @@ class AdminController
         // District list for adding permission / operator block
         $districts = $db->query("SELECT id, name, name_hi FROM districts WHERE is_active = 1 ORDER BY name ASC")->fetchAll();
         $distributors = $db->query("SELECT id, name FROM users WHERE role = 'DISTRIBUTOR' AND status = 'ACTIVE' ORDER BY name ASC")->fetchAll();
+
+        $allBlocksGrouped = [];
+        $blocksRows = $db->query("SELECT id, name, name_hi, district_id FROM blocks WHERE is_active = 1 ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($blocksRows as $br) {
+            $allBlocksGrouped[$br['district_id']][] = [
+                'id' => (int)$br['id'],
+                'name' => $br['name'],
+                'name_hi' => $br['name_hi'] ?? ''
+            ];
+        }
 
         require dirname(__DIR__) . '/Views/admin/user_detail.php';
     }

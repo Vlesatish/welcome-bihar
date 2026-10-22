@@ -129,6 +129,39 @@ class SystemUpdateService
                 $db->exec("ALTER TABLE `users` ADD COLUMN `assigned_block_id` INT NULL AFTER `assigned_district_id`");
             }
 
+            // Profile location indexes & foreign keys
+            try {
+                $userIndexes = $db->query("SHOW INDEX FROM `users`")->fetchAll(PDO::FETCH_ASSOC);
+                $indexNames = array_column($userIndexes, 'Key_name');
+                if (!in_array('idx_users_profile_district', $indexNames, true)) {
+                    $db->exec("ALTER TABLE `users` ADD INDEX `idx_users_profile_district` (`profile_district_id`)");
+                }
+                if (!in_array('idx_users_profile_block', $indexNames, true)) {
+                    $db->exec("ALTER TABLE `users` ADD INDEX `idx_users_profile_block` (`profile_block_id`)");
+                }
+            } catch (\Throwable $e) {
+                // Ignore if exists
+            }
+
+            try {
+                $fks = $db->query("
+                    SELECT CONSTRAINT_NAME 
+                    FROM information_schema.TABLE_CONSTRAINTS 
+                    WHERE TABLE_SCHEMA = DATABASE() 
+                      AND TABLE_NAME = 'users' 
+                      AND CONSTRAINT_TYPE = 'FOREIGN KEY'
+                ")->fetchAll(PDO::FETCH_COLUMN);
+
+                if (!in_array('fk_users_profile_district', $fks, true)) {
+                    $db->exec("ALTER TABLE `users` ADD CONSTRAINT `fk_users_profile_district` FOREIGN KEY (`profile_district_id`) REFERENCES `districts` (`id`) ON DELETE SET NULL ON UPDATE CASCADE");
+                }
+                if (!in_array('fk_users_profile_block', $fks, true)) {
+                    $db->exec("ALTER TABLE `users` ADD CONSTRAINT `fk_users_profile_block` FOREIGN KEY (`profile_block_id`) REFERENCES `blocks` (`id`) ON DELETE SET NULL ON UPDATE CASCADE");
+                }
+            } catch (\Throwable $e) {
+                // Ignore if exists
+            }
+
             // 3. Data types columns check (enable_chat, warning_image)
             $dtCols = $db->query("SHOW COLUMNS FROM `data_types`")->fetchAll(PDO::FETCH_COLUMN);
             $dtCols = array_map('strtolower', $dtCols);

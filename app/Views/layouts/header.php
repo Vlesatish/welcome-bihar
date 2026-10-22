@@ -80,9 +80,13 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                     <i class="bi bi-folder2-open"></i>
                     <span>Applications</span>
                 </a>
-                <a class="wb-sidebar-link <?= strpos($currentUri, '/admin/users') === 0 ? 'active' : '' ?>" href="/admin/users">
+                <a class="wb-sidebar-link <?= (strpos($currentUri, '/admin/users') === 0 && strpos($currentUri, '/admin/users/location-report') === false) ? 'active' : '' ?>" href="/admin/users">
                     <i class="bi bi-people"></i>
                     <span>Users & Operators</span>
+                </a>
+                <a class="wb-sidebar-link <?= (strpos($currentUri, '/admin/users/location-report') === 0 || strpos($currentUri, '/admin/location-report') === 0) ? 'active' : '' ?>" href="/admin/users/location-report">
+                    <i class="bi bi-geo-alt-fill text-warning"></i>
+                    <span>Location Directory</span>
                 </a>
                 <a class="wb-sidebar-link <?= strpos($currentUri, '/admin/staff-routing') === 0 ? 'active' : '' ?>" href="/admin/staff-routing">
                     <i class="bi bi-diagram-3 text-info"></i>

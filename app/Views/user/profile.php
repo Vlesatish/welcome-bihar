@@ -53,8 +53,8 @@
                                 <input type="text" name="profile_state" class="form-control rounded-2 bg-light" value="<?= e($user['profile_state'] ?? 'Bihar') ?>" readonly>
                             </div>
                             <div class="col-md-4">
-                                <label for="profile_district_id" class="form-label small fw-semibold text-secondary">Center District</label>
-                                <select name="profile_district_id" id="profile_district_id" class="form-select rounded-2">
+                                <label for="profile_district_id" class="form-label small fw-semibold text-secondary">Center District <span class="text-danger">*</span></label>
+                                <select name="profile_district_id" id="profile_district_id" class="form-select rounded-2" required>
                                     <option value="">-- Select District --</option>
                                     <?php foreach ($districts as $d): ?>
                                         <option value="<?= $d['id'] ?>" <?= (int)($user['profile_district_id'] ?? 0) === (int)$d['id'] ? 'selected' : '' ?>>
@@ -64,8 +64,8 @@
                                 </select>
                             </div>
                             <div class="col-md-4">
-                                <label for="profile_block_id" class="form-label small fw-semibold text-secondary">Center Block</label>
-                                <select name="profile_block_id" id="profile_block_id" class="form-select rounded-2" <?= empty($blocks) ? 'disabled' : '' ?>>
+                                <label for="profile_block_id" class="form-label small fw-semibold text-secondary">Center Block <span class="text-danger">*</span></label>
+                                <select name="profile_block_id" id="profile_block_id" class="form-select rounded-2" <?= empty($blocks) ? 'disabled' : '' ?> required>
                                     <option value="">-- Select Block --</option>
                                     <?php foreach ($blocks as $b): ?>
                                         <option value="<?= $b['id'] ?>" <?= (int)($user['profile_block_id'] ?? 0) === (int)$b['id'] ? 'selected' : '' ?>>
