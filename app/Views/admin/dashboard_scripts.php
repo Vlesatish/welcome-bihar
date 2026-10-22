@@ -477,27 +477,34 @@ document.addEventListener('DOMContentLoaded', function () {
             method: 'POST',
             body: fd
         })
-        .then(res => res.json())
+        .then(async res => {
+            const data = await res.json().catch(() => null);
+            if (!res.ok) {
+                throw new Error((data && data.error) ? data.error : ('Server returned ' + res.status + ' ' + res.statusText));
+            }
+            return data;
+        })
         .then(data => {
             btn.disabled = false;
             btn.innerHTML = '<i class="bi bi-x-circle me-1"></i> Reject';
 
-            if (data.success) {
+            if (data && data.success) {
                 showToast('success', 'Application rejected and fee refunded to retailer.');
                 const modalEl = document.getElementById('modalRejectApp');
                 const modalInst = bootstrap.Modal.getInstance(modalEl);
                 if (modalInst) modalInst.hide();
                 const appId = document.getElementById('rejectModalAppId').value;
                 handleStatusTransition(appId, 'REJECTED', null, reason);
+                setTimeout(() => window.location.reload(), 450);
             } else {
-                showToast('danger', data.error || 'Failed to reject application.');
+                showToast('danger', (data && data.error) ? data.error : 'Failed to reject application.');
             }
         })
         .catch(err => {
             console.error(err);
             btn.disabled = false;
             btn.innerHTML = '<i class="bi bi-x-circle me-1"></i> Reject';
-            showToast('danger', 'Network error during rejection.');
+            showToast('danger', err.message || 'Network error during rejection.');
         });
     });
 

@@ -373,14 +373,21 @@ public function apiGetRequests(): void
     public function apiUpdateStatus(): void
     {
         header('Content-Type: application/json; charset=utf-8');
+        $user = AuthService::user();
+        if (!$user) {
+            http_response_code(401);
+            echo json_encode(['success' => false, 'error' => 'Unauthenticated session. Please log in.']);
+            exit;
+        }
+
         $activeMode = AuthService::activePortalMode();
         $isOperatorMode = ($activeMode === 'OPERATOR' && AuthService::canAccessOperatorMode());
-        $effectiveRole = $user['role'];
+        $effectiveRole = $user['role'] ?? '';
         if ($isOperatorMode) {
             $effectiveRole = 'OPERATOR';
         }
 
-        if (!$user || !in_array($effectiveRole, ['ADMIN', 'OPERATOR', 'DISTRIBUTOR'], true)) {
+        if (!in_array($effectiveRole, ['ADMIN', 'OPERATOR', 'DISTRIBUTOR'], true)) {
             http_response_code(403);
             echo json_encode(['success' => false, 'error' => 'Unauthorized action.']);
             exit;
