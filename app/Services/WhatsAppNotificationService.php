@@ -533,6 +533,22 @@ class WhatsAppNotificationService
     }
 
     /**
+     * Decode HTML entities, strip tags, and trim string for clean WhatsApp delivery
+     */
+    private static function decodeAndClean(mixed $val): string
+    {
+        if ($val === null) {
+            return '';
+        }
+        $str = trim((string)$val);
+        if ($str === '') {
+            return '';
+        }
+        $decoded = html_entity_decode($str, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        return trim(strip_tags($decoded));
+    }
+
+    /**
      * Mask Aadhaar number to format: XXXX-XXXX-1234
      */
     private static function maskAadhaar(string $value): string
@@ -546,23 +562,34 @@ class WhatsAppNotificationService
     }
 
     /**
-     * Determine if a field is an Aadhaar field requiring masking
+     * Determine if a field is an Aadhaar field requiring masking.
+     * Strictly NEVER masks Application Number, Applicant Name, Mobile Number, or Registration Number.
      */
-    private static function isAadhaarField(string $fieldName, string $fieldType, string $label, string $value): bool
+    private static function isAadhaarField(string $fieldName, string $fieldType, string $label): bool
     {
-        if (strcasecmp($fieldType, 'aadhaar') === 0) {
+        $fn = strtolower(trim($fieldName));
+        $lbl = strtolower(trim($label));
+        $ft = strtolower(trim($fieldType));
+
+        // Explicitly NEVER mask Application Number, Applicant Name, Mobile Number, or Registration Number
+        if (in_array($fn, ['application_number', 'applicant_identifier', 'app_num', 'applicant_name', 'mobile', 'mobile_no', 'mobile_number', 'registration_number', 'reg_no'], true)) {
+            return false;
+        }
+        if (in_array($lbl, ['application number', 'applicant name', 'mobile number', 'registration number'], true)) {
+            return false;
+        }
+
+        // Only mask if field type, field name, or label specifically indicates Aadhaar
+        if ($ft === 'aadhaar') {
             return true;
         }
-        if (stripos($fieldName, 'aadhaar') !== false || stripos($fieldName, 'uid') !== false) {
+        if (stripos($fn, 'aadhaar') !== false || stripos($fn, 'uid') !== false) {
             return true;
         }
-        if (stripos($label, 'aadhaar') !== false) {
+        if (stripos($lbl, 'aadhaar') !== false) {
             return true;
         }
-        $cleanDigits = preg_replace('/\D/', '', $value);
-        if (strlen($cleanDigits) === 12 && preg_match('/^[2-9]\d{11}$/', $cleanDigits)) {
-            return true;
-        }
+
         return false;
     }
 
@@ -570,16 +597,19 @@ class WhatsAppNotificationService
      * Build clean WhatsApp message for application notification.
      * Strictly includes ONLY:
      * Location: {District} > {Block}
-     * {Filled Field Label}: {Filled Value}
+     * Application Number: {Complete submitted application number}
+     * Applicant Name: {Complete applicant name}
+     * {Other actually filled field}: {Complete value}
      *
+     * Application Number is NEVER masked, truncated, hidden, or replaced.
      * Contains NO heading, NO description, NO rate/fee/wallet, NO references, NO dates,
      * NO status, NO service name, NO operator name, NO blank fields, NO decorative emojis.
      */
     public static function buildMessage(array $data, ?PDO $db = null, ?int $applicationId = null): string
     {
         $appId = $applicationId ?: (int)($data['application_id'] ?? ($data['id'] ?? 0));
-        $districtName = trim((string)($data['district_name'] ?? ''));
-        $blockName = trim((string)($data['block_name'] ?? ''));
+        $districtName = self::decodeAndClean($data['district_name'] ?? '');
+        $blockName = self::decodeAndClean($data['block_name'] ?? '');
 
         // If district or block missing and DB available, resolve from application record
         if (($districtName === '' || $blockName === '') && $db !== null && $appId > 0) {
@@ -595,22 +625,22 @@ class WhatsAppNotificationService
                 $loc = $locStmt->fetch(PDO::FETCH_ASSOC);
                 if ($loc) {
                     if ($districtName === '' && !empty($loc['district_name'])) {
-                        $districtName = trim((string)$loc['district_name']);
+                        $districtName = self::decodeAndClean($loc['district_name']);
                     }
                     if ($blockName === '' && !empty($loc['block_name'])) {
-                        $blockName = trim((string)$loc['block_name']);
+                        $blockName = self::decodeAndClean($loc['block_name']);
                     }
                 }
             } catch (\Throwable $e) {}
         }
 
-        $lines = [];
+        $locationStr = '';
         if ($districtName !== '' && $blockName !== '') {
-            $lines[] = "Location: {$districtName} > {$blockName}";
+            $locationStr = "Location: {$districtName} > {$blockName}";
         } elseif ($districtName !== '') {
-            $lines[] = "Location: {$districtName}";
+            $locationStr = "Location: {$districtName}";
         } elseif ($blockName !== '') {
-            $lines[] = "Location: {$blockName}";
+            $locationStr = "Location: {$blockName}";
         }
 
         // Keys to strictly exclude (system internals, rates, status, references, technical details)
@@ -631,10 +661,108 @@ class WhatsAppNotificationService
             'remarks', 'notes', 'description', 'heading', 'application_code'
         ];
 
-        $seenLabels = [];
-        $seenNames = [];
+        // 1. Resolve Application Number (Rule 1, 2, 3, 4, 10 - prioritize actual submitted value, preserve 100%)
+        $resolvedAppNumber = '';
+        if ($db !== null && $appId > 0) {
+            try {
+                $numStmt = $db->prepare("
+                    SELECT field_value FROM application_field_values
+                    WHERE application_id = ? AND LOWER(TRIM(field_name)) IN ('application_number', 'applicant_identifier')
+                    ORDER BY id ASC LIMIT 1
+                ");
+                $numStmt->execute([$appId]);
+                $afvNum = $numStmt->fetchColumn();
+                if ($afvNum !== false && trim((string)$afvNum) !== '') {
+                    $resolvedAppNumber = self::decodeAndClean($afvNum);
+                }
+            } catch (\Throwable $e) {}
+        }
+        if ($resolvedAppNumber === '' && !empty($data['fields']) && is_array($data['fields'])) {
+            foreach ($data['fields'] as $f) {
+                if (!is_array($f)) continue;
+                $fn = strtolower(trim((string)($f['field_name'] ?? '')));
+                if (in_array($fn, ['application_number', 'applicant_identifier'], true)) {
+                    $v = self::decodeAndClean($f['field_value'] ?? ($f['value'] ?? ''));
+                    if ($v !== '') {
+                        $resolvedAppNumber = $v;
+                        break;
+                    }
+                }
+            }
+        }
+        if ($resolvedAppNumber === '') {
+            $topNum = self::decodeAndClean($data['application_number'] ?? ($data['applicant_identifier'] ?? ''));
+            if ($topNum !== '') {
+                $resolvedAppNumber = $topNum;
+            }
+        }
+        if ($resolvedAppNumber === '' && $db !== null && $appId > 0) {
+            try {
+                $dbNum = $db->query("SELECT applicant_identifier FROM applications WHERE id = " . (int)$appId)->fetchColumn();
+                if ($dbNum !== false && trim((string)$dbNum) !== '') {
+                    $resolvedAppNumber = self::decodeAndClean($dbNum);
+                }
+            } catch (\Throwable $e) {}
+        }
 
-        // 1. Fetch dynamic submitted values from application_field_values in exact form order
+        // 2. Resolve Applicant Name
+        $resolvedApplicantName = '';
+        if ($db !== null && $appId > 0) {
+            try {
+                $nameStmt = $db->prepare("
+                    SELECT field_value FROM application_field_values
+                    WHERE application_id = ? AND LOWER(TRIM(field_name)) = 'applicant_name'
+                    ORDER BY id ASC LIMIT 1
+                ");
+                $nameStmt->execute([$appId]);
+                $afvName = $nameStmt->fetchColumn();
+                if ($afvName !== false && trim((string)$afvName) !== '') {
+                    $resolvedApplicantName = self::decodeAndClean($afvName);
+                }
+            } catch (\Throwable $e) {}
+        }
+        if ($resolvedApplicantName === '' && !empty($data['fields']) && is_array($data['fields'])) {
+            foreach ($data['fields'] as $f) {
+                if (!is_array($f)) continue;
+                $fn = strtolower(trim((string)($f['field_name'] ?? '')));
+                if ($fn === 'applicant_name') {
+                    $v = self::decodeAndClean($f['field_value'] ?? ($f['value'] ?? ''));
+                    if ($v !== '') {
+                        $resolvedApplicantName = $v;
+                        break;
+                    }
+                }
+            }
+        }
+        if ($resolvedApplicantName === '') {
+            $topName = self::decodeAndClean($data['applicant_name'] ?? '');
+            if ($topName !== '') {
+                $resolvedApplicantName = $topName;
+            }
+        }
+        if ($resolvedApplicantName === '' && $db !== null && $appId > 0) {
+            try {
+                $dbName = $db->query("SELECT applicant_name FROM applications WHERE id = " . (int)$appId)->fetchColumn();
+                if ($dbName !== false && trim((string)$dbName) !== '') {
+                    $resolvedApplicantName = self::decodeAndClean($dbName);
+                }
+            } catch (\Throwable $e) {}
+        }
+
+        // Mark handled labels and names to prevent duplicate lines
+        $seenLabels = [
+            'applicationnumber' => true,
+            'applicantname' => true
+        ];
+        $seenNames = [
+            'applicationnumber' => true,
+            'applicantidentifier' => true,
+            'applicantname' => true
+        ];
+
+        $otherLines = [];
+
+        // 3. Process remaining dynamic submitted values from application_field_values in form order
         if ($db !== null && $appId > 0) {
             try {
                 $fStmt = $db->prepare("
@@ -656,7 +784,7 @@ class WhatsAppNotificationService
                 foreach ($dbFields as $row) {
                     $fName = strtolower(trim((string)$row['field_name']));
                     $fType = strtolower(trim((string)$row['field_type']));
-                    $val = trim((string)$row['field_value']);
+                    $val = self::decodeAndClean($row['field_value']);
 
                     if ($fType === 'file' || in_array($fName, $excludedKeys, true)) {
                         continue;
@@ -673,24 +801,24 @@ class WhatsAppNotificationService
                         continue;
                     }
 
-                    if (self::isAadhaarField($fName, $fType, $label, $val)) {
+                    if (self::isAadhaarField($fName, $fType, $label)) {
                         $val = self::maskAadhaar($val);
                     }
 
-                    $lines[] = "{$label}: {$val}";
+                    $otherLines[] = "{$label}: {$val}";
                     $seenLabels[$normLabel] = true;
                     $seenNames[$normName] = true;
                 }
             } catch (\Throwable $e) {}
         }
 
-        // 2. Process structured fields array if provided in $data['fields']
+        // 4. Process structured fields array if provided in $data['fields']
         if (!empty($data['fields']) && is_array($data['fields'])) {
             foreach ($data['fields'] as $f) {
                 if (!is_array($f)) continue;
                 $fName = strtolower(trim((string)($f['field_name'] ?? '')));
                 $fType = strtolower(trim((string)($f['field_type'] ?? '')));
-                $val = trim((string)($f['field_value'] ?? ($f['value'] ?? '')));
+                $val = self::decodeAndClean($f['field_value'] ?? ($f['value'] ?? ''));
 
                 if ($fType === 'file' || in_array($fName, $excludedKeys, true)) {
                     continue;
@@ -707,23 +835,23 @@ class WhatsAppNotificationService
                     continue;
                 }
 
-                if (self::isAadhaarField($fName, $fType, $label, $val)) {
+                if (self::isAadhaarField($fName, $fType, $label)) {
                     $val = self::maskAadhaar($val);
                 }
 
-                $lines[] = "{$label}: {$val}";
+                $otherLines[] = "{$label}: {$val}";
                 $seenLabels[$normLabel] = true;
                 $seenNames[$normName] = true;
             }
         }
 
-        // 3. Process any other user input key-values passed in $data (preserving submission order)
+        // 5. Process any other user input key-values passed in $data (preserving submission order)
         foreach ($data as $key => $val) {
             $keyLower = strtolower(trim((string)$key));
             if (in_array($keyLower, $excludedKeys, true) || is_array($val) || is_object($val)) {
                 continue;
             }
-            $valStr = trim((string)$val);
+            $valStr = self::decodeAndClean($val);
             if (self::isFieldValueEmpty($valStr)) {
                 continue;
             }
@@ -736,13 +864,32 @@ class WhatsAppNotificationService
                 continue;
             }
 
-            if (self::isAadhaarField($keyLower, '', $label, $valStr)) {
+            if (self::isAadhaarField($keyLower, '', $label)) {
                 $valStr = self::maskAadhaar($valStr);
             }
 
-            $lines[] = "{$label}: {$valStr}";
+            $otherLines[] = "{$label}: {$valStr}";
             $seenLabels[$normLabel] = true;
             $seenNames[$normName] = true;
+        }
+
+        // 6. Assemble final format in exact required order:
+        // Location: {District} > {Block}
+        // Application Number: {Complete submitted application number}
+        // Applicant Name: {Complete applicant name}
+        // {Other actually filled field}: {Complete value}
+        $lines = [];
+        if ($locationStr !== '') {
+            $lines[] = $locationStr;
+        }
+        if ($resolvedAppNumber !== '' && !self::isFieldValueEmpty($resolvedAppNumber)) {
+            $lines[] = "Application Number: {$resolvedAppNumber}";
+        }
+        if ($resolvedApplicantName !== '' && !self::isFieldValueEmpty($resolvedApplicantName)) {
+            $lines[] = "Applicant Name: {$resolvedApplicantName}";
+        }
+        foreach ($otherLines as $ol) {
+            $lines[] = $ol;
         }
 
         return implode("\n", $lines);
