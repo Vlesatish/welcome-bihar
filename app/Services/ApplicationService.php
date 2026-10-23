@@ -480,7 +480,28 @@ class ApplicationService
             try {
                 $rowFiles = [];
                 if (!empty($_FILES["batch_files_{$idx}"])) {
-                    $rowFiles = $_FILES["batch_files_{$idx}"];
+                    $raw = $_FILES["batch_files_{$idx}"];
+                    if (isset($raw['name']) && is_array($raw['name'])) {
+                        foreach ($raw['name'] as $k => $v) {
+                            $rowFiles[$k] = [
+                                'name' => $raw['name'][$k] ?? '',
+                                'type' => $raw['type'][$k] ?? '',
+                                'tmp_name' => $raw['tmp_name'][$k] ?? '',
+                                'error' => $raw['error'][$k] ?? UPLOAD_ERR_NO_FILE,
+                                'size' => $raw['size'][$k] ?? 0
+                            ];
+                        }
+                    } else {
+                        $rowFiles = $raw;
+                    }
+                }
+                // Also check direct flat keys: batch_files_{idx}_{fName}
+                foreach ($_FILES as $fk => $fv) {
+                    $prefix = "batch_files_{$idx}_";
+                    if (str_starts_with($fk, $prefix)) {
+                        $actualFname = substr($fk, strlen($prefix));
+                        $rowFiles[$actualFname] = $fv;
+                    }
                 }
                 $validationRes = ApplicationCodeFieldService::validateSubmittedFields(
                     $appCode,
@@ -729,6 +750,11 @@ class ApplicationService
                     'applicant_name' => $prep['applicant_name'],
                     'mobile' => $prep['applicant_mobile']
                 ];
+                if (!empty($prep['fields']) && is_array($prep['fields'])) {
+                    foreach ($prep['fields'] as $f) {
+                        $formDataAssoc[$f['field_name']] = $f['field_value'];
+                    }
+                }
 
                 $createdApplications[] = [
                     'id' => (string)$appId,

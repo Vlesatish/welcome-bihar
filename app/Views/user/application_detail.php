@@ -171,9 +171,13 @@
                                     <?= e($fv['label_en']) ?>
                                 </td>
                                 <td>
-                                    <?php if ($fv['field_type'] === 'file' && !empty($fv['field_value'])): ?>
+                                    <?php if ($fv['field_type'] === 'file' && !empty($fv['field_value'])): 
+                                        $fVal = (str_starts_with($fv['field_value'], 'http://') || str_starts_with($fv['field_value'], 'https://') || str_starts_with($fv['field_value'], '/'))
+                                            ? $fv['field_value']
+                                            : '/' . $fv['field_value'];
+                                    ?>
                                         <div class="d-flex align-items-center gap-2">
-                                            <a href="<?= e($fv['field_value']) ?>" target="_blank" class="btn btn-sm btn-outline-primary fw-semibold">
+                                            <a href="<?= e($fVal) ?>" target="_blank" class="btn btn-sm btn-outline-primary fw-semibold">
                                                 <i class="bi bi-file-earmark-arrow-down me-1"></i> View / Download Document
                                             </a>
                                             <span class="small text-muted font-monospace"><?= e(basename($fv['field_value'])) ?></span>

@@ -1320,8 +1320,123 @@ class WhatsAppNotificationService
     }
 
     /**
+     * Resolve submitted PDF attachment(s) for an application (if any).
+     * Strictly checks application_field_values for file fields with valid PDF files on disk.
+     * Returns an empty array if the application has no uploaded PDF files.
+     *
+     * @param int $applicationId
+     * @param PDO $db
+     * @return array List of valid PDF attachment descriptors: [['full_path' => string, 'file_name' => string, 'field_label' => string]]
+     */
+    public static function getApplicationPdfAttachments(int $applicationId, PDO $db): array
+    {
+        if ($applicationId <= 0) {
+            return [];
+        }
+
+        $attachments = [];
+        $baseDir = dirname(__DIR__, 2);
+        $storageBase = realpath($baseDir . '/storage');
+        $publicBase = realpath($baseDir . '/public');
+
+        try {
+            // Fetch applicant_identifier and applicant_name for clean filename creation
+            $appStmt = $db->prepare("SELECT applicant_identifier, applicant_name FROM applications WHERE id = ?");
+            $appStmt->execute([$applicationId]);
+            $appInfo = $appStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+            $appIdent = !empty($appInfo['applicant_identifier']) ? trim((string)$appInfo['applicant_identifier']) : "APP_{$applicationId}";
+            $cleanIdent = preg_replace('/[^a-zA-Z0-9_\-]/', '_', $appIdent);
+
+            $stmt = $db->prepare("
+                SELECT 
+                    afv.id,
+                    afv.field_name,
+                    afv.field_value,
+                    COALESCE(NULLIF(TRIM(acf.label), ''), NULLIF(TRIM(dtf.label_en), ''), afv.field_name) AS field_label,
+                    COALESCE(acf.field_type, dtf.field_type, '') AS field_type
+                FROM application_field_values afv
+                LEFT JOIN application_code_fields acf ON afv.code_field_id = acf.id
+                LEFT JOIN data_type_fields dtf ON afv.field_id = dtf.id
+                WHERE afv.application_id = ?
+                ORDER BY afv.id ASC
+            ");
+            $stmt->execute([$applicationId]);
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            foreach ($rows as $row) {
+                $rawVal = trim((string)($row['field_value'] ?? ''));
+                if ($rawVal === '') {
+                    continue;
+                }
+
+                $fType = strtolower(trim((string)$row['field_type']));
+                $ext = strtolower(pathinfo($rawVal, PATHINFO_EXTENSION));
+
+                // Must be typed as file or have .pdf extension
+                if ($fType !== 'file' && $ext !== 'pdf') {
+                    continue;
+                }
+
+                // Check candidate paths in storage or public
+                $candidatePaths = [];
+                if ($storageBase) {
+                    $candidatePaths[] = $storageBase . '/' . ltrim($rawVal, '/\\');
+                }
+                if ($publicBase) {
+                    $candidatePaths[] = $publicBase . '/' . ltrim($rawVal, '/\\');
+                }
+
+                $resolvedPath = null;
+                foreach ($candidatePaths as $cand) {
+                    if (file_exists($cand) && is_file($cand)) {
+                        $realCand = realpath($cand);
+                        // Security check: must reside inside storage or public directories
+                        if ($realCand && (
+                            ($storageBase && str_starts_with(str_replace('\\', '/', $realCand), str_replace('\\', '/', $storageBase))) ||
+                            ($publicBase && str_starts_with(str_replace('\\', '/', $realCand), str_replace('\\', '/', $publicBase)))
+                        )) {
+                            $resolvedPath = $realCand;
+                            break;
+                        }
+                    }
+                }
+
+                if ($resolvedPath === null) {
+                    continue;
+                }
+
+                // Verify file is actually a PDF
+                $finfo = finfo_open(FILEINFO_MIME_TYPE);
+                $mime = finfo_file($finfo, $resolvedPath);
+                finfo_close($finfo);
+
+                if ($mime !== 'application/pdf') {
+                    continue;
+                }
+
+                $cleanLabel = preg_replace('/[^a-zA-Z0-9_\-]/', '_', trim((string)$row['field_label']));
+                $fileName = trim("{$cleanLabel}_{$cleanIdent}.pdf", '_');
+                if (empty($fileName) || $fileName === '.pdf') {
+                    $fileName = "Document_{$cleanIdent}.pdf";
+                }
+
+                $attachments[] = [
+                    'full_path' => $resolvedPath,
+                    'file_name' => $fileName,
+                    'field_label' => (string)$row['field_label']
+                ];
+            }
+        } catch (\Throwable $e) {
+            error_log("Failed resolving PDF attachment for application {$applicationId}: " . $e->getMessage());
+        }
+
+        return $attachments;
+    }
+
+    /**
      * Send a single outbox row using POST https://wbapi.in/send-api.php (multipart/form-data)
-     * Enforces atomic claim token check and reliable retry schedule
+     * Enforces atomic claim token check and reliable retry schedule.
+     * If the application has attached PDF document(s), sends as a WhatsApp document with PDF attached.
      */
     public static function sendOne(array $row, ?string $claimToken = null, ?array $settings = null): array
     {
@@ -1395,13 +1510,30 @@ class WhatsAppNotificationService
 
         $endpointUrl = $baseUrl . self::SEND_ENDPOINT;
 
-        // Multipart/form-data payload required by WBAPI
-        $postFields = [
-            'type' => 'text',
-            'to' => $toMobile,
-            'text' => $messageBody,
-            'sessionId' => $sessionId
-        ];
+        // Check if application has attached PDF document(s)
+        $pdfAttachments = ($appId > 0) ? self::getApplicationPdfAttachments($appId, $db) : [];
+
+        if (!empty($pdfAttachments)) {
+            // Application with attached PDF: send as WhatsApp document message with PDF attached
+            $primaryPdf = $pdfAttachments[0];
+            $cfile = new \CURLFile($primaryPdf['full_path'], 'application/pdf', $primaryPdf['file_name']);
+
+            $postFields = [
+                'type' => 'document',
+                'to' => $toMobile,
+                'media' => $cfile,
+                'text' => $messageBody,
+                'sessionId' => $sessionId
+            ];
+        } else {
+            // Standard text message (for applications without PDF)
+            $postFields = [
+                'type' => 'text',
+                'to' => $toMobile,
+                'text' => $messageBody,
+                'sessionId' => $sessionId
+            ];
+        }
 
         $headers = [
             'x-api-key: ' . $apiToken
@@ -1429,7 +1561,7 @@ class WhatsAppNotificationService
         if ($isSuccess) {
             $rawStatus = strtolower(trim((string)($json['data']['status'] ?? 'sent')));
             $providerStatus = ($rawStatus === 'pending' || $rawStatus === '') ? 'sent' : $rawStatus;
-            $providerMsgId = $json['data']['messageId'] ?? ($json['data']['id'] ?? null);
+            $providerMsgId = $json['data']['messageId'] ?? ($json['data']['id'] ?? ($json['data']['key']['id'] ?? null));
 
             $update = $db->prepare("
                 UPDATE whatsapp_notification_outbox
@@ -1453,8 +1585,31 @@ class WhatsAppNotificationService
                 'recipient_id' => $recipientUserId,
                 'recipient_mobile' => self::maskPhone($toMobile),
                 'provider_status' => $providerStatus,
-                'attempts' => $attempts
+                'attempts' => $attempts,
+                'has_pdf_attachment' => !empty($pdfAttachments),
+                'pdf_count' => count($pdfAttachments)
             ]);
+
+            // If there are additional PDF attachments, dispatch them as additional document messages
+            if (count($pdfAttachments) > 1) {
+                for ($i = 1; $i < count($pdfAttachments); $i++) {
+                    $extraPdf = $pdfAttachments[$i];
+                    if (file_exists($extraPdf['full_path'])) {
+                        $extraCfile = new \CURLFile($extraPdf['full_path'], 'application/pdf', $extraPdf['file_name']);
+                        $extraCaption = "Attachment #" . ($i + 1) . " (" . $extraPdf['field_label'] . ") - Application #{$appId}";
+                        $extraFields = [
+                            'type' => 'document',
+                            'to' => $toMobile,
+                            'media' => $extraCfile,
+                            'text' => $extraCaption,
+                            'sessionId' => $sessionId
+                        ];
+                        try {
+                            self::executeHttpRequest($endpointUrl, $headers, $extraFields);
+                        } catch (\Throwable $e) {}
+                    }
+                }
+            }
 
             // Auto-transition application from PENDING to IN_PROCESS upon confirmed WhatsApp notification delivery
             if ($appId > 0) {

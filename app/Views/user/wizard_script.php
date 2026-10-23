@@ -21,6 +21,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     window.rowFieldDefs = {};
     window.rowDynamicData = {};
+    window.rowDynamicFiles = {};
 
     const prefixRules = {
         'BICCO': { expected: ['BICCO'], conflicting: ['BCCCO', 'BRCCO', 'BOBC', 'NCLCO'] },
@@ -314,6 +315,56 @@ document.addEventListener('DOMContentLoaded', function () {
                         <span class="row-err-dyn text-danger small d-none" style="font-size: 0.68rem;"></span>
                     </div>
                 `;
+            } else if (f.field_type === 'file') {
+                const allowedExts = (f.allowed_file_types || 'pdf,jpg,jpeg,png').toLowerCase();
+                const acceptAttr = allowedExts.split(',').map(ext => '.' + ext.trim()).join(',');
+                const maxMb = f.max_file_size_mb || 2;
+                const fileVal = values[f.field_name] || '';
+                const fileName = values[f.field_name + '_name'] || (fileVal ? fileVal.split('/').pop() : '');
+                const hasFile = !!fileVal;
+                const isPdf = fileName.toLowerCase().endsWith('.pdf');
+
+                html += `
+                    <div class="dynamic-field-inline dynamic-field-file-box" data-field-name="${escapeHtml(f.field_name)}">
+                        <input type="file" 
+                                class="d-none row-dynamic-file-input" 
+                                id="file_${rowId}_${escapeHtml(f.field_name)}"
+                                data-field-name="${escapeHtml(f.field_name)}"
+                                data-field-type="file"
+                                data-max-mb="${maxMb}"
+                                data-allowed-exts="${escapeHtml(allowedExts)}"
+                                accept="${escapeHtml(acceptAttr)}">
+                        <div class="file-picker-container">
+                            <div class="file-picker-btn btn btn-sm w-100 py-1 px-2 rounded-2 border d-flex align-items-center justify-content-between ${hasFile ? 'btn-light border-success text-success shadow-2xs' : 'btn-white border-secondary-subtle text-secondary'}"
+                                 style="font-size: 0.76rem; cursor: pointer; background: #ffffff;"
+                                 onclick="document.getElementById('file_${rowId}_${escapeHtml(f.field_name)}').click()"
+                                 title="${escapeHtml(f.label)}${reqStar} (Allowed: ${escapeHtml(allowedExts)} | Max: ${maxMb}MB)">
+                                <div class="d-flex align-items-center gap-1.5 text-truncate flex-grow-1 me-1 text-start">
+                                    <i class="bi ${hasFile ? (isPdf ? 'bi-file-earmark-pdf-fill text-danger fs-6' : 'bi-file-earmark-image-fill text-primary fs-6') : 'bi-cloud-arrow-up-fill text-primary fs-6'}"></i>
+                                    <span class="file-display-name text-truncate fw-semibold" style="max-width: 130px;">
+                                        ${hasFile ? escapeHtml(fileName) : `<span class="text-dark">${escapeHtml(f.label)}${reqStar}</span>`}
+                                    </span>
+                                </div>
+                                <span class="badge ${hasFile ? 'bg-success text-white' : 'bg-primary-subtle text-primary border border-primary-subtle'} px-1.5 py-0.5 rounded-pill" style="font-size: 0.65rem;">
+                                    ${hasFile ? 'Attached' : 'Upload'}
+                                </span>
+                            </div>
+                            <div class="d-flex align-items-center justify-content-between mt-0.5 px-0.5" style="font-size: 0.65rem;">
+                                <span class="text-muted text-truncate" style="max-width: 140px;">
+                                    <i class="bi bi-paperclip text-muted"></i> ${escapeHtml(allowedExts.toUpperCase())} (${maxMb}MB)
+                                </span>
+                                ${hasFile ? `
+                                    <button type="button" class="btn btn-link btn-xs text-danger p-0 text-decoration-none fw-bold" 
+                                            onclick="event.stopPropagation(); window.removeRowFile('${rowId}', '${escapeHtml(f.field_name)}')"
+                                            style="font-size: 0.65rem;" title="Remove attachment">
+                                        <i class="bi bi-x-circle-fill"></i> Remove
+                                    </button>
+                                ` : ''}
+                            </div>
+                        </div>
+                        <span class="row-err-dyn text-danger small d-none" style="font-size: 0.68rem;"></span>
+                    </div>
+                `;
             } else {
                 const inputType = f.field_type === 'number' ? 'number' : (f.field_type === 'date' ? 'date' : 'text');
                 const fontClass = f.field_type === 'aadhaar' ? 'font-monospace' : (f.field_name.includes('number') ? 'font-monospace' : '');
@@ -359,12 +410,122 @@ document.addEventListener('DOMContentLoaded', function () {
             input.addEventListener('input', onUpdate);
             input.addEventListener('change', onUpdate);
         });
+
+        // Bind file input change events with auto-upload
+        detailsCell.querySelectorAll('.row-dynamic-file-input').forEach(fileInput => {
+            fileInput.addEventListener('change', async function () {
+                const fName = this.dataset.fieldName;
+                const maxMb = parseFloat(this.dataset.maxMb || '2');
+                const allowedExts = (this.dataset.allowedExts || 'pdf,jpg,jpeg,png').split(',').map(e => e.trim().toLowerCase());
+                const file = this.files && this.files[0];
+                const box = this.closest('.dynamic-field-file-box');
+                const errSpan = box?.querySelector('.row-err-dyn');
+                const pickerBtn = box?.querySelector('.file-picker-btn');
+
+                if (!file) return;
+
+                const ext = file.name.split('.').pop().toLowerCase();
+                if (!allowedExts.includes(ext)) {
+                    if (errSpan) {
+                        errSpan.textContent = `Allowed types: ${allowedExts.join(', ')}`;
+                        errSpan.classList.remove('d-none');
+                    }
+                    this.value = '';
+                    showToast('danger', `Invalid file type '.${ext}'. Allowed: ${allowedExts.join(', ')}`);
+                    return;
+                }
+
+                if (file.size > maxMb * 1024 * 1024) {
+                    if (errSpan) {
+                        errSpan.textContent = `File exceeds max size ${maxMb}MB`;
+                        errSpan.classList.remove('d-none');
+                    }
+                    this.value = '';
+                    showToast('danger', `File size exceeds maximum limit of ${maxMb}MB.`);
+                    return;
+                }
+
+                if (errSpan) {
+                    errSpan.classList.add('d-none');
+                    errSpan.textContent = '';
+                }
+
+                // Show uploading indicator on the button
+                if (pickerBtn) {
+                    pickerBtn.innerHTML = `
+                        <div class="d-flex align-items-center gap-1.5 text-primary">
+                            <span class="spinner-border spinner-border-sm" style="width: 0.75rem; height: 0.75rem;"></span>
+                            <span class="fw-semibold">Uploading ${escapeHtml(file.name)}...</span>
+                        </div>
+                    `;
+                }
+
+                // Keep file reference
+                window.rowDynamicFiles[rowId] = window.rowDynamicFiles[rowId] || {};
+                window.rowDynamicFiles[rowId][fName] = file;
+
+                // Also read as base64 DataURL for resilient dual-payload
+                const reader = new FileReader();
+                reader.onload = function (re) {
+                    window.rowDynamicData[rowId] = window.rowDynamicData[rowId] || {};
+                    window.rowDynamicData[rowId][fName + '_base64'] = re.target.result;
+                };
+                reader.readAsDataURL(file);
+
+                // Auto-upload to /api/requests/upload endpoint
+                const upForm = new FormData();
+                upForm.append('file', file);
+                try {
+                    const upRes = await fetch('/api/requests/upload', {
+                        method: 'POST',
+                        body: upForm
+                    });
+                    const upData = await upRes.json();
+                    if (upRes.ok && upData.success && upData.url) {
+                        window.rowDynamicData[rowId] = window.rowDynamicData[rowId] || {};
+                        window.rowDynamicData[rowId][fName] = upData.url;
+                        window.rowDynamicData[rowId][fName + '_name'] = file.name;
+                    } else {
+                        // Fallback: keep file name
+                        window.rowDynamicData[rowId] = window.rowDynamicData[rowId] || {};
+                        window.rowDynamicData[rowId][fName] = file.name;
+                        window.rowDynamicData[rowId][fName + '_name'] = file.name;
+                    }
+                } catch (e) {
+                    window.rowDynamicData[rowId] = window.rowDynamicData[rowId] || {};
+                    window.rowDynamicData[rowId][fName] = file.name;
+                    window.rowDynamicData[rowId][fName + '_name'] = file.name;
+                }
+
+                renderRowDetailsBadge(tr);
+                updateTotals();
+            });
+        });
     }
+
+    window.removeRowFile = function (rowId, fieldName) {
+        if (window.rowDynamicFiles && window.rowDynamicFiles[rowId]) {
+            delete window.rowDynamicFiles[rowId][fieldName];
+        }
+        if (window.rowDynamicData && window.rowDynamicData[rowId]) {
+            delete window.rowDynamicData[rowId][fieldName];
+            delete window.rowDynamicData[rowId][fieldName + '_name'];
+            delete window.rowDynamicData[rowId][fieldName + '_base64'];
+        }
+        const tr = document.getElementById(rowId);
+        if (tr) {
+            renderRowDetailsBadge(tr);
+            updateTotals();
+        }
+    };
 
     function resetRowDynamicFields(tr) {
         const rowId = tr.id;
         window.rowDynamicData[rowId] = {};
         window.rowFieldDefs[rowId] = [];
+        if (window.rowDynamicFiles) {
+            delete window.rowDynamicFiles[rowId];
+        }
         tr.dataset.formConfigured = '1';
         const statusEl = tr.querySelector('.row-code-status');
         if (statusEl) statusEl.innerHTML = '';
@@ -626,12 +787,20 @@ document.addEventListener('DOMContentLoaded', function () {
             // Check extra fields completion
             const fields = window.rowFieldDefs[rowId] || [];
             const values = window.rowDynamicData[rowId] || {};
+            const files = window.rowDynamicFiles?.[rowId] || {};
             let missingExtraReq = false;
             fields.filter(f => !['application_number', 'applicant_name'].includes(f.field_name)).forEach(f => {
                 if (parseInt(f.is_required) === 1) {
-                    const v = values[f.field_name];
-                    if (v === undefined || v === null || String(v).trim() === '') {
-                        missingExtraReq = true;
+                    if (f.field_type === 'file') {
+                        const fileVal = values[f.field_name] || files[f.field_name];
+                        if (!fileVal) {
+                            missingExtraReq = true;
+                        }
+                    } else {
+                        const v = values[f.field_name];
+                        if (v === undefined || v === null || String(v).trim() === '') {
+                            missingExtraReq = true;
+                        }
                     }
                 }
             });
@@ -757,22 +926,40 @@ document.addEventListener('DOMContentLoaded', function () {
             // Check extra fields
             const fields = window.rowFieldDefs[rowId] || [];
             const values = window.rowDynamicData[rowId] || {};
+            const files = window.rowDynamicFiles?.[rowId] || {};
             fields.filter(f => !['application_number', 'applicant_name'].includes(f.field_name)).forEach(f => {
                 const v = values[f.field_name];
                 const dynInput = tr.querySelector(`.row-dynamic-input[data-field-name="${f.field_name}"]`);
-                const dynErr = dynInput?.closest('.dynamic-field-inline')?.querySelector('.row-err-dyn');
+                const dynBox = tr.querySelector(`.dynamic-field-inline[data-field-name="${f.field_name}"]`);
+                const dynErr = dynBox?.querySelector('.row-err-dyn');
 
                 if (parseInt(f.is_required) === 1) {
-                    if (v === undefined || v === null || String(v).trim() === '') {
-                        if (dynErr && dynInput) {
-                            dynErr.textContent = `${f.label} is required`;
-                            dynErr.classList.remove('d-none');
-                            dynInput.classList.add('is-invalid');
-                            if (!firstErrorInput) firstErrorInput = dynInput;
+                    if (f.field_type === 'file') {
+                        const hasFile = (v !== undefined && v !== null && String(v).trim() !== '') || !!files[f.field_name];
+                        if (!hasFile) {
+                            if (dynErr) {
+                                dynErr.textContent = `${f.label} is required`;
+                                dynErr.classList.remove('d-none');
+                            }
+                            const pickerBtn = dynBox?.querySelector('.file-picker-btn');
+                            if (pickerBtn) pickerBtn.classList.add('border-danger');
+                            if (!firstErrorInput) firstErrorInput = pickerBtn;
+                            showToast('danger', `Row #${rowNum}: Document '${f.label}' is required.`);
+                            hasValidationError = true;
+                            return;
                         }
-                        showToast('danger', `Row #${rowNum}: Field '${f.label}' is required.`);
-                        hasValidationError = true;
-                        return;
+                    } else {
+                        if (v === undefined || v === null || String(v).trim() === '') {
+                            if (dynErr && dynInput) {
+                                dynErr.textContent = `${f.label} is required`;
+                                dynErr.classList.remove('d-none');
+                                dynInput.classList.add('is-invalid');
+                                if (!firstErrorInput) firstErrorInput = dynInput;
+                            }
+                            showToast('danger', `Row #${rowNum}: Field '${f.label}' is required.`);
+                            hasValidationError = true;
+                            return;
+                        }
                     }
                 }
 
@@ -828,11 +1015,34 @@ document.addEventListener('DOMContentLoaded', function () {
     };
 
     function executeBatchSubmit(items, acceptPriceChange = false) {
-        fetch('/api/requests/batch', {
+        // Build FormData to support file uploads alongside items payload
+        const formData = new FormData();
+        formData.append('accept_price_change', acceptPriceChange ? '1' : '0');
+        formData.append('items', JSON.stringify(items));
+
+        let hasRawFiles = false;
+        const rows = tableBody.querySelectorAll('tr');
+        rows.forEach((tr, idx) => {
+            const rowId = tr.id;
+            const rFiles = window.rowDynamicFiles?.[rowId] || {};
+            for (const [fName, fObj] of Object.entries(rFiles)) {
+                if (fObj instanceof File) {
+                    formData.append(`batch_files_${idx}_${fName}`, fObj);
+                    hasRawFiles = true;
+                }
+            }
+        });
+
+        const reqOptions = hasRawFiles ? {
+            method: 'POST',
+            body: formData
+        } : {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ accept_price_change: acceptPriceChange, items: items })
-        })
+        };
+
+        fetch('/api/requests/batch', reqOptions)
         .then(res => res.json().then(data => ({ status: res.status, body: data })))
         .then(({ status, body }) => {
             btnSubmitAll.disabled = false;

@@ -10,9 +10,35 @@ declare(strict_types=1);
 if (php_sapi_name() === 'cli-server') {
     $urlPath = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
     if ($urlPath !== null && $urlPath !== '/' && $urlPath !== '') {
+        // Automatically redirect accidental subfolder prefixes (e.g. /user/uploads/...) to /uploads/...
+        if (preg_match('#^/(?:user|admin|applications)/(uploads/.+)$#i', $urlPath, $m)) {
+            header('Location: /' . $m[1], true, 301);
+            exit;
+        }
+
         $staticFile = __DIR__ . $urlPath;
         if (file_exists($staticFile) && is_file($staticFile)) {
             return false;
+        }
+
+        // Fallback: check storage/uploads if file was uploaded to storage directory
+        if (str_starts_with($urlPath, '/uploads/')) {
+            $storageTarget = dirname(__DIR__) . '/storage' . $urlPath;
+            if (file_exists($storageTarget) && is_file($storageTarget)) {
+                $ext = strtolower(pathinfo($storageTarget, PATHINFO_EXTENSION));
+                $mimes = [
+                    'pdf' => 'application/pdf',
+                    'jpg' => 'image/jpeg',
+                    'jpeg' => 'image/jpeg',
+                    'png' => 'image/png'
+                ];
+                $mime = $mimes[$ext] ?? 'application/octet-stream';
+                header('Content-Type: ' . $mime);
+                header('Content-Length: ' . filesize($storageTarget));
+                header('Content-Disposition: inline; filename="' . basename($storageTarget) . '"');
+                readfile($storageTarget);
+                exit;
+            }
         }
     }
 }
@@ -97,6 +123,35 @@ if (\App\Services\AuthService::check()) {
 
     // Server-side active portal mode validation and immediate revocation enforcement
     \App\Services\AuthService::validateAndSyncActiveMode();
+}
+
+// Normalize accidental subfolder prefixes (/user/uploads/...) and handle upload file delivery
+if (preg_match('#^/(?:user|admin|applications)/(uploads/.+)$#i', $requestUri, $pMatch)) {
+    header('Location: /' . $pMatch[1], true, 301);
+    exit;
+}
+if (str_starts_with($requestUri, '/uploads/')) {
+    $pubTarget = __DIR__ . $requestUri;
+    $storTarget = dirname(__DIR__) . '/storage' . $requestUri;
+    $targetFile = (file_exists($pubTarget) && is_file($pubTarget)) 
+        ? $pubTarget 
+        : ((file_exists($storTarget) && is_file($storTarget)) ? $storTarget : null);
+
+    if ($targetFile !== null) {
+        $ext = strtolower(pathinfo($targetFile, PATHINFO_EXTENSION));
+        $mimes = [
+            'pdf' => 'application/pdf',
+            'jpg' => 'image/jpeg',
+            'jpeg' => 'image/jpeg',
+            'png' => 'image/png'
+        ];
+        $mime = $mimes[$ext] ?? 'application/octet-stream';
+        header('Content-Type: ' . $mime);
+        header('Content-Length: ' . filesize($targetFile));
+        header('Content-Disposition: inline; filename="' . basename($targetFile) . '"');
+        readfile($targetFile);
+        exit;
+    }
 }
 
 // Route Dispatcher

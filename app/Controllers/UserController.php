@@ -146,7 +146,11 @@ class UserController
                 WHERE afv.application_id IN ({$inClause})
             ")->fetchAll(PDO::FETCH_ASSOC);
             foreach ($fvRows as $fv) {
-                $fieldValuesByApp[$fv['application_id']][$fv['field_name']] = $fv['field_value'];
+                $v = $fv['field_value'];
+                if (is_string($v) && str_starts_with($v, 'uploads/')) {
+                    $v = '/' . $v;
+                }
+                $fieldValuesByApp[$fv['application_id']][$fv['field_name']] = $v;
             }
         }
         foreach ($applications as &$app) {

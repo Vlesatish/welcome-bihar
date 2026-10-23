@@ -308,6 +308,55 @@ class ApplicationCodeFieldService
 
             if ($fType === 'file') {
                 $file = $uploadedFiles[$fName] ?? null;
+
+                // 1. Check if raw file was passed directly in $uploadedFiles
+                if (empty($file) || empty($file['tmp_name']) || $file['error'] !== UPLOAD_ERR_OK) {
+                    // Check if base64 DataURI was provided in $submittedValues
+                    $rawVal = trim((string)($submittedValues[$fName] ?? ''));
+                    $base64Val = trim((string)($submittedValues[$fName . '_base64'] ?? ''));
+                    $candidateDataUri = str_starts_with($rawVal, 'data:') ? $rawVal : (str_starts_with($base64Val, 'data:') ? $base64Val : '');
+
+                    if (!empty($candidateDataUri)) {
+                        $base64File = self::convertBase64ToUploadedFile($candidateDataUri, $field);
+                        if ($base64File !== null) {
+                            $file = $base64File;
+                        }
+                    }
+
+                    // If still no file object, check if it is a pre-uploaded server path
+                    if (empty($file) && !empty($rawVal) && !str_starts_with($rawVal, 'data:')) {
+                        $baseDir = dirname(__DIR__, 2);
+                        $cleanRel = ltrim($rawVal, '/\\');
+                        $candPub = $baseDir . '/public/' . $cleanRel;
+                        $candStor = $baseDir . '/storage/' . $cleanRel;
+                        $candPubDoc = $baseDir . '/public/uploads/documents/' . basename($cleanRel);
+
+                        $foundFile = false;
+                        if (file_exists($candPub) && is_file($candPub)) {
+                            $foundFile = true;
+                        } elseif (file_exists($candStor) && is_file($candStor)) {
+                            $foundFile = true;
+                        } elseif (file_exists($candPubDoc) && is_file($candPubDoc)) {
+                            $cleanRel = 'uploads/documents/' . basename($cleanRel);
+                            $foundFile = true;
+                        } elseif (str_starts_with($cleanRel, 'uploads/') && preg_match('#^uploads/[a-zA-Z0-9_\-\./]+\.(pdf|jpg|jpeg|png|webp)$#i', $cleanRel)) {
+                            $foundFile = true;
+                        }
+
+                        if ($foundFile) {
+                            $validatedData[] = [
+                                'code_field_id' => $field['id'],
+                                'field_name' => $fName,
+                                'field_label' => $fLabel,
+                                'field_type' => $fType,
+                                'field_value' => '/' . $cleanRel,
+                                'is_unique' => (int)$field['is_unique']
+                            ];
+                            continue;
+                        }
+                    }
+                }
+
                 if ($isReq && (empty($file) || empty($file['tmp_name']) || $file['error'] !== UPLOAD_ERR_OK)) {
                     throw new Exception("File '{$fLabel}' is required.");
                 }
@@ -491,22 +540,80 @@ class ApplicationCodeFieldService
             throw new Exception("Uploaded file content does not match extension '.{$ext}'.");
         }
 
-        $uploadDir = dirname(__DIR__, 2) . '/storage/uploads/dynamic_fields/' . date('Y/m');
-        if (!is_dir($uploadDir)) {
-            mkdir($uploadDir, 0755, true);
+        $baseDir = dirname(__DIR__, 2);
+        $pubUploadDir = $baseDir . '/public/uploads/dynamic_fields/' . date('Y/m');
+        $storUploadDir = $baseDir . '/storage/uploads/dynamic_fields/' . date('Y/m');
+        if (!is_dir($pubUploadDir)) {
+            mkdir($pubUploadDir, 0755, true);
+        }
+        if (!is_dir($storUploadDir)) {
+            mkdir($storUploadDir, 0755, true);
         }
 
         $randName = bin2hex(random_bytes(16)) . '.' . $ext;
-        $destPath = $uploadDir . '/' . $randName;
+        $destPath = $pubUploadDir . '/' . $randName;
+        $storDestPath = $storUploadDir . '/' . $randName;
 
-        if (!move_uploaded_file($file['tmp_name'], $destPath)) {
+        $stored = false;
+        if (is_uploaded_file($file['tmp_name'])) {
+            $stored = move_uploaded_file($file['tmp_name'], $destPath);
+        } else {
+            $stored = @copy($file['tmp_name'], $destPath);
+            @unlink($file['tmp_name']);
+        }
+
+        if (!$stored) {
             throw new Exception("Failed to store uploaded file.");
         }
 
-        // Track stored file for rollback safety
-        $trackedFiles[] = $destPath;
+        @copy($destPath, $storDestPath);
 
-        return 'uploads/dynamic_fields/' . date('Y/m') . '/' . $randName;
+        // Track stored files for rollback safety
+        $trackedFiles[] = $destPath;
+        $trackedFiles[] = $storDestPath;
+
+        return '/uploads/dynamic_fields/' . date('Y/m') . '/' . $randName;
+    }
+
+    /**
+     * Convert base64 data URI to temporary uploaded file array
+     */
+    public static function convertBase64ToUploadedFile(string $dataUri, array $field): ?array
+    {
+        if (!preg_match('/^data:([^;]+);(?:[^;]+;)*base64,(.+)$/', $dataUri, $matches)) {
+            return null;
+        }
+
+        $mimeType = strtolower(trim($matches[1]));
+        $base64Data = $matches[2];
+        $decoded = base64_decode($base64Data, true);
+        if ($decoded === false) {
+            return null;
+        }
+
+        $tmpFile = tempnam(sys_get_temp_dir(), 'wb_up_');
+        if ($tmpFile === false) {
+            return null;
+        }
+
+        file_put_contents($tmpFile, $decoded);
+
+        $extMap = [
+            'application/pdf' => 'pdf',
+            'image/jpeg' => 'jpg',
+            'image/jpg' => 'jpg',
+            'image/png' => 'png'
+        ];
+        $ext = $extMap[$mimeType] ?? 'pdf';
+        $clientName = ($field['field_name'] ?? 'upload') . '.' . $ext;
+
+        return [
+            'name' => $clientName,
+            'type' => $mimeType,
+            'tmp_name' => $tmpFile,
+            'error' => UPLOAD_ERR_OK,
+            'size' => strlen($decoded)
+        ];
     }
 
     /**
@@ -514,14 +621,16 @@ class ApplicationCodeFieldService
      */
     public static function cleanupTrackedFiles(array $filePaths): void
     {
-        $baseDir = realpath(dirname(__DIR__, 2) . '/storage/uploads');
+        $storBase = realpath(dirname(__DIR__, 2) . '/storage/uploads');
+        $pubBase = realpath(dirname(__DIR__, 2) . '/public/uploads');
         foreach ($filePaths as $path) {
             if (!empty($path) && is_file($path)) {
                 $real = realpath($path);
-                if ($real && $baseDir) {
+                if ($real) {
                     $normReal = str_replace('\\', '/', $real);
-                    $normBase = str_replace('\\', '/', $baseDir);
-                    if (str_starts_with($normReal, $normBase)) {
+                    $normStor = $storBase ? str_replace('\\', '/', $storBase) : '';
+                    $normPub = $pubBase ? str_replace('\\', '/', $pubBase) : '';
+                    if (($normStor && str_starts_with($normReal, $normStor)) || ($normPub && str_starts_with($normReal, $normPub))) {
                         @unlink($real);
                     }
                 }

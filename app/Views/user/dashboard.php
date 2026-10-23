@@ -723,9 +723,12 @@ document.addEventListener('DOMContentLoaded', function () {
         }
         if (app.admin_remarks || app.remarks) addDetailRow(tbody, 'REMARKS / NOTE', app.admin_remarks || app.remarks);
         if (app.result_file) {
+            const resFileUrl = (app.result_file.startsWith('http://') || app.result_file.startsWith('https://') || app.result_file.startsWith('/'))
+                ? app.result_file
+                : '/' + app.result_file;
             addDetailRow(tbody, 'CERTIFICATE (PDF)', `<div class="d-flex gap-2 align-items-center">
-                <a href="${app.result_file}" target="_blank" download class="btn btn-sm btn-success py-1 px-3 rounded-2 fw-bold shadow-sm"><i class="bi bi-file-earmark-pdf-fill me-1"></i> Download Certificate (PDF)</a>
-                <button type="button" class="btn btn-sm btn-outline-success py-1 px-2.5 rounded-2 fw-bold" onclick="viewResultFile('${app.result_file}', '${app.app_ref || app.id}')"><i class="bi bi-eye me-1"></i> Preview</button>
+                <a href="${resFileUrl}" target="_blank" download class="btn btn-sm btn-success py-1 px-3 rounded-2 fw-bold shadow-sm"><i class="bi bi-file-earmark-pdf-fill me-1"></i> Download Certificate (PDF)</a>
+                <button type="button" class="btn btn-sm btn-outline-success py-1 px-2.5 rounded-2 fw-bold" onclick="viewResultFile('${resFileUrl}', '${app.app_ref || app.id}')"><i class="bi bi-eye me-1"></i> Preview</button>
             </div>`);
         } else if (app.status === 'IN_PROCESS') {
             addDetailRow(tbody, 'RTPS QUEUE STATUS', `<span class="badge bg-info-subtle text-info-emphasis border border-info-subtle px-2 py-1"><i class="bi bi-clock-history me-1"></i> Queued for automatic nightly check (Every night at 12:00 AM Asia/Kolkata)</span>`);
@@ -753,8 +756,9 @@ document.addEventListener('DOMContentLoaded', function () {
         const strVal = String(val ?? '').trim();
         if (!strVal || strVal === '--' || strVal === 'null' || strVal === 'undefined') {
             td.innerHTML = '<span class="text-muted">--</span>';
-        } else if (strVal.startsWith('/uploads/') || strVal.endsWith('.pdf') || strVal.match(/\.(jpg|jpeg|png)$/i)) {
-            td.innerHTML = `<a href="${strVal}" target="_blank" class="btn btn-xs btn-outline-primary py-0.5 px-2 rounded-2 fw-semibold"><i class="bi bi-file-earmark-arrow-down me-1"></i> View File</a>`;
+        } else if (strVal.startsWith('/uploads/') || strVal.startsWith('uploads/') || strVal.endsWith('.pdf') || strVal.match(/\.(jpg|jpeg|png)$/i)) {
+            const fileUrl = (strVal.startsWith('http://') || strVal.startsWith('https://') || strVal.startsWith('/')) ? strVal : ('/' + strVal);
+            td.innerHTML = `<a href="${fileUrl}" target="_blank" class="btn btn-xs btn-outline-primary py-0.5 px-2 rounded-2 fw-semibold"><i class="bi bi-file-earmark-arrow-down me-1"></i> View File</a>`;
         } else if (strVal.includes('<') && strVal.includes('>')) {
             td.innerHTML = strVal;
         } else {

@@ -579,9 +579,12 @@ document.addEventListener('DOMContentLoaded', function () {
             addDetailRow(tbody, 'ADMIN REMARKS', req.admin_remarks || req.remarks);
         }
         if (req.result_file) {
+            const resFileUrl = (req.result_file.startsWith('http://') || req.result_file.startsWith('https://') || req.result_file.startsWith('/'))
+                ? req.result_file
+                : '/' + req.result_file;
             addDetailRow(tbody, 'RESULT DOCUMENT', `<div class="d-flex gap-2 align-items-center">
-                <button type="button" class="btn btn-xs btn-outline-success py-1 px-2.5 rounded-pill fw-bold" onclick="viewResultFile('${req.result_file}', '${req.app_ref || req.id}')"><i class="bi bi-eye"></i> View Result</button>
-                <a href="${req.result_file}" target="_blank" download class="btn btn-xs btn-success py-1 px-2.5 rounded-pill fw-bold"><i class="bi bi-download"></i> Download</a>
+                <button type="button" class="btn btn-xs btn-outline-success py-1 px-2.5 rounded-pill fw-bold" onclick="viewResultFile('${resFileUrl}', '${req.app_ref || req.id}')"><i class="bi bi-eye"></i> View Result</button>
+                <a href="${resFileUrl}" target="_blank" download class="btn btn-xs btn-success py-1 px-2.5 rounded-pill fw-bold"><i class="bi bi-download"></i> Download</a>
             </div>`);
         }
 
@@ -601,9 +604,10 @@ document.addEventListener('DOMContentLoaded', function () {
         th.textContent = label;
         const td = document.createElement('td');
 
-        const strVal = String(val || '');
-        if (strVal.startsWith('/uploads/') || strVal.endsWith('.pdf') || strVal.match(/\.(jpg|jpeg|png)$/i)) {
-            td.innerHTML = `<a href="${strVal}" target="_blank" class="btn btn-sm btn-outline-primary py-0 px-2"><i class="bi bi-file-earmark-arrow-down"></i> View File</a>`;
+        const strVal = String(val || '').trim();
+        if (strVal.startsWith('/uploads/') || strVal.startsWith('uploads/') || strVal.endsWith('.pdf') || strVal.match(/\.(jpg|jpeg|png)$/i)) {
+            const fileUrl = (strVal.startsWith('http://') || strVal.startsWith('https://') || strVal.startsWith('/')) ? strVal : ('/' + strVal);
+            td.innerHTML = `<a href="${fileUrl}" target="_blank" class="btn btn-sm btn-outline-primary py-0 px-2"><i class="bi bi-file-earmark-arrow-down"></i> View File</a>`;
         } else if (strVal.startsWith('<span') || strVal.startsWith('<div')) {
             td.innerHTML = strVal;
         } else {

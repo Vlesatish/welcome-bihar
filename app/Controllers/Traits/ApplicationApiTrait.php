@@ -691,7 +691,7 @@ public function apiGetRequests(): void
             exit;
         }
 
-        $targetDir = dirname(dirname(__DIR__)) . '/public/uploads/documents';
+        $targetDir = dirname(__DIR__, 3) . '/public/uploads/documents';
         if (!is_dir($targetDir)) mkdir($targetDir, 0755, true);
 
         $safeName = 'doc_' . date('Ymd_His') . '_' . bin2hex(random_bytes(6)) . '.' . $ext;

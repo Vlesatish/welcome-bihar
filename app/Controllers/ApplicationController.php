@@ -520,7 +520,11 @@ class ApplicationController
                 WHERE afv.application_id IN ({$inClause})
             ")->fetchAll(PDO::FETCH_ASSOC);
             foreach ($fvRows as $fv) {
-                $fieldValuesByApp[$fv['application_id']][$fv['field_name']] = $fv['field_value'];
+                $v = $fv['field_value'];
+                if (is_string($v) && str_starts_with($v, 'uploads/')) {
+                    $v = '/' . $v;
+                }
+                $fieldValuesByApp[$fv['application_id']][$fv['field_name']] = $v;
             }
         }
         foreach ($applications as &$app) {
@@ -629,6 +633,12 @@ class ApplicationController
         ");
         $fvStmt->execute([$appId]);
         $fieldValues = $fvStmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($fieldValues as &$fv) {
+            if (!empty($fv['field_value']) && is_string($fv['field_value']) && str_starts_with($fv['field_value'], 'uploads/')) {
+                $fv['field_value'] = '/' . $fv['field_value'];
+            }
+        }
+        unset($fv);
 
         // Status history trail
         $histStmt = $db->prepare("
