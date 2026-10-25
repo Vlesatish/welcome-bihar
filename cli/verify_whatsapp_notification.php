@@ -345,7 +345,7 @@ try {
     $sentRow = reset($sentRow);
     assertTest($sentRow && !str_contains($sentRow['message_body'], 'New application received'), 'Message strictly excludes notification header/boilerplate');
     assertTest(str_contains($sentRow['message_body'], 'Applicant Name: Ramesh Kumar'), 'Message contains applicant name');
-    assertTest(str_contains($sentRow['message_body'], "Application Number: {$uniqueAppNum}"), 'Message contains user application number');
+    assertTest(str_contains($sentRow['message_body'], "App No {$uniqueAppNum}"), 'Message contains user application number');
     assertTest(str_contains($sentRow['message_body'], "Location: Gaya > Konch"), 'Message contains district > block location');
     assertTest(!str_contains($sentRow['message_body'], 'Reference:'), 'Message strictly excludes internal reference number');
     assertTest(!str_contains($sentRow['message_body'], 'balance') && !str_contains($sentRow['message_body'], 'token'), 'Message excludes wallet balances and sensitive tokens');

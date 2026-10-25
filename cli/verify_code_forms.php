@@ -360,7 +360,7 @@ try {
     recordResult(20, "Staff routing remains correct by District, Block, Code", $routingMethod);
 
     // -------------------------------------------------------------
-    // Case 21: WhatsApp message contains only user-filled inputs and no system boilerplate
+    // Case 21: WhatsApp message contains only simple inputs and no system boilerplate
     // -------------------------------------------------------------
     $waMsg = \App\Services\WhatsAppNotificationService::buildMessage([
         'applicant_name' => 'John Doe',
@@ -373,13 +373,13 @@ try {
         'aadhaar_number' => '123456789012'
     ]);
     $waClean = str_contains($waMsg, 'Applicant Name: John Doe')
-        && str_contains($waMsg, 'Application Number: LC/12345')
+        && str_contains($waMsg, 'App No LC/12345')
         && str_contains($waMsg, 'Location: Gaya > Konch')
-        && str_contains($waMsg, 'Aadhaar Number: XXXX-XXXX-9012')
+        && !str_contains($waMsg, 'Aadhaar')
         && !str_contains($waMsg, 'Reference:')
         && !str_contains($waMsg, 'Status:')
         && !str_contains($waMsg, 'Application Code:');
-    recordResult(21, "WhatsApp message contains only user-filled inputs and no system boilerplate", $waClean);
+    recordResult(21, "WhatsApp message contains only simple inputs and no system boilerplate", $waClean);
 
     // -------------------------------------------------------------
     // Case 22: Existing historical applications remain readable

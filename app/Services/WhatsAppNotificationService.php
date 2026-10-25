@@ -597,11 +597,11 @@ class WhatsAppNotificationService
      * Build clean WhatsApp message for application notification.
      * Strictly includes ONLY:
      * Location: {District} > {Block}
-     * Application Number: {Complete submitted application number}
+     * App No {Complete submitted application number}
      * Applicant Name: {Complete applicant name}
-     * {Other actually filled field}: {Complete value}
      *
      * Application Number is NEVER masked, truncated, hidden, or replaced.
+     * All other dynamic input fields (Aadhaar, Mobile, Father, Mother, etc.) are strictly blocked.
      * Contains NO heading, NO description, NO rate/fee/wallet, NO references, NO dates,
      * NO status, NO service name, NO operator name, NO blank fields, NO decorative emojis.
      */
@@ -875,21 +875,18 @@ class WhatsAppNotificationService
 
         // 6. Assemble final format in exact required order:
         // Location: {District} > {Block}
-        // Application Number: {Complete submitted application number}
+        // App No {Complete submitted application number}
         // Applicant Name: {Complete applicant name}
-        // {Other actually filled field}: {Complete value}
+        // (All other dynamic input fields are strictly blocked to keep message clean & simple)
         $lines = [];
         if ($locationStr !== '') {
             $lines[] = $locationStr;
         }
         if ($resolvedAppNumber !== '' && !self::isFieldValueEmpty($resolvedAppNumber)) {
-            $lines[] = "Application Number: {$resolvedAppNumber}";
+            $lines[] = "App No {$resolvedAppNumber}";
         }
         if ($resolvedApplicantName !== '' && !self::isFieldValueEmpty($resolvedApplicantName)) {
             $lines[] = "Applicant Name: {$resolvedApplicantName}";
-        }
-        foreach ($otherLines as $ol) {
-            $lines[] = $ol;
         }
 
         return implode("\n", $lines);
@@ -1322,13 +1319,15 @@ class WhatsAppNotificationService
     /**
      * Resolve submitted PDF attachment(s) for an application (if any).
      * Strictly checks application_field_values for file fields with valid PDF files on disk.
-     * Returns an empty array if the application has no uploaded PDF files.
+     * Resolve attached photos and PDF document(s) for an application.
+     * Resolves valid file paths stored in public/uploads or storage/uploads.
+     * Returns an empty array if the application has no uploaded media/photo/PDF files.
      *
      * @param int $applicationId
      * @param PDO $db
-     * @return array List of valid PDF attachment descriptors: [['full_path' => string, 'file_name' => string, 'field_label' => string]]
+     * @return array List of valid attachment descriptors: [['full_path' => string, 'file_name' => string, 'field_label' => string, 'mime_type' => string, 'is_photo' => bool]]
      */
-    public static function getApplicationPdfAttachments(int $applicationId, PDO $db): array
+    public static function getApplicationAttachments(int $applicationId, PDO $db): array
     {
         if ($applicationId <= 0) {
             return [];
@@ -1372,8 +1371,9 @@ class WhatsAppNotificationService
                 $fType = strtolower(trim((string)$row['field_type']));
                 $ext = strtolower(pathinfo($rawVal, PATHINFO_EXTENSION));
 
-                // Must be typed as file or have .pdf extension
-                if ($fType !== 'file' && $ext !== 'pdf') {
+                $allowedExts = ['pdf', 'jpg', 'jpeg', 'png', 'webp'];
+                // Must be typed as file or have an allowed document/photo extension
+                if ($fType !== 'file' && !in_array($ext, $allowedExts, true)) {
                     continue;
                 }
 
@@ -1405,32 +1405,61 @@ class WhatsAppNotificationService
                     continue;
                 }
 
-                // Verify file is actually a PDF
+                // Verify file MIME type
                 $finfo = finfo_open(FILEINFO_MIME_TYPE);
                 $mime = finfo_file($finfo, $resolvedPath);
                 finfo_close($finfo);
 
-                if ($mime !== 'application/pdf') {
+                $allowedMimes = [
+                    'application/pdf' => 'pdf',
+                    'image/jpeg' => 'jpg',
+                    'image/jpg' => 'jpg',
+                    'image/png' => 'png',
+                    'image/webp' => 'webp'
+                ];
+
+                if (!isset($allowedMimes[$mime])) {
                     continue;
                 }
 
+                $fileExt = $allowedMimes[$mime];
                 $cleanLabel = preg_replace('/[^a-zA-Z0-9_\-]/', '_', trim((string)$row['field_label']));
-                $fileName = trim("{$cleanLabel}_{$cleanIdent}.pdf", '_');
-                if (empty($fileName) || $fileName === '.pdf') {
-                    $fileName = "Document_{$cleanIdent}.pdf";
+                $fileName = trim("{$cleanLabel}_{$cleanIdent}.{$fileExt}", '_');
+                if (empty($fileName) || $fileName === ".{$fileExt}") {
+                    $defaultBase = str_starts_with($mime, 'image/') ? 'Photo' : 'Document';
+                    $fileName = "{$defaultBase}_{$cleanIdent}.{$fileExt}";
                 }
 
                 $attachments[] = [
                     'full_path' => $resolvedPath,
                     'file_name' => $fileName,
-                    'field_label' => (string)$row['field_label']
+                    'field_label' => (string)$row['field_label'],
+                    'mime_type' => $mime,
+                    'is_photo' => str_starts_with($mime, 'image/')
                 ];
             }
+
+            // Sort attachments so applicant photo / images come first, followed by PDFs
+            usort($attachments, function ($a, $b) {
+                $aPhoto = $a['is_photo'] ?? false;
+                $bPhoto = $b['is_photo'] ?? false;
+                if ($aPhoto && !$bPhoto) return -1;
+                if (!$aPhoto && $bPhoto) return 1;
+                return 0;
+            });
         } catch (\Throwable $e) {
-            error_log("Failed resolving PDF attachment for application {$applicationId}: " . $e->getMessage());
+            error_log("Failed resolving attachments for application {$applicationId}: " . $e->getMessage());
         }
 
         return $attachments;
+    }
+
+    /**
+     * Backward-compatible alias for getApplicationAttachments
+     */
+    public static function getApplicationPdfAttachments(int $applicationId, PDO $db): array
+    {
+        return self::getApplicationAttachments($applicationId, $db);
     }
 
     /**
@@ -1510,13 +1539,14 @@ class WhatsAppNotificationService
 
         $endpointUrl = $baseUrl . self::SEND_ENDPOINT;
 
-        // Check if application has attached PDF document(s)
-        $pdfAttachments = ($appId > 0) ? self::getApplicationPdfAttachments($appId, $db) : [];
+        // Check if application has attached photo or document(s)
+        $attachments = ($appId > 0) ? self::getApplicationAttachments($appId, $db) : [];
 
-        if (!empty($pdfAttachments)) {
-            // Application with attached PDF: send as WhatsApp document message with PDF attached
-            $primaryPdf = $pdfAttachments[0];
-            $cfile = new \CURLFile($primaryPdf['full_path'], 'application/pdf', $primaryPdf['file_name']);
+        if (!empty($attachments)) {
+            // Application with attached photo or document: send as WhatsApp document message with media attached
+            $primaryAttachment = $attachments[0];
+            $attMime = $primaryAttachment['mime_type'] ?? 'application/octet-stream';
+            $cfile = new \CURLFile($primaryAttachment['full_path'], $attMime, $primaryAttachment['file_name']);
 
             $postFields = [
                 'type' => 'document',
@@ -1526,7 +1556,7 @@ class WhatsAppNotificationService
                 'sessionId' => $sessionId
             ];
         } else {
-            // Standard text message (for applications without PDF)
+            // Standard text message (for applications without photo or document)
             $postFields = [
                 'type' => 'text',
                 'to' => $toMobile,
@@ -1586,17 +1616,18 @@ class WhatsAppNotificationService
                 'recipient_mobile' => self::maskPhone($toMobile),
                 'provider_status' => $providerStatus,
                 'attempts' => $attempts,
-                'has_pdf_attachment' => !empty($pdfAttachments),
-                'pdf_count' => count($pdfAttachments)
+                'has_attachment' => !empty($attachments),
+                'attachment_count' => count($attachments)
             ]);
 
-            // If there are additional PDF attachments, dispatch them as additional document messages
-            if (count($pdfAttachments) > 1) {
-                for ($i = 1; $i < count($pdfAttachments); $i++) {
-                    $extraPdf = $pdfAttachments[$i];
-                    if (file_exists($extraPdf['full_path'])) {
-                        $extraCfile = new \CURLFile($extraPdf['full_path'], 'application/pdf', $extraPdf['file_name']);
-                        $extraCaption = "Attachment #" . ($i + 1) . " (" . $extraPdf['field_label'] . ") - Application #{$appId}";
+            // If there are additional attachments, dispatch them as additional document messages
+            if (count($attachments) > 1) {
+                for ($i = 1; $i < count($attachments); $i++) {
+                    $extraAtt = $attachments[$i];
+                    if (file_exists($extraAtt['full_path'])) {
+                        $extraMime = $extraAtt['mime_type'] ?? 'application/octet-stream';
+                        $extraCfile = new \CURLFile($extraAtt['full_path'], $extraMime, $extraAtt['file_name']);
+                        $extraCaption = "Attachment #" . ($i + 1) . " (" . $extraAtt['field_label'] . ") - Application #{$appId}";
                         $extraFields = [
                             'type' => 'document',
                             'to' => $toMobile,
