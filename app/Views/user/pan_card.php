@@ -344,39 +344,8 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
 
 <div class="container-fluid px-2 px-md-4 py-3">
 
-    <!-- Top Header Card -->
-    <?php if ($isStaffOrAdmin): ?>
-        <div class="pan-page-header d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
-            <div class="d-flex align-items-center gap-3">
-                <div class="pan-title-icon">
-                    <i class="bi bi-credit-card-2-front"></i>
-                </div>
-                <div>
-                    <div class="d-flex align-items-center gap-2">
-                        <h4 class="mb-0 fw-bold text-dark">Pan Card Applications</h4>
-                        <span class="badge bg-primary px-2.5 py-1" style="font-size: 0.72rem; letter-spacing: 0.5px;">PAN_CARD</span>
-                        <span class="badge bg-secondary px-2.5 py-1" style="font-size: 0.72rem;"><?= $isAdmin ? 'Admin View' : 'Operator View' ?></span>
-                    </div>
-                    <div class="text-muted small mt-1">
-                        पैन कार्ड आवेदन सूची • UTI PSA फोटो (213x213 @ 300 DPI) व फ्रेश सिग्नेचर (400x200 @ 600 DPI) डाउनलोड करें
-                    </div>
-                </div>
-            </div>
-
-            <div class="d-flex align-items-center gap-2 flex-wrap">
-                <button type="button" class="btn btn-sm btn-primary rounded-pill px-3 py-1.5 fw-bold shadow-2xs" onclick="openUtiCroppingTool()">
-                    <i class="bi bi-crop me-1"></i> PSA Cropping Tool
-                </button>
-                <div class="bg-light border rounded-pill px-3 py-1.5 d-flex align-items-center gap-2 shadow-2xs">
-                    <span class="small text-muted">Total: <strong class="text-dark"><?= $totalRequests ?></strong></span>
-                    <span class="text-muted">|</span>
-                    <span class="small text-warning">Pending: <strong><?= $pendingCount ?></strong></span>
-                    <span class="text-muted">|</span>
-                    <span class="small text-success">Done: <strong><?= $completedCount ?></strong></span>
-                </div>
-            </div>
-        </div>
-    <?php else: ?>
+    <!-- Top Header Card (Retailer only - Admin/Operator starts directly with PAN Card requests) -->
+    <?php if (!$isStaffOrAdmin): ?>
         <div class="pan-page-header d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
             <div class="d-flex align-items-center gap-3">
                 <div class="pan-title-icon">
@@ -772,7 +741,7 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                     $panFormUrl = $fields['pan_form'] ?? null;
                     $resultFile = $req['result_file'] ?? null;
                 ?>
-                <div class="req-card" data-ref="<?= e($req['app_ref']) ?>" data-name="<?= e(strtolower($req['applicant_name'] ?? '')) ?>" data-aadhar="<?= e($req['applicant_identifier'] ?? '') ?>">
+                <div class="req-card" id="row-app-<?= (int)$req['id'] ?>" data-app="<?= htmlspecialchars(json_encode($req), ENT_QUOTES, 'UTF-8') ?>" data-ref="<?= e($req['app_ref']) ?>" data-name="<?= e(strtolower($req['applicant_name'] ?? '')) ?>" data-aadhar="<?= e($req['applicant_identifier'] ?? '') ?>">
                     <!-- Card Header -->
                     <div class="req-card-header">
                         <div class="d-flex align-items-center gap-2 flex-wrap">
@@ -793,7 +762,7 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                                 <i class="bi <?= $badgeIcon ?> me-1"></i> <?= e($st) ?>
                             </span>
                             <?php if ($isStaffOrAdmin): ?>
-                                <button type="button" class="btn btn-xs btn-primary fw-bold rounded-2 px-2.5 py-1 shadow-2xs" onclick="openDetailsModal(<?= (int)$req['id'] ?>)" title="View Details, Attach Result Slip or Update Status">
+                                <button type="button" class="btn btn-xs btn-primary fw-bold rounded-2 px-2.5 py-1 shadow-2xs" onclick="scrollToAdminPanel(<?= (int)$req['id'] ?>)" title="Update Status, Enter Remark & Upload Receiving Slip">
                                     <i class="bi bi-gear-fill me-1"></i> Process
                                 </button>
                             <?php endif; ?>
@@ -901,22 +870,73 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                                     <div class="req-thumb-box">
                                         <div class="req-field-label text-center mb-1">SIGNATURE</div>
                                         <?php if ($sigUrl): ?>
-                                            <img src="<?= e($sigUrl) ?>" class="req-thumb-img" alt="Signature" onclick="openImageModal('<?= e($sigUrl) ?>', 'Signature Preview')">
+                                            <!-- Dynamic Fresh Signature Canvas (shown when sliders moved/rendered) -->
+                                            <canvas id="card_sign_canvas_<?= (int)$req['id'] ?>" class="req-thumb-img d-none" style="background:#fff; width:100%; height:84px; object-fit:contain; cursor:pointer;" onclick="viewCardSignPreview(<?= (int)$req['id'] ?>)"></canvas>
+                                            <img src="<?= e($sigUrl) ?>" id="card_sign_img_<?= (int)$req['id'] ?>" class="req-thumb-img" alt="Signature" onclick="viewCardSignPreview(<?= (int)$req['id'] ?>)">
+                                            
                                             <div class="d-flex gap-1 mt-1">
-                                                <button type="button" class="btn btn-sm btn-outline-secondary w-50 py-0.5" style="font-size: 0.68rem;" onclick="openImageModal('<?= e($sigUrl) ?>', 'Signature Preview')">
+                                                <button type="button" class="btn btn-sm btn-outline-secondary w-50 py-0.5" style="font-size: 0.68rem;" onclick="viewCardSignPreview(<?= (int)$req['id'] ?>)">
                                                     <i class="bi bi-eye"></i> View
                                                 </button>
-                                                <button type="button" class="btn btn-sm btn-danger w-50 py-0.5 fw-bold" style="font-size: 0.68rem;" onclick="downloadUtiSignature('<?= e($sigUrl) ?>', '<?= e(addslashes($req['applicant_name'])) ?>', this)" title="Download Fresh 400x200 @ 600 DPI">
+                                                <button type="button" class="btn btn-sm btn-danger w-50 py-0.5 fw-bold" style="font-size: 0.68rem;" id="card_fresh_btn_<?= (int)$req['id'] ?>" onclick="downloadCardSignature(<?= (int)$req['id'] ?>, '<?= e(addslashes($req['applicant_name'])) ?>', this)" title="Download Fresh 400x200 @ 600 DPI">
                                                     <i class="bi bi-download"></i> Fresh
                                                 </button>
                                             </div>
-                                            <button type="button" class="btn btn-sm btn-outline-dark w-100 mt-1 py-0.5" style="font-size: 0.65rem;" onclick="openUtiCroppingTool('<?= e($photoUrl) ?>', '<?= e($sigUrl) ?>', '<?= e(addslashes($req['applicant_name'])) ?>')" title="Interactive Crop & Adjust Levels">
+                                            <button type="button" class="btn btn-sm btn-outline-dark w-100 mt-1 py-0.5" style="font-size: 0.65rem;" onclick="toggleCardSignControls(<?= (int)$req['id'] ?>)" title="Signature Level & Freshness Controls">
                                                 <i class="bi bi-sliders"></i> PSA Crop Tool
                                             </button>
                                         <?php else: ?>
                                             <div class="text-muted small py-4">No Signature</div>
                                         <?php endif; ?>
                                     </div>
+
+                                    <!-- Collapsible Image 3 Controls: Signature Level & Freshness (डार्क कम & ब्राइट) -->
+                                    <?php if ($sigUrl): ?>
+                                    <div id="card_sign_controls_<?= (int)$req['id'] ?>" class="p-2 bg-light rounded-2 border mt-1 d-none text-start shadow-xs">
+                                        <div class="d-flex align-items-center justify-content-between mb-1 pb-1 border-bottom">
+                                            <span class="fw-bold text-dark" style="font-size: 0.72rem;">
+                                                <i class="bi bi-sliders text-primary me-1"></i> Signature Level & Freshness (डार्क कम & ब्राइट)
+                                            </span>
+                                            <button type="button" class="btn btn-link btn-sm p-0 text-muted" style="font-size: 0.68rem; text-decoration: none;" onclick="resetCardSignSliders(<?= (int)$req['id'] ?>, '<?= e($sigUrl) ?>')">
+                                                <i class="bi bi-arrow-counterclockwise"></i> Reset
+                                            </button>
+                                        </div>
+
+                                        <!-- Whiteness Slider -->
+                                        <div class="mb-1">
+                                            <div class="d-flex justify-content-between text-muted" style="font-size: 0.67rem;">
+                                                <span>कागज का बैकग्राउंड साफ करें (Background Whiteness)</span>
+                                                <span id="card_white_val_<?= (int)$req['id'] ?>" class="fw-bold text-dark">195</span>
+                                            </div>
+                                            <input type="range" class="form-range" id="card_white_slider_<?= (int)$req['id'] ?>" min="130" max="245" value="195" oninput="onCardSignSliderInput(<?= (int)$req['id'] ?>, '<?= e($sigUrl) ?>')">
+                                        </div>
+
+                                        <!-- Darkness Slider -->
+                                        <div class="mb-1">
+                                            <div class="d-flex justify-content-between text-muted" style="font-size: 0.67rem;">
+                                                <span>हस्ताक्षर स्याही डार्क करें (Ink Darkness & Contrast)</span>
+                                                <span id="card_dark_val_<?= (int)$req['id'] ?>" class="fw-bold text-dark">80</span>
+                                            </div>
+                                            <input type="range" class="form-range" id="card_dark_slider_<?= (int)$req['id'] ?>" min="20" max="140" value="80" oninput="onCardSignSliderInput(<?= (int)$req['id'] ?>, '<?= e($sigUrl) ?>')">
+                                        </div>
+
+                                        <!-- Mode Radio -->
+                                        <div class="d-flex align-items-center justify-content-between mb-2 pt-1 border-top" style="font-size: 0.68rem;">
+                                            <div class="form-check form-check-inline mb-0">
+                                                <input class="form-check-input" type="radio" name="card_mode_<?= (int)$req['id'] ?>" id="card_mode_bw_<?= (int)$req['id'] ?>" value="bw" checked onchange="onCardSignSliderInput(<?= (int)$req['id'] ?>, '<?= e($sigUrl) ?>')">
+                                                <label class="form-check-label fw-bold text-dark" for="card_mode_bw_<?= (int)$req['id'] ?>">डार्क ब्लैक (Pure Black)</label>
+                                            </div>
+                                            <div class="form-check form-check-inline mb-0">
+                                                <input class="form-check-input" type="radio" name="card_mode_<?= (int)$req['id'] ?>" id="card_mode_color_<?= (int)$req['id'] ?>" value="color" onchange="onCardSignSliderInput(<?= (int)$req['id'] ?>, '<?= e($sigUrl) ?>')">
+                                                <label class="form-check-label fw-bold text-dark" for="card_mode_color_<?= (int)$req['id'] ?>">ओरिजिनल इंक</label>
+                                            </div>
+                                        </div>
+
+                                        <button type="button" class="btn btn-sm btn-danger w-100 py-1 fw-bold" style="font-size: 0.72rem;" onclick="downloadCardSignature(<?= (int)$req['id'] ?>, '<?= e(addslashes($req['applicant_name'])) ?>', this)">
+                                            <i class="bi bi-download me-1"></i> Download Fresh (400x200 @ 600 DPI)
+                                        </button>
+                                    </div>
+                                    <?php endif; ?>
                                 </div>
 
                                 <!-- Aadhar Card Preview -->
@@ -993,6 +1013,84 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                                 <div class="text-danger small">
                                     <strong>Rejection Reason:</strong> <?= e($req['rejection_reason'] ?: 'Aadhaar data mismatch or unclear document upload.') ?>
                                 </div>
+                            </div>
+                        <?php endif; ?>
+
+                        <!-- ADMIN PROCESS, REMARK & RECEIVING UPLOAD ACTION PANEL -->
+                        <?php if ($isStaffOrAdmin): ?>
+                            <div id="admin_panel_<?= (int)$req['id'] ?>" class="pan-admin-action-panel mt-3 p-3 bg-light rounded-3 border">
+                                <div class="d-flex align-items-center justify-content-between mb-2 border-bottom pb-2">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <span class="badge bg-primary px-2 py-1"><i class="bi bi-shield-check me-1"></i> ADMIN / OPERATOR ACTION</span>
+                                        <span class="small text-muted fw-bold">Update Status, Add Official Remark & Upload Receiving Slip</span>
+                                    </div>
+                                    <span class="small text-muted font-monospace">#<?= e($req['app_ref']) ?></span>
+                                </div>
+                                <form method="POST" action="/applications/update-status" enctype="multipart/form-data">
+                                    <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
+                                    <input type="hidden" name="application_id" value="<?= (int)$req['id'] ?>">
+                                    <input type="hidden" name="redirect_to" value="/services/pan-card">
+
+                                    <div class="row g-2 align-items-end">
+                                        <!-- Status Selector -->
+                                        <div class="col-12 col-md-3">
+                                            <label class="form-label small fw-bold text-dark mb-1">
+                                                <i class="bi bi-toggles text-primary me-1"></i> Change Status <span class="text-danger">*</span>
+                                            </label>
+                                            <select name="status" class="form-select form-select-sm fw-bold" onchange="toggleRejectionBox(<?= (int)$req['id'] ?>, this.value)">
+                                                <option value="PENDING" <?= $st === 'PENDING' ? 'selected' : '' ?>>⏳ PENDING (प्रतीक्षारत)</option>
+                                                <option value="IN_PROCESS" <?= ($st === 'IN_PROCESS' || $st === 'UNDER_REVIEW') ? 'selected' : '' ?>>⚙️ IN PROCESS (प्रक्रियाधीन)</option>
+                                                <option value="COMPLETED" <?= ($st === 'COMPLETED' || $st === 'APPROVED') ? 'selected' : '' ?>>✅ COMPLETED (स्वीकृत / तैयार)</option>
+                                                <option value="REJECTED" <?= $st === 'REJECTED' ? 'selected' : '' ?>>❌ REJECTED (अस्वीकृत)</option>
+                                            </select>
+                                        </div>
+
+                                        <!-- Official Remark -->
+                                        <div class="col-12 col-md-4">
+                                            <label class="form-label small fw-bold text-dark mb-1">
+                                                <i class="bi bi-chat-left-text text-primary me-1"></i> Admin Remark / Ack Slip No.
+                                            </label>
+                                            <input type="text" name="admin_remarks" class="form-control form-control-sm" 
+                                                   placeholder="E.g. Ack: 1002938472 / Dispatched" 
+                                                   value="<?= e($req['admin_remarks'] ?: ($req['remarks'] ?? '')) ?>">
+                                        </div>
+
+                                        <!-- Upload Receiving Slip File -->
+                                        <div class="col-12 col-md-3">
+                                            <label class="form-label small fw-bold text-dark mb-1">
+                                                <i class="bi bi-cloud-arrow-up-fill text-success me-1"></i> Upload Receiving (PDF/JPG)
+                                            </label>
+                                            <input type="file" name="result_file" class="form-control form-control-sm" accept=".pdf,.jpg,.jpeg,.png">
+                                        </div>
+
+                                        <!-- Save Button -->
+                                        <div class="col-12 col-md-2">
+                                            <button type="submit" class="btn btn-sm btn-primary w-100 py-1.5 fw-bold shadow-2xs">
+                                                <i class="bi bi-check-circle-fill me-1"></i> Save
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <!-- Rejection Reason (Mandatory if Rejected) -->
+                                    <div id="rej_reason_box_<?= (int)$req['id'] ?>" class="mt-2 <?= $st === 'REJECTED' ? '' : 'd-none' ?>">
+                                        <label class="form-label small fw-bold text-danger mb-1">
+                                            <i class="bi bi-exclamation-triangle-fill me-1"></i> Rejection Reason (अस्वीकृति का कारण) <span class="text-danger">*</span>
+                                        </label>
+                                        <input type="text" name="rejection_reason" class="form-control form-control-sm border-danger" 
+                                               placeholder="Enter mandatory reason for rejection..." 
+                                               value="<?= e($req['rejection_reason'] ?? '') ?>">
+                                    </div>
+
+                                    <?php if (!empty($resultFile)): ?>
+                                        <div class="mt-2 pt-2 border-top d-flex align-items-center justify-content-between flex-wrap gap-2 small">
+                                            <span class="text-success fw-bold">
+                                                <i class="bi bi-file-earmark-check-fill me-1"></i> Current Receiving Slip: 
+                                                <a href="<?= e($resultFile) ?>" target="_blank" class="text-decoration-underline text-success"><?= e(basename($resultFile)) ?></a>
+                                            </span>
+                                            <span class="text-muted" style="font-size: 0.72rem;">(Upload a new file above to replace the existing receiving)</span>
+                                        </div>
+                                    <?php endif; ?>
+                                </form>
                             </div>
                         <?php endif; ?>
                     </div>
@@ -1267,6 +1365,196 @@ function handleFilterSearch(query) {
             card.style.display = 'none';
         }
     });
+}
+
+// ==========================================
+// CARD SIGNATURE LIVE CONTROLS & 600 DPI DOWNLOAD
+// ==========================================
+window.cardSignDebounce = {};
+
+function toggleCardSignControls(appId) {
+    const box = document.getElementById('card_sign_controls_' + appId);
+    if (!box) return;
+    if (box.classList.contains('d-none')) {
+        box.classList.remove('d-none');
+        // Render initial canvas preview if not rendered yet
+        const canvas = document.getElementById('card_sign_canvas_' + appId);
+        if (canvas && canvas.classList.contains('d-none')) {
+            const origImg = document.getElementById('card_sign_img_' + appId);
+            if (origImg && origImg.src) {
+                renderCardSignPreview(appId, origImg.src);
+            }
+        }
+    } else {
+        box.classList.add('d-none');
+    }
+}
+
+function onCardSignSliderInput(appId, origUrl) {
+    const whiteVal = document.getElementById('card_white_slider_' + appId)?.value || 195;
+    const darkVal = document.getElementById('card_dark_slider_' + appId)?.value || 80;
+    
+    const wText = document.getElementById('card_white_val_' + appId);
+    if (wText) wText.textContent = whiteVal;
+    const dText = document.getElementById('card_dark_val_' + appId);
+    if (dText) dText.textContent = darkVal;
+
+    clearTimeout(window.cardSignDebounce[appId]);
+    window.cardSignDebounce[appId] = setTimeout(() => {
+        renderCardSignPreview(appId, origUrl);
+    }, 100);
+}
+
+function resetCardSignSliders(appId, origUrl) {
+    const wSlider = document.getElementById('card_white_slider_' + appId);
+    const dSlider = document.getElementById('card_dark_slider_' + appId);
+    const modeBw = document.getElementById('card_mode_bw_' + appId);
+
+    if (wSlider) wSlider.value = 195;
+    if (dSlider) dSlider.value = 80;
+    if (modeBw) modeBw.checked = true;
+
+    const wText = document.getElementById('card_white_val_' + appId);
+    if (wText) wText.textContent = '195';
+    const dText = document.getElementById('card_dark_val_' + appId);
+    if (dText) dText.textContent = '80';
+
+    renderCardSignPreview(appId, origUrl);
+}
+
+async function renderCardSignPreview(appId, origUrl) {
+    if (!origUrl || !window.UtiCropEngine) return;
+    const whiteVal = Number(document.getElementById('card_white_slider_' + appId)?.value || 195);
+    const darkVal = Number(document.getElementById('card_dark_slider_' + appId)?.value || 80);
+    const modeColor = document.getElementById('card_mode_color_' + appId)?.checked;
+    const mode = modeColor ? 'color' : 'bw';
+
+    try {
+        const res = await window.UtiCropEngine.processSignature(origUrl, {
+            whiteLevel: whiteVal,
+            darkLevel: darkVal,
+            contrast: 1.45,
+            mode: mode
+        });
+
+        window['card_sign_blob_' + appId] = res.blob;
+        window['card_sign_dataurl_' + appId] = res.dataUrl;
+
+        const canvas = document.getElementById('card_sign_canvas_' + appId);
+        const origImg = document.getElementById('card_sign_img_' + appId);
+
+        if (canvas) {
+            canvas.width = 400;
+            canvas.height = 200;
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
+            img.onload = function() {
+                ctx.clearRect(0, 0, 400, 200);
+                ctx.drawImage(img, 0, 0);
+                canvas.classList.remove('d-none');
+                if (origImg) origImg.classList.add('d-none');
+            };
+            img.src = res.dataUrl;
+        }
+    } catch (e) {
+        console.error('Error rendering card signature:', e);
+    }
+}
+
+async function downloadCardSignature(appId, applicantName, btn) {
+    const origImg = document.getElementById('card_sign_img_' + appId);
+    const origUrl = origImg ? origImg.src : null;
+    const safeName = (applicantName || 'Applicant').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const filename = `UTI_Signature_${safeName}_400x200_600dpi_Fresh.jpg`;
+
+    let origHtml = '';
+    if (btn) {
+        origHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Fresh...';
+    }
+
+    try {
+        // If modified blob is already in memory from slider adjustment, download it!
+        if (window['card_sign_blob_' + appId]) {
+            window.UtiCropEngine.downloadBlob(window['card_sign_blob_' + appId], filename);
+            if (window.showToast) {
+                window.showToast('✓ Fresh 600 DPI Signature downloaded!', 'success');
+            }
+            return;
+        }
+
+        // Otherwise generate with current slider values or optimal defaults
+        if (!origUrl) throw new Error('Signature image URL missing');
+        const whiteVal = Number(document.getElementById('card_white_slider_' + appId)?.value || 195);
+        const darkVal = Number(document.getElementById('card_dark_slider_' + appId)?.value || 80);
+        const modeColor = document.getElementById('card_mode_color_' + appId)?.checked;
+        const mode = modeColor ? 'color' : 'bw';
+
+        const res = await window.UtiCropEngine.processSignature(origUrl, {
+            whiteLevel: whiteVal,
+            darkLevel: darkVal,
+            contrast: 1.45,
+            mode: mode
+        });
+
+        window['card_sign_blob_' + appId] = res.blob;
+        window['card_sign_dataurl_' + appId] = res.dataUrl;
+        window.UtiCropEngine.downloadBlob(res.blob, filename);
+
+        if (window.showToast) {
+            window.showToast(`✓ UTI Signature downloaded (${res.width}x${res.height} @ ${res.dpi} DPI, Fresh, ${res.sizeKb} KB)`, 'success');
+        }
+    } catch (err) {
+        console.warn('Fallback to standard signature download:', err);
+        if (origUrl) {
+            window.downloadUtiSignature(origUrl, applicantName, btn);
+        } else {
+            alert('Unable to download signature: ' + err.message);
+        }
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = origHtml;
+        }
+    }
+}
+
+function viewCardSignPreview(appId) {
+    const dataUrl = window['card_sign_dataurl_' + appId];
+    if (dataUrl) {
+        openImageModal(dataUrl, 'Fresh Signature Preview (400x200 @ 600 DPI)');
+    } else {
+        const origImg = document.getElementById('card_sign_img_' + appId);
+        if (origImg) {
+            openImageModal(origImg.src, 'Signature Preview');
+        }
+    }
+}
+
+function scrollToAdminPanel(appId) {
+    const panel = document.getElementById('admin_panel_' + appId);
+    if (panel) {
+        panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        panel.classList.add('border-primary', 'shadow-sm');
+        setTimeout(() => {
+            panel.classList.remove('border-primary', 'shadow-sm');
+        }, 1500);
+    } else if (typeof openDetailsModal === 'function') {
+        openDetailsModal(appId);
+    }
+}
+
+function toggleRejectionBox(appId, status) {
+    const box = document.getElementById('rej_reason_box_' + appId);
+    if (!box) return;
+    if (status === 'REJECTED') {
+        box.classList.remove('d-none');
+        const input = box.querySelector('input[name="rejection_reason"]');
+        if (input) input.focus();
+    } else {
+        box.classList.add('d-none');
+    }
 }
 
 // Form Submission Spinner

@@ -663,13 +663,16 @@ class ApplicationController
 
     public function updateStatus(): void
     {
+        $redirect = !empty($_POST['redirect_to']) ? (string)$_POST['redirect_to'] : ('/applications/view?id=' . $appId);
+
         if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
             $_SESSION['flash_error'] = 'Invalid CSRF token.';
-            header('Location: /applications');
+            header('Location: ' . (!empty($_POST['redirect_to']) ? (string)$_POST['redirect_to'] : '/applications'));
             exit;
         }
 
         $appId = (int)($_POST['application_id'] ?? 0);
+        $redirect = !empty($_POST['redirect_to']) ? (string)$_POST['redirect_to'] : ('/applications/view?id=' . $appId);
         $newStatus = trim($_POST['status'] ?? '');
         $remarks = trim($_POST['remarks'] ?? '');
         $adminRemarks = trim($_POST['admin_remarks'] ?? '');
@@ -683,7 +686,7 @@ class ApplicationController
 
         if (!$isStaff && $user['role'] !== 'DISTRIBUTOR') {
             $_SESSION['flash_error'] = 'Access denied: Regular users are not authorized to update application status.';
-            header('Location: /applications/view?id=' . $appId);
+            header('Location: ' . $redirect);
             exit;
         }
 
@@ -699,7 +702,7 @@ class ApplicationController
                 'reason' => 'User attempted to update status of own submitted application'
             ], $userId);
             $_SESSION['flash_error'] = 'You cannot process an application submitted by your own retailer account.';
-            header('Location: /admin/applications');
+            header('Location: ' . $redirect);
             exit;
         }
 
@@ -707,14 +710,14 @@ class ApplicationController
             if (!AuthService::canOperatorAccessApplication($userId, $appId)) {
                 http_response_code(403);
                 $_SESSION['flash_error'] = 'Access denied: You cannot update applications outside your assigned District and Block or not assigned to you.';
-                header('Location: /admin/applications');
+                header('Location: ' . $redirect);
                 exit;
             }
         }
 
         if ($newStatus === 'REJECTED' && empty(trim($rejectionReason))) {
             $_SESSION['flash_error'] = 'Rejection reason is mandatory. Please provide a clear explanation for rejecting the application.';
-            header('Location: /applications/view?id=' . $appId);
+            header('Location: ' . $redirect);
             exit;
         }
 
@@ -727,13 +730,13 @@ class ApplicationController
 
             if (!in_array($ext, $allowedExts, true)) {
                 $_SESSION['flash_error'] = "Invalid result document format '.{$ext}'. Allowed formats: " . implode(', ', $allowedExts);
-                header('Location: /applications/view?id=' . $appId);
+                header('Location: ' . $redirect);
                 exit;
             }
 
             if ($file['size'] > 10 * 1024 * 1024) {
                 $_SESSION['flash_error'] = "Result file size exceeds 10MB limit.";
-                header('Location: /applications/view?id=' . $appId);
+                header('Location: ' . $redirect);
                 exit;
             }
 
@@ -745,7 +748,7 @@ class ApplicationController
             $allowedMimes = ['application/pdf', 'image/jpeg', 'image/png'];
             if (!in_array($mime, $allowedMimes, true)) {
                 $_SESSION['flash_error'] = "Invalid file binary content type ({$mime}). Only genuine PDF and image files are allowed.";
-                header('Location: /applications/view?id=' . $appId);
+                header('Location: ' . $redirect);
                 exit;
             }
 
@@ -778,7 +781,7 @@ class ApplicationController
             $_SESSION['flash_error'] = $e->getMessage();
         }
 
-        header('Location: /applications/view?id=' . $appId);
+        header('Location: ' . $redirect);
         exit;
     }
 
