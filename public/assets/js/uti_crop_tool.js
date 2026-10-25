@@ -88,35 +88,21 @@
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, targetW, targetH);
 
-        // Aspect fit / crop center (focusing on face/center)
-        const imgRatio = img.width / img.height;
-        const targetRatio = targetW / targetH;
-        let sWidth, sHeight, sx, sy;
-
-        if (imgRatio > targetRatio) {
-            // Wider than target: crop horizontal sides
-            sHeight = img.height;
-            sWidth = img.height * targetRatio;
-            sx = (img.width - sWidth) / 2;
-            sy = 0;
-        } else {
-            // Taller than target: crop bottom, keep top 15% for head space
-            sWidth = img.width;
-            sHeight = img.width / targetRatio;
-            sx = 0;
-            sy = Math.max(0, (img.height - sHeight) * 0.2);
-        }
-
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, targetW, targetH);
+
+        // Direct Stretch: stretch entire uploaded photo to exact target dimensions (213x213)
+        // No cropping of people, background or borders so 100% of uploaded photo remains intact
+        const srcW = img.naturalWidth || img.width;
+        const srcH = img.naturalHeight || img.height;
+        ctx.drawImage(img, 0, 0, srcW, srcH, 0, 0, targetW, targetH);
 
         // Compress and enforce < 30 KB limit
         let quality = 0.92;
         let blob = null;
         let dataUrl = '';
 
-        while (quality >= 0.5) {
+        while (quality >= 0.25) {
             dataUrl = canvas.toDataURL('image/jpeg', quality);
             blob = dataUrlToJfifBlob(dataUrl, targetDpi);
             if (blob.size / 1024 < maxKb) {
@@ -219,35 +205,19 @@
         fCtx.fillStyle = '#ffffff';
         fCtx.fillRect(0, 0, targetW, targetH);
 
-        // Aspect fit signature inside 400x200 with padding so strokes don't distort
-        const padding = 12;
-        const maxDrawW = targetW - (padding * 2);
-        const maxDrawH = targetH - (padding * 2);
-
-        const sRatio = img.width / img.height;
-        let drawW, drawH;
-
-        if (sRatio > (maxDrawW / maxDrawH)) {
-            drawW = maxDrawW;
-            drawH = maxDrawW / sRatio;
-        } else {
-            drawH = maxDrawH;
-            drawW = maxDrawH * sRatio;
-        }
-
-        const dx = (targetW - drawW) / 2;
-        const dy = (targetH - drawH) / 2;
-
         fCtx.imageSmoothingEnabled = true;
         fCtx.imageSmoothingQuality = 'high';
-        fCtx.drawImage(tempCanvas, 0, 0, img.width, img.height, dx, dy, drawW, drawH);
+
+        // Direct Stretch: stretch full signature image to exact target dimensions (400x200)
+        // No cropping of signatures, initials or edges so 100% of uploaded signature remains intact
+        fCtx.drawImage(tempCanvas, 0, 0, tempCanvas.width, tempCanvas.height, 0, 0, targetW, targetH);
 
         // Compress and enforce < 60 KB limit
         let quality = 0.90;
         let blob = null;
         let dataUrl = '';
 
-        while (quality >= 0.45) {
+        while (quality >= 0.25) {
             dataUrl = finalCanvas.toDataURL('image/jpeg', quality);
             blob = dataUrlToJfifBlob(dataUrl, targetDpi);
             if (blob.size / 1024 < maxKb) {

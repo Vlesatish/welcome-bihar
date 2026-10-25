@@ -711,23 +711,8 @@ class PanCardController
             $bgWhite = imagecolorallocate($dest, 255, 255, 255);
             imagefilledrectangle($dest, 0, 0, $targetW, $targetH, $bgWhite);
 
-            $padding = 10;
-            $maxDrawW = $targetW - ($padding * 2);
-            $maxDrawH = $targetH - ($padding * 2);
-
-            $ratio = $srcW / $srcH;
-            if ($ratio > ($maxDrawW / $maxDrawH)) {
-                $drawW = $maxDrawW;
-                $drawH = (int)round($maxDrawW / $ratio);
-            } else {
-                $drawH = $maxDrawH;
-                $drawW = (int)round($maxDrawH * $ratio);
-            }
-
-            $dx = (int)(($targetW - $drawW) / 2);
-            $dy = (int)(($targetH - $drawH) / 2);
-
-            imagecopyresampled($dest, $tempImg, $dx, $dy, 0, 0, $drawW, $drawH, $srcW, $srcH);
+            // Direct stretch full signature without cropping
+            imagecopyresampled($dest, $tempImg, 0, 0, 0, 0, $targetW, $targetH, $srcW, $srcH);
             imagedestroy($tempImg);
             imagedestroy($srcImg);
         } else {
@@ -742,22 +727,8 @@ class PanCardController
             $bgWhite = imagecolorallocate($dest, 255, 255, 255);
             imagefilledrectangle($dest, 0, 0, $targetW, $targetH, $bgWhite);
 
-            $targetRatio = $targetW / $targetH;
-            $srcRatio = $srcW / $srcH;
-
-            if ($srcRatio > $targetRatio) {
-                $sH = $srcH;
-                $sW = (int)round($srcH * $targetRatio);
-                $sx = (int)(($srcW - $sW) / 2);
-                $sy = 0;
-            } else {
-                $sW = $srcW;
-                $sH = (int)round($srcW / $targetRatio);
-                $sx = 0;
-                $sy = (int)max(0, ($srcH - $sH) * 0.2);
-            }
-
-            imagecopyresampled($dest, $srcImg, 0, 0, $sx, $sy, $targetW, $targetH, $sW, $sH);
+            // Direct stretch full photo without cropping
+            imagecopyresampled($dest, $srcImg, 0, 0, 0, 0, $targetW, $targetH, $srcW, $srcH);
             imagedestroy($srcImg);
         }
 
