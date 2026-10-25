@@ -882,61 +882,43 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                                                     <i class="bi bi-download"></i> Fresh
                                                 </button>
                                             </div>
-                                            <button type="button" class="btn btn-sm btn-outline-dark w-100 mt-1 py-0.5" style="font-size: 0.65rem;" onclick="toggleCardSignControls(<?= (int)$req['id'] ?>)" title="Signature Level & Freshness Controls">
-                                                <i class="bi bi-sliders"></i> PSA Crop Tool
-                                            </button>
+
+                                            <!-- Half-and-Half Sliders in place of PSA Crop Tool button -->
+                                            <div class="pan-sign-slider-box p-1.5 bg-light rounded-2 border mt-1 text-start shadow-2xs">
+                                                <div class="row g-1 align-items-center">
+                                                    <!-- Left Half (50%): Paper Whiteness -->
+                                                    <div class="col-6 pe-1 border-end">
+                                                        <div class="d-flex justify-content-between align-items-center text-muted mb-0.5" style="font-size: 0.62rem; line-height: 1;">
+                                                            <span class="text-truncate fw-semibold" title="कागज का बैकग्राउंड साफ करें">कागज साफ</span>
+                                                            <span id="card_white_val_<?= (int)$req['id'] ?>" class="fw-bold text-dark font-monospace" style="font-size: 0.65rem;">195</span>
+                                                        </div>
+                                                        <input type="range" class="form-range p-0 m-0 w-100" id="card_white_slider_<?= (int)$req['id'] ?>" min="130" max="245" value="195" style="height: 14px;" oninput="onCardSignSliderInput(<?= (int)$req['id'] ?>, '<?= e($sigUrl) ?>')">
+                                                    </div>
+
+                                                    <!-- Right Half (50%): Ink Darkness -->
+                                                    <div class="col-6 ps-1">
+                                                        <div class="d-flex justify-content-between align-items-center text-muted mb-0.5" style="font-size: 0.62rem; line-height: 1;">
+                                                            <span class="text-truncate fw-semibold" title="हस्ताक्षर स्याही डार्क करें">स्याही डार्क</span>
+                                                            <span id="card_dark_val_<?= (int)$req['id'] ?>" class="fw-bold text-dark font-monospace" style="font-size: 0.65rem;">80</span>
+                                                        </div>
+                                                        <input type="range" class="form-range p-0 m-0 w-100" id="card_dark_slider_<?= (int)$req['id'] ?>" min="20" max="140" value="80" style="height: 14px;" oninput="onCardSignSliderInput(<?= (int)$req['id'] ?>, '<?= e($sigUrl) ?>')">
+                                                    </div>
+                                                </div>
+
+                                                <div class="d-flex align-items-center justify-content-between mt-1 pt-1 border-top" style="font-size: 0.60rem; line-height: 1;">
+                                                    <div class="form-check form-check-inline m-0 p-0 d-flex align-items-center gap-1">
+                                                        <input class="form-check-input m-0" type="checkbox" id="card_mode_color_<?= (int)$req['id'] ?>" value="color" onchange="onCardSignSliderInput(<?= (int)$req['id'] ?>, '<?= e($sigUrl) ?>')">
+                                                        <label class="form-check-label text-muted" for="card_mode_color_<?= (int)$req['id'] ?>" style="font-size: 0.60rem;">Color</label>
+                                                    </div>
+                                                    <button type="button" class="btn btn-link btn-xs p-0 text-muted" style="font-size: 0.60rem; text-decoration: none;" onclick="resetCardSignSliders(<?= (int)$req['id'] ?>, '<?= e($sigUrl) ?>')" title="Reset to default 195 / 80">
+                                                        <i class="bi bi-arrow-counterclockwise"></i> Reset
+                                                    </button>
+                                                </div>
+                                            </div>
                                         <?php else: ?>
                                             <div class="text-muted small py-4">No Signature</div>
                                         <?php endif; ?>
                                     </div>
-
-                                    <!-- Collapsible Image 3 Controls: Signature Level & Freshness (डार्क कम & ब्राइट) -->
-                                    <?php if ($sigUrl): ?>
-                                    <div id="card_sign_controls_<?= (int)$req['id'] ?>" class="p-2 bg-light rounded-2 border mt-1 d-none text-start shadow-xs">
-                                        <div class="d-flex align-items-center justify-content-between mb-1 pb-1 border-bottom">
-                                            <span class="fw-bold text-dark" style="font-size: 0.72rem;">
-                                                <i class="bi bi-sliders text-primary me-1"></i> Signature Level & Freshness (डार्क कम & ब्राइट)
-                                            </span>
-                                            <button type="button" class="btn btn-link btn-sm p-0 text-muted" style="font-size: 0.68rem; text-decoration: none;" onclick="resetCardSignSliders(<?= (int)$req['id'] ?>, '<?= e($sigUrl) ?>')">
-                                                <i class="bi bi-arrow-counterclockwise"></i> Reset
-                                            </button>
-                                        </div>
-
-                                        <!-- Whiteness Slider -->
-                                        <div class="mb-1">
-                                            <div class="d-flex justify-content-between text-muted" style="font-size: 0.67rem;">
-                                                <span>कागज का बैकग्राउंड साफ करें (Background Whiteness)</span>
-                                                <span id="card_white_val_<?= (int)$req['id'] ?>" class="fw-bold text-dark">195</span>
-                                            </div>
-                                            <input type="range" class="form-range" id="card_white_slider_<?= (int)$req['id'] ?>" min="130" max="245" value="195" oninput="onCardSignSliderInput(<?= (int)$req['id'] ?>, '<?= e($sigUrl) ?>')">
-                                        </div>
-
-                                        <!-- Darkness Slider -->
-                                        <div class="mb-1">
-                                            <div class="d-flex justify-content-between text-muted" style="font-size: 0.67rem;">
-                                                <span>हस्ताक्षर स्याही डार्क करें (Ink Darkness & Contrast)</span>
-                                                <span id="card_dark_val_<?= (int)$req['id'] ?>" class="fw-bold text-dark">80</span>
-                                            </div>
-                                            <input type="range" class="form-range" id="card_dark_slider_<?= (int)$req['id'] ?>" min="20" max="140" value="80" oninput="onCardSignSliderInput(<?= (int)$req['id'] ?>, '<?= e($sigUrl) ?>')">
-                                        </div>
-
-                                        <!-- Mode Radio -->
-                                        <div class="d-flex align-items-center justify-content-between mb-2 pt-1 border-top" style="font-size: 0.68rem;">
-                                            <div class="form-check form-check-inline mb-0">
-                                                <input class="form-check-input" type="radio" name="card_mode_<?= (int)$req['id'] ?>" id="card_mode_bw_<?= (int)$req['id'] ?>" value="bw" checked onchange="onCardSignSliderInput(<?= (int)$req['id'] ?>, '<?= e($sigUrl) ?>')">
-                                                <label class="form-check-label fw-bold text-dark" for="card_mode_bw_<?= (int)$req['id'] ?>">डार्क ब्लैक (Pure Black)</label>
-                                            </div>
-                                            <div class="form-check form-check-inline mb-0">
-                                                <input class="form-check-input" type="radio" name="card_mode_<?= (int)$req['id'] ?>" id="card_mode_color_<?= (int)$req['id'] ?>" value="color" onchange="onCardSignSliderInput(<?= (int)$req['id'] ?>, '<?= e($sigUrl) ?>')">
-                                                <label class="form-check-label fw-bold text-dark" for="card_mode_color_<?= (int)$req['id'] ?>">ओरिजिनल इंक</label>
-                                            </div>
-                                        </div>
-
-                                        <button type="button" class="btn btn-sm btn-danger w-100 py-1 fw-bold" style="font-size: 0.72rem;" onclick="downloadCardSignature(<?= (int)$req['id'] ?>, '<?= e(addslashes($req['applicant_name'])) ?>', this)">
-                                            <i class="bi bi-download me-1"></i> Download Fresh (400x200 @ 600 DPI)
-                                        </button>
-                                    </div>
-                                    <?php endif; ?>
                                 </div>
 
                                 <!-- Aadhar Card Preview -->
@@ -1408,11 +1390,11 @@ function onCardSignSliderInput(appId, origUrl) {
 function resetCardSignSliders(appId, origUrl) {
     const wSlider = document.getElementById('card_white_slider_' + appId);
     const dSlider = document.getElementById('card_dark_slider_' + appId);
-    const modeBw = document.getElementById('card_mode_bw_' + appId);
+    const modeColor = document.getElementById('card_mode_color_' + appId);
 
     if (wSlider) wSlider.value = 195;
     if (dSlider) dSlider.value = 80;
-    if (modeBw) modeBw.checked = true;
+    if (modeColor) modeColor.checked = false;
 
     const wText = document.getElementById('card_white_val_' + appId);
     if (wText) wText.textContent = '195';
