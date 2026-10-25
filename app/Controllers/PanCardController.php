@@ -44,7 +44,14 @@ class PanCardController
         $user = AuthService::user();
         $userId = (int)$user['id'];
         $role = $user['role'];
+        $activeMode = AuthService::activePortalMode();
+        $isAdmin = in_array($role, ['ADMIN', 'SUPER_ADMIN'], true);
+        $isOperator = ($role === 'OPERATOR' || $role === 'STAFF' || (AuthService::canAccessOperatorMode($userId) && $activeMode === 'OPERATOR'));
+        $isStaffOrAdmin = $isAdmin || $isOperator;
+
         $panDataTypeId = $this->getPanDataTypeId();
+        // Ensure wallet exists and fetch fresh balance
+        WalletService::getOrCreateWallet($userId);
         $walletBalance = WalletService::getBalance($userId);
 
         $statusFilter = strtoupper(trim((string)($_GET['status'] ?? 'ALL')));
@@ -54,12 +61,21 @@ class PanCardController
         $where = ["(a.application_code = 'PAN_CARD' OR a.data_type_id = :pan_dt_id)"];
         $params = [':pan_dt_id' => $panDataTypeId];
 
-        if ($role === 'USER') {
-            $where[] = "a.user_id = :user_id";
-            $params[':user_id'] = $userId;
+        if ($isAdmin) {
+            // Admin sees all applications
+        } elseif ($isOperator) {
+            $assignedBlocks = AuthService::getOperatorAssignedBlocks($userId);
+            if (!empty($assignedBlocks)) {
+                $bIds = array_column($assignedBlocks, 'block_id');
+                $placeholders = implode(',', array_map('intval', $bIds));
+                $where[] = "(a.block_id IN ({$placeholders}) OR a.assigned_operator_id = {$userId} OR a.assigned_operator_id IS NULL)";
+            }
         } elseif ($role === 'DISTRIBUTOR') {
             $where[] = "a.distributor_id = :dist_id";
             $params[':dist_id'] = $userId;
+        } else {
+            $where[] = "a.user_id = :user_id";
+            $params[':user_id'] = $userId;
         }
 
         if ($statusFilter === 'PENDING') {
@@ -117,12 +133,21 @@ class PanCardController
         // Count totals for filter tabs
         $countParams = [':pan_dt_id' => $panDataTypeId];
         $countUserWhere = "";
-        if ($role === 'USER') {
-            $countUserWhere = " AND a.user_id = :user_id";
-            $countParams[':user_id'] = $userId;
+        if ($isAdmin) {
+            // No restriction
+        } elseif ($isOperator) {
+            $assignedBlocks = AuthService::getOperatorAssignedBlocks($userId);
+            if (!empty($assignedBlocks)) {
+                $bIds = array_column($assignedBlocks, 'block_id');
+                $placeholders = implode(',', array_map('intval', $bIds));
+                $countUserWhere = " AND (a.block_id IN ({$placeholders}) OR a.assigned_operator_id = {$userId} OR a.assigned_operator_id IS NULL)";
+            }
         } elseif ($role === 'DISTRIBUTOR') {
             $countUserWhere = " AND a.distributor_id = :dist_id";
             $countParams[':dist_id'] = $userId;
+        } else {
+            $countUserWhere = " AND a.user_id = :user_id";
+            $countParams[':user_id'] = $userId;
         }
 
         $countStmt = $this->db->prepare("
@@ -243,8 +268,9 @@ class PanCardController
             if (empty($panFormPath)) throw new Exception('PAN FORM is required (PDF, JPG, PNG max 2MB).');
 
             // 4. Wallet Balance Verification
+            $isAdmin = in_array($user['role'] ?? '', ['ADMIN', 'SUPER_ADMIN'], true);
             $currentBalance = WalletService::getBalance($userId);
-            if ($currentBalance < $panFee) {
+            if (!$isAdmin && $currentBalance < $panFee) {
                 throw new Exception("Insufficient wallet balance (Available: ₹" . number_format($currentBalance, 2) . ", Required: ₹" . number_format($panFee, 2) . "). Please recharge your wallet first.");
             }
 
@@ -254,19 +280,21 @@ class PanCardController
             $appRef = 'WB-' . date('Ymd') . '-' . strtoupper(substr(bin2hex(random_bytes(3)), 0, 5));
             $parentDistributorId = !empty($user['parent_distributor_id']) ? (int)$user['parent_distributor_id'] : null;
 
-            // Debit Wallet
-            $debitRes = WalletService::debit(
-                $userId,
-                $panFee,
-                'DEBIT',
-                'APPLICATION',
-                $appRef,
-                'PANCARD_DEBIT_' . $appRef . '_' . time(),
-                "New Pan Card Application Fee (Ref: {$appRef})",
-                "नया पैन कार्ड आवेदन शुल्क (Ref: {$appRef})",
-                "Pan card application for {$fullName} ({$aadhaarNo})",
-                $userId
-            );
+            // Debit Wallet (Admins test for free without wallet deduction)
+            if (!$isAdmin) {
+                $debitRes = WalletService::debit(
+                    $userId,
+                    $panFee,
+                    'DEBIT',
+                    'APPLICATION',
+                    $appRef,
+                    'PANCARD_DEBIT_' . $appRef . '_' . time(),
+                    "New Pan Card Application Fee (Ref: {$appRef})",
+                    "नया पैन कार्ड आवेदन शुल्क (Ref: {$appRef})",
+                    "Pan card application for {$fullName} ({$aadhaarNo})",
+                    $userId
+                );
+            }
 
             // Resolve district_id and block_id (required by applications schema)
             $resolvedDistId = null;

@@ -7,9 +7,17 @@ declare(strict_types=1);
  */
 require dirname(__DIR__) . '/layouts/header.php';
 
+$currentUser = \App\Services\AuthService::user();
+$currentRole = $currentUser['role'] ?? 'USER';
+$activeMode = \App\Services\AuthService::activePortalMode();
+$isAdmin = in_array($currentRole, ['ADMIN', 'SUPER_ADMIN'], true);
+$isOperator = ($currentRole === 'OPERATOR' || $currentRole === 'STAFF' || (\App\Services\AuthService::canAccessOperatorMode((int)($currentUser['id'] ?? 0)) && $activeMode === 'OPERATOR'));
+$isStaffOrAdmin = $isAdmin || $isOperator;
+
 $panFee = 107.00;
-$userBal = (float)($walletBalance ?? 0.00);
-$hasEnoughBalance = $userBal >= $panFee;
+// Fetch fresh wallet balance directly from DB for accurate display
+$userBal = $currentUser ? (float)\App\Services\WalletService::getBalance((int)$currentUser['id']) : 0.00;
+$hasEnoughBalance = $isAdmin || ($userBal >= $panFee);
 $csrfToken = \App\Services\AuthService::generateCsrfToken();
 ?>
 
@@ -337,49 +345,83 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
 <div class="container-fluid px-2 px-md-4 py-3">
 
     <!-- Top Header Card -->
-    <div class="pan-page-header d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
-        <div class="d-flex align-items-center gap-3">
-            <div class="pan-title-icon">
-                <i class="bi bi-credit-card-2-front"></i>
+    <?php if ($isStaffOrAdmin): ?>
+        <div class="pan-page-header d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+            <div class="d-flex align-items-center gap-3">
+                <div class="pan-title-icon">
+                    <i class="bi bi-credit-card-2-front"></i>
+                </div>
+                <div>
+                    <div class="d-flex align-items-center gap-2">
+                        <h4 class="mb-0 fw-bold text-dark">Pan Card Applications</h4>
+                        <span class="badge bg-primary px-2.5 py-1" style="font-size: 0.72rem; letter-spacing: 0.5px;">PAN_CARD</span>
+                        <span class="badge bg-secondary px-2.5 py-1" style="font-size: 0.72rem;"><?= $isAdmin ? 'Admin View' : 'Operator View' ?></span>
+                    </div>
+                    <div class="text-muted small mt-1">
+                        पैन कार्ड आवेदन सूची • UTI PSA फोटो (213x213 @ 300 DPI) व फ्रेश सिग्नेचर (400x200 @ 600 DPI) डाउनलोड करें
+                    </div>
+                </div>
+            </div>
+
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                <button type="button" class="btn btn-sm btn-primary rounded-pill px-3 py-1.5 fw-bold shadow-2xs" onclick="openUtiCroppingTool()">
+                    <i class="bi bi-crop me-1"></i> PSA Cropping Tool
+                </button>
+                <div class="bg-light border rounded-pill px-3 py-1.5 d-flex align-items-center gap-2 shadow-2xs">
+                    <span class="small text-muted">Total: <strong class="text-dark"><?= $totalRequests ?></strong></span>
+                    <span class="text-muted">|</span>
+                    <span class="small text-warning">Pending: <strong><?= $pendingCount ?></strong></span>
+                    <span class="text-muted">|</span>
+                    <span class="small text-success">Done: <strong><?= $completedCount ?></strong></span>
+                </div>
+            </div>
+        </div>
+    <?php else: ?>
+        <div class="pan-page-header d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
+            <div class="d-flex align-items-center gap-3">
+                <div class="pan-title-icon">
+                    <i class="bi bi-credit-card-2-front"></i>
+                </div>
+                <div>
+                    <div class="d-flex align-items-center gap-2">
+                        <h4 class="mb-0 fw-bold text-dark">New Pan Card Apply</h4>
+                        <span class="badge bg-secondary px-2.5 py-1" style="font-size: 0.72rem; letter-spacing: 0.5px;">PAN_CARD</span>
+                    </div>
+                    <div class="d-flex align-items-center gap-2 mt-1">
+                        <span class="badge bg-warning text-dark px-2.5 py-1 fw-bold" style="font-size: 0.75rem;">
+                            <i class="bi bi-wallet2 me-1"></i> Wallet Se Charge Katega Rs: <?= number_format($panFee, 2) ?>
+                        </span>
+                        <span class="text-muted small d-none d-sm-inline">• Sirf Aadhaar Card Se Pan Card Banaye</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="d-flex align-items-center gap-3">
+                <div class="text-end">
+                    <div class="text-muted small fw-semibold" style="font-size: 0.72rem;">WALLET BALANCE</div>
+                    <div class="fs-5 fw-bold text-success">₹<?= number_format($userBal, 2) ?></div>
+                </div>
+                <a href="/wallet/topup?amount=<?= $panFee ?>" class="btn btn-sm btn-primary rounded-pill px-3 py-1.5 fw-semibold shadow-sm">
+                    <i class="bi bi-plus-circle me-1"></i> Recharge / Add Fund
+                </a>
+            </div>
+        </div>
+
+        <!-- Notice Banner -->
+        <div class="pan-notice-card d-flex flex-wrap align-items-center justify-content-between gap-2 mb-4">
+            <div class="d-flex align-items-center gap-2 text-danger fw-bold">
+                <i class="bi bi-patch-check-fill fs-5"></i>
+                <span>Physical Pan Card ke sath E-Pan Card Bhi Milega</span>
             </div>
             <div>
-                <div class="d-flex align-items-center gap-2">
-                    <h4 class="mb-0 fw-bold text-dark">New Pan Card Apply</h4>
-                    <span class="badge bg-secondary px-2.5 py-1" style="font-size: 0.72rem; letter-spacing: 0.5px;">PAN_CARD</span>
-                </div>
-                <div class="d-flex align-items-center gap-2 mt-1">
-                    <span class="badge bg-warning text-dark px-2.5 py-1 fw-bold" style="font-size: 0.75rem;">
-                        <i class="bi bi-wallet2 me-1"></i> Wallet Se Charge Katega Rs: <?= number_format($panFee, 2) ?>
-                    </span>
-                    <span class="text-muted small d-none d-sm-inline">• Sirf Aadhaar Card Se Pan Card Banaye</span>
-                </div>
+                <a href="/wallet/topup?amount=<?= $panFee ?>" class="btn btn-sm btn-danger rounded-pill px-3 py-1 fw-semibold text-white">
+                    <i class="bi bi-wallet-fill me-1"></i> Recharge ₹<?= number_format($panFee, 2) ?>
+                </a>
             </div>
         </div>
+    <?php endif; ?>
 
-        <div class="d-flex align-items-center gap-3">
-            <div class="text-end">
-                <div class="text-muted small fw-semibold" style="font-size: 0.72rem;">WALLET BALANCE</div>
-                <div class="fs-5 fw-bold text-success">₹<?= number_format($userBal, 2) ?></div>
-            </div>
-            <a href="/wallet/topup?amount=<?= $panFee ?>" class="btn btn-sm btn-primary rounded-pill px-3 py-1.5 fw-semibold shadow-sm">
-                <i class="bi bi-plus-circle me-1"></i> Recharge / Add Fund
-            </a>
-        </div>
-    </div>
-
-    <!-- Notice Banner -->
-    <div class="pan-notice-card d-flex flex-wrap align-items-center justify-content-between gap-2 mb-4">
-        <div class="d-flex align-items-center gap-2 text-danger fw-bold">
-            <i class="bi bi-patch-check-fill fs-5"></i>
-            <span>Physical Pan Card ke sath E-Pan Card Bhi Milega</span>
-        </div>
-        <div>
-            <a href="/wallet/topup?amount=<?= $panFee ?>" class="btn btn-sm btn-danger rounded-pill px-3 py-1 fw-semibold text-white">
-                <i class="bi bi-wallet-fill me-1"></i> Recharge ₹<?= number_format($panFee, 2) ?>
-            </a>
-        </div>
-    </div>
-
+    <?php if (!$isStaffOrAdmin): ?>
     <!-- Main Pan Card Application Form -->
     <div class="pan-form-card mb-5">
         <div class="p-3 p-md-4 border-bottom bg-light">
@@ -635,13 +677,14 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
             </div>
         </form>
     </div>
+    <?php endif; ?>
 
     <!-- ========================================================
          PREVIOUS REQUESTS SECTION
          ======================================================== -->
     <div class="req-section-header">
         <div class="d-flex align-items-center gap-2">
-            <h5 class="mb-0 fw-bold text-dark">Previous Requests</h5>
+            <h5 class="mb-0 fw-bold text-dark"><?= $isStaffOrAdmin ? 'PAN Card Application Requests' : 'Previous Requests' ?></h5>
             <span class="badge bg-primary rounded-pill px-2.5 py-1" style="font-size: 0.78rem;"><?= $totalRequests ?></span>
         </div>
         <div class="d-flex align-items-center gap-2">
@@ -652,11 +695,12 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                 <button class="btn btn-sm btn-outline-secondary dropdown-toggle rounded-pill px-3" type="button" data-bs-toggle="dropdown">
                     <i class="bi bi-calendar3 me-1"></i> All Date
                 </button>
-            <ul class="dropdown-menu dropdown-menu-end shadow-sm">
-                <li><a class="dropdown-item" href="?status=<?= urlencode($statusFilter) ?>">All Time</a></li>
-                <li><a class="dropdown-item" href="?status=<?= urlencode($statusFilter) ?>&date=today">Today</a></li>
-                <li><a class="dropdown-item" href="?status=<?= urlencode($statusFilter) ?>&date=this_month">This Month</a></li>
-            </ul>
+                <ul class="dropdown-menu dropdown-menu-end shadow-sm">
+                    <li><a class="dropdown-item" href="?status=<?= urlencode($statusFilter) ?>">All Time</a></li>
+                    <li><a class="dropdown-item" href="?status=<?= urlencode($statusFilter) ?>&date=today">Today</a></li>
+                    <li><a class="dropdown-item" href="?status=<?= urlencode($statusFilter) ?>&date=this_month">This Month</a></li>
+                </ul>
+            </div>
         </div>
     </div>
 
@@ -738,11 +782,21 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                             <span class="text-muted small">
                                 <i class="bi bi-clock me-1"></i> <?= $datePrefix . $reqDate ?>
                             </span>
+                            <?php if ($isStaffOrAdmin && !empty($req['retailer_name'])): ?>
+                                <span class="badge bg-light text-secondary border px-2 py-0.5 small">
+                                    <i class="bi bi-shop me-1"></i> Retailer: <?= e($req['retailer_name']) ?> (<?= e($req['retailer_mobile'] ?: 'User') ?>)
+                                </span>
+                            <?php endif; ?>
                         </div>
-                        <div>
+                        <div class="d-flex align-items-center gap-2">
                             <span class="badge <?= $badgeClass ?> px-2.5 py-1.5 fw-bold" style="font-size: 0.75rem;">
                                 <i class="bi <?= $badgeIcon ?> me-1"></i> <?= e($st) ?>
                             </span>
+                            <?php if ($isStaffOrAdmin): ?>
+                                <button type="button" class="btn btn-xs btn-primary fw-bold rounded-2 px-2.5 py-1 shadow-2xs" onclick="openDetailsModal(<?= (int)$req['id'] ?>)" title="View Details, Attach Result Slip or Update Status">
+                                    <i class="bi bi-gear-fill me-1"></i> Process
+                                </button>
+                            <?php endif; ?>
                         </div>
                     </div>
 
@@ -1224,5 +1278,9 @@ document.getElementById('panCardForm')?.addEventListener('submit', function(e) {
     }
 });
 </script>
+
+<?php if ($isStaffOrAdmin): ?>
+    <?php require dirname(__DIR__) . '/admin/applications_modals.php'; ?>
+<?php endif; ?>
 
 <?php require dirname(__DIR__) . '/layouts/footer.php'; ?>
