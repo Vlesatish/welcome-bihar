@@ -382,6 +382,49 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
     margin-top: 1rem;
 }
 
+/* Blinking Hand & Pulsing Receipt Button */
+@keyframes handPointBlink {
+    0%, 100% {
+        transform: translateX(0);
+        opacity: 1;
+    }
+    50% {
+        transform: translateX(-4px);
+        opacity: 0.35;
+    }
+}
+
+@keyframes receiptBlinkGlow {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+        border-color: #16a34a;
+    }
+    50% {
+        box-shadow: 0 0 0 7px rgba(34, 197, 94, 0);
+        border-color: #4ade80;
+    }
+}
+
+.btn-receipt-pulse {
+    animation: receiptBlinkGlow 1.8s infinite ease-in-out;
+    background: #16a34a !important;
+    border: 1.5px solid #16a34a !important;
+    color: #ffffff !important;
+    transition: all 0.2s ease;
+}
+
+.btn-receipt-pulse:hover {
+    background: #15803d !important;
+    transform: scale(1.04);
+}
+
+.hand-blink-icon {
+    display: inline-block;
+    animation: handPointBlink 0.85s infinite ease-in-out;
+    font-size: 1.05rem;
+    line-height: 1;
+}
+
 /* Webcam Modal Styles */
 #cameraVideo {
     width: 100%;
@@ -433,9 +476,15 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                 <span>Physical Pan Card ke sath E-Pan Card Bhi Milega</span>
             </div>
             <div>
-                <a href="/wallet/topup?amount=<?= $panFee ?>" class="btn btn-sm btn-danger rounded-pill px-3 py-1 fw-semibold text-white">
-                    <i class="bi bi-wallet-fill me-1"></i> Recharge ₹<?= number_format($panFee, 2) ?>
-                </a>
+                <?php if (!$hasEnoughBalance): ?>
+                    <a href="/wallet/topup?amount=<?= $panFee ?>" class="btn btn-sm btn-danger rounded-pill px-3 py-1 fw-semibold text-white">
+                        <i class="bi bi-wallet-fill me-1"></i> Low Balance: Recharge ₹<?= number_format($panFee, 2) ?>
+                    </a>
+                <?php else: ?>
+                    <span class="badge bg-success-subtle text-success border border-success-subtle rounded-pill px-3 py-1.5 fw-bold" style="font-size: 0.78rem;">
+                        <i class="bi bi-check-circle-fill me-1"></i> Balance OK (₹<?= number_format($userBal, 2) ?>)
+                    </span>
+                <?php endif; ?>
             </div>
         </div>
     <?php endif; ?>
@@ -818,8 +867,9 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                         </div>
                         <div class="d-flex align-items-center gap-2 flex-wrap">
                             <?php if (!empty($resultFile)): ?>
-                                <button type="button" class="btn btn-sm btn-success fw-bold px-3 py-1.5 shadow-2xs rounded-pill d-inline-flex align-items-center gap-1.5" style="font-size: 0.76rem;" onclick="openReceivingModal('<?= e($resultFile) ?>', '<?= e($req['app_ref']) ?>', '<?= e(addslashes($req['applicant_name'] ?? 'Applicant')) ?>')" title="रसीद देखें, प्रिंट करें और डाउनलोड करें">
-                                    <i class="bi bi-file-earmark-check-fill"></i> रसीद देखें (View Slip)
+                                <button type="button" class="btn btn-sm btn-receipt-pulse fw-bold px-3 py-1.5 shadow-2xs rounded-pill d-inline-flex align-items-center gap-1.5" style="font-size: 0.78rem;" onclick="openReceivingModal('<?= e($resultFile) ?>', '<?= e($req['app_ref']) ?>', '<?= e(addslashes($req['applicant_name'] ?? 'Applicant')) ?>')" title="रसीद तैयार है! क्लिक करके देखें, प्रिंट करें या डाउनलोड करें">
+                                    <span class="hand-blink-icon">👉</span>
+                                    <span>रसीद देखें</span>
                                 </button>
                             <?php endif; ?>
                             <?php if ($isStaffOrAdmin): ?>
@@ -834,6 +884,9 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                     <div class="px-3 py-1.5 bg-light border-bottom d-flex align-items-center justify-content-between flex-wrap gap-2 text-muted" style="font-size: 0.74rem;">
                         <div>
                             <strong>Retailer:</strong> <?= e($req['retailer_name'] ?: 'Direct User') ?> (<?= e($req['retailer_mobile'] ?: '-') ?>) • <strong>Fee:</strong> <span class="text-success fw-bold font-monospace">₹<?= number_format((float)($req['fee_debited'] ?? 107), 2) ?></span>
+                            <?php if (!empty($req['admin_remarks'])): ?>
+                                • <span class="text-dark fw-semibold"><i class="bi bi-chat-left-dots text-primary me-1"></i><strong>Remark:</strong> <?= e($req['admin_remarks']) ?></span>
+                            <?php endif; ?>
                         </div>
                         <div>
                             <i class="bi bi-clock me-1"></i> <strong>Entry Time / समय:</strong> <?= $datePrefix . $reqDate ?>
@@ -1083,38 +1136,8 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                             </div>
                         </div>
 
-                        <!-- Green Output File Box (If Completed or Output Attached) -->
-                        <?php if ($st === 'COMPLETED' || $st === 'APPROVED' || !empty($resultFile)): ?>
-                            <div class="req-output-box rounded-3">
-                                <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
-                                    <div class="d-flex align-items-center gap-2 text-success fw-bold">
-                                        <i class="bi bi-check-circle-fill fs-5"></i>
-                                        <span>Receiving / Output Slip (यहाँ से रसीद देखें और प्रिंट करें)</span>
-                                    </div>
-                                    <?php if (!empty($resultFile)): ?>
-                                        <button type="button" class="btn btn-sm btn-success fw-bold rounded-pill px-3 py-1 shadow-2xs" onclick="openReceivingModal('<?= e($resultFile) ?>', '<?= e($req['app_ref']) ?>', '<?= e(addslashes($req['applicant_name'] ?? 'Applicant')) ?>')">
-                                            <i class="bi bi-eye-fill me-1"></i> रसीद देखें (View Slip)
-                                        </button>
-                                    <?php endif; ?>
-                                </div>
-
-                                <div class="text-dark small mb-2">
-                                    <strong>Operator Remark:</strong> <?= e($req['admin_remarks'] ?: ($req['remarks'] ?: 'Ack slip / Pan card processed successfully.')) ?>
-                                </div>
-
-                                <?php if (!empty($resultFile)): ?>
-                                    <div class="d-flex align-items-center gap-2 flex-wrap mt-2">
-                                        <button type="button" class="btn btn-sm btn-success rounded-pill px-3.5 py-1.5 fw-bold text-white shadow-2xs d-inline-flex align-items-center gap-1.5" onclick="openReceivingModal('<?= e($resultFile) ?>', '<?= e($req['app_ref']) ?>', '<?= e(addslashes($req['applicant_name'] ?? 'Applicant')) ?>')">
-                                            <i class="bi bi-printer-fill"></i> रसीद देखें / Print Slip
-                                        </button>
-                                        <a href="<?= e($resultFile) ?>" download class="btn btn-sm btn-outline-success rounded-pill px-3.5 py-1.5 fw-bold bg-white shadow-2xs d-inline-flex align-items-center gap-1.5">
-                                            <i class="bi bi-download"></i> Download File
-                                        </a>
-                                    </div>
-                                <?php endif; ?>
-                            </div>
-                        <?php elseif ($st === 'REJECTED'): ?>
-                            <div class="req-reject-box">
+                        <?php if ($st === 'REJECTED'): ?>
+                            <div class="req-reject-box mt-3">
                                 <div class="d-flex align-items-center gap-2 text-danger fw-bold mb-1">
                                     <i class="bi bi-x-circle-fill fs-5"></i>
                                     <span>Application Rejected (आवेदन अस्वीकृत कर दिया गया है)</span>
