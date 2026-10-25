@@ -415,8 +415,8 @@ document.addEventListener('DOMContentLoaded', function () {
                                                 <i class="bi bi-file-earmark-pdf-fill me-1"></i>Download Certificate
                                             </a>
                                         <?php elseif ($status === 'IN_PROCESS'): ?>
-                                            <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle py-1 px-1.5 text-nowrap" style="font-size: 0.68rem;" title="Automatic RTPS Check Scheduled for 12:00 AM">
-                                                <i class="bi bi-clock-history me-1"></i>RTPS Check (12 AM)
+                                            <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle py-1 px-1.5 text-nowrap" style="font-size: 0.68rem;" title="Automatic RTPS Check Scheduled (Every 5 Hours / 7 AM)">
+                                                <i class="bi bi-clock-history me-1"></i>RTPS Check (5-Hr)
                                             </span>
                                         <?php endif; ?>
 

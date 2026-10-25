@@ -75,7 +75,7 @@
             </div>
             <div>
                 <span class="badge bg-primary text-white px-3 py-2 rounded-pill">
-                    <i class="bi bi-arrow-repeat me-1"></i> Nightly 12 AM Check
+                    <i class="bi bi-arrow-repeat me-1"></i> Auto Check (Every 5 Hours / 7 AM)
                 </span>
             </div>
         </div>

@@ -877,7 +877,7 @@ document.addEventListener('DOMContentLoaded', function () {
                             <div class="text-start p-2 small">
                                 <p class="mb-2"><strong>Total Eligible Applications Checked:</strong> ${data.processed}</p>
                                 <p class="mb-2 text-success"><strong>Certificates Downloaded &amp; Attached:</strong> <span class="badge bg-success fs-6">${data.ready}</span></p>
-                                <p class="mb-0 text-secondary"><strong>Pending at Govt Office (Scheduled for 12 AM):</strong> ${data.unavailable}</p>
+                                <p class="mb-0 text-secondary"><strong>Pending at Govt Office (Scheduled Every 5 Hours):</strong> ${data.unavailable}</p>
                             </div>
                         `,
                         confirmButtonText: 'OK',

@@ -62,21 +62,35 @@ class RtpsCertificateService
     }
 
     /**
-     * Calculate the next 12:00:00 AM (midnight) in Asia/Kolkata timezone
+     * Calculate the next check time in Asia/Kolkata timezone.
+     * Default: 5 hours from current time (runs every 5 hours).
+     * Supported presets:
+     * - '5_hours' / null: Now + 5 hours
+     * - '7_am_today' / '7am_today': Today 07:00:00 (for immediate test verification)
+     * - '7_am_tomorrow' / '7am_tomorrow': Tomorrow 07:00:00
+     * - 'due_now' / 'now': 1 minute in the past (immediately eligible)
      */
-    public static function calculateNextCheckTime(): string
+    public static function calculateNextCheckTime(int $intervalHours = 5, ?string $preset = null): string
     {
         $tz = new DateTimeZone('Asia/Kolkata');
         $now = new DateTime('now', $tz);
 
-        // Next 12:00:00 AM (midnight)
-        $next = new DateTime('tomorrow 00:00:00', $tz);
-
-        // If currently exactly midnight 00:00, ensure it is set for the coming night 12:00 AM
-        if ($now->format('H:i') === '00:00') {
-            $next = new DateTime('tomorrow 00:00:00', $tz);
+        if ($preset === '7_am_today' || $preset === '7am_today') {
+            return $now->format('Y-m-d 07:00:00');
         }
 
+        if ($preset === '7_am_tomorrow' || $preset === '7am_tomorrow') {
+            $tom = (clone $now)->modify('+1 day');
+            return $tom->format('Y-m-d 07:00:00');
+        }
+
+        if ($preset === 'due_now' || $preset === 'now') {
+            $past = (clone $now)->modify('-1 minute');
+            return $past->format('Y-m-d H:i:s');
+        }
+
+        // Default: 5 hours from now (har 5 ghante me run ho)
+        $next = (clone $now)->modify("+{$intervalHours} hours");
         return $next->format('Y-m-d H:i:s');
     }
 
@@ -169,7 +183,7 @@ class RtpsCertificateService
             ) VALUES (
                 ?, ?, ?, ?,
                 ?, ?, ?, 'QUEUED', ?,
-                0, ?, 'Queued for automatic scheduled checking at 12:00 AM Asia/Kolkata', NOW(), NOW()
+                0, ?, 'Queued for automatic scheduled checking (Every 5 Hours) Asia/Kolkata', NOW(), NOW()
             )
         ");
         $ins->execute([
@@ -311,7 +325,7 @@ class RtpsCertificateService
             // If not a PDF after testing candidates, portal returned HTML indicating pending or not generated yet
             return [
                 'success' => false,
-                'message' => 'Certificate not yet generated or pending on RTPS portal. Next check scheduled at 12:00 AM.'
+                'message' => 'Certificate not yet generated or pending on RTPS portal. Next check scheduled in 5 hours.'
             ];
         } catch (\Throwable $e) {
             return [
@@ -383,13 +397,13 @@ class RtpsCertificateService
             ];
         }
 
-        // Not ready yet: mark unavailable and reschedule for 12:00 AM
+        // Not ready yet: mark unavailable and reschedule for next 5-hour check
         self::markCertificateUnavailable($appId, $fetchRes['message'] ?? 'Certificate not yet generated on portal');
         return [
             'success' => false,
             'status' => 'UNAVAILABLE',
             'app_id' => $appId,
-            'message' => $fetchRes['message'] ?? 'Certificate pending on portal; scheduled for 12:00 AM check.'
+            'message' => $fetchRes['message'] ?? 'Certificate pending on portal; scheduled for next 5-hour check.'
         ];
     }
 
@@ -525,15 +539,16 @@ class RtpsCertificateService
 
     /**
      * Mark certificate as unavailable on the portal (e.g. still under process).
-     * Keeps application IN_PROCESS and schedules next check at 12:00 AM.
+     * Keeps application IN_PROCESS and schedules next check in 5 hours (or custom time).
      */
     public static function markCertificateUnavailable(
         int $appId,
         string $reason = 'Certificate not generated yet on RTPS portal',
-        ?int $actorUserId = null
+        ?int $actorUserId = null,
+        ?string $customNextCheckAt = null
     ): void {
         $db = Database::getConnection();
-        $nextCheckAt = self::calculateNextCheckTime();
+        $nextCheckAt = $customNextCheckAt ?: self::calculateNextCheckTime(5);
 
         $upd = $db->prepare("
             UPDATE rtps_certificate_queue
@@ -564,15 +579,16 @@ class RtpsCertificateService
 
     /**
      * Mark a portal communication or network error.
-     * Keeps application IN_PROCESS and schedules retry at next 12:00 AM.
+     * Keeps application IN_PROCESS and schedules retry in 5 hours (or custom time).
      */
     public static function markPortalError(
         int $appId,
         string $errorMessage,
-        ?int $actorUserId = null
+        ?int $actorUserId = null,
+        ?string $customNextCheckAt = null
     ): void {
         $db = Database::getConnection();
-        $nextCheckAt = self::calculateNextCheckTime();
+        $nextCheckAt = $customNextCheckAt ?: self::calculateNextCheckTime(5);
 
         $upd = $db->prepare("
             UPDATE rtps_certificate_queue
@@ -586,7 +602,7 @@ class RtpsCertificateService
         ");
         $upd->execute([
             $nextCheckAt,
-            'Portal Communication Issue: ' . $errorMessage . ' (Application remains In Process; will retry at 12:00 AM)',
+            'Portal Communication Issue: ' . $errorMessage . ' (Application remains In Process; will retry in 5 hours)',
             $appId
         ]);
 
@@ -685,7 +701,7 @@ class RtpsCertificateService
                 } else {
                     self::markCertificateUnavailable(
                         $appId,
-                        $fetchRes['message'] ?? 'Certificate pending on portal; next check scheduled for 12:00 AM.'
+                        $fetchRes['message'] ?? 'Certificate pending on portal; next check scheduled in 5 hours.'
                     );
                     $unavailable++;
                 }
@@ -703,6 +719,45 @@ class RtpsCertificateService
             'errors' => $errors,
             'timestamp' => date('Y-m-d H:i:s')
         ];
+    }
+
+    /**
+     * Automatic non-blocking background queue runner for web requests.
+     * Evaluates due items (next_check_at <= NOW()) if at least 60 seconds have elapsed since last tick.
+     */
+    public static function autoCheckDueQueue(int $limit = 10): ?array
+    {
+        $tickFile = dirname(__DIR__, 2) . '/storage/locks/rtps_auto_tick.time';
+        $nowTs = time();
+
+        if (file_exists($tickFile)) {
+            $lastRun = (int)@file_get_contents($tickFile);
+            if (($nowTs - $lastRun) < 60) {
+                // Rate-limited: ran within last 60 seconds
+                return null;
+            }
+        }
+
+        try {
+            $db = Database::getConnection();
+            $dueCount = (int)$db->query("
+                SELECT COUNT(*) 
+                FROM rtps_certificate_queue q
+                JOIN applications a ON a.id = q.application_id
+                WHERE a.status IN ('IN_PROCESS', 'PENDING', 'UNDER_REVIEW')
+                  AND q.status != 'ATTACHED'
+                  AND q.next_check_at <= NOW()
+            ")->fetchColumn();
+
+            if ($dueCount <= 0) {
+                return null;
+            }
+
+            @file_put_contents($tickFile, (string)$nowTs);
+            return self::processScheduledQueue($limit, false);
+        } catch (\Throwable $e) {
+            return null;
+        }
     }
 
     /**

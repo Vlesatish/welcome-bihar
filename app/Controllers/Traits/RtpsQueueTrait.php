@@ -24,6 +24,9 @@ trait RtpsQueueTrait
 
         $db = Database::getConnection();
 
+        // Run non-blocking auto-check for any due items (next_check_at <= NOW())
+        RtpsCertificateService::autoCheckDueQueue(10);
+
         $page = max(1, (int)($_GET['page'] ?? 1));
         $filters = [
             'status' => trim($_GET['status'] ?? ''),
@@ -155,9 +158,25 @@ trait RtpsQueueTrait
 
         $actorId = AuthService::id();
 
+        $preset = trim((string)($_POST['schedule_preset'] ?? '5_hours'));
+        $customNext = null;
+
+        if ($preset === '7_am_today') {
+            $customNext = date('Y-m-d 07:00:00');
+        } elseif ($preset === '7_am_tomorrow') {
+            $customNext = date('Y-m-d 07:00:00', strtotime('+1 day'));
+        } elseif ($preset === 'due_now') {
+            $customNext = date('Y-m-d H:i:s', strtotime('-1 minute'));
+        } elseif ($preset === 'custom' && !empty($_POST['custom_datetime'])) {
+            $customNext = date('Y-m-d H:i:s', strtotime($_POST['custom_datetime']));
+        } else {
+            // Default 5-hour cycle
+            $customNext = date('Y-m-d H:i:s', strtotime('+5 hours'));
+        }
+
         try {
-            RtpsCertificateService::markCertificateUnavailable($appId, $reason, $actorId);
-            $_SESSION['flash_success'] = 'Application recorded as Unavailable on portal. Status remains IN_PROCESS, and next check is scheduled for 12:00 AM Asia/Kolkata.';
+            RtpsCertificateService::markCertificateUnavailable($appId, $reason, $actorId, $customNext);
+            $_SESSION['flash_success'] = 'Application recorded as Unavailable on portal. Status remains IN_PROCESS, next check scheduled for ' . date('d M Y, h:i A', strtotime($customNext)) . ' (Every 5 Hours / 7 AM).';
         } catch (\Throwable $e) {
             $_SESSION['flash_error'] = 'Action failed: ' . $e->getMessage();
         }
@@ -223,7 +242,7 @@ trait RtpsQueueTrait
                 exit;
             }
 
-            $_SESSION['flash_success'] = "Queue worker executed: {$res['processed']} eligible applications checked. {$res['ready']} certificates attached. Next cycle scheduled for 12:00 AM.";
+            $_SESSION['flash_success'] = "Queue worker executed: {$res['processed']} eligible applications checked. {$res['ready']} certificates attached. Next cycle runs every 5 hours (and daily 7:00 AM).";
         } catch (\Throwable $e) {
             if ($isJson) {
                 http_response_code(500);
@@ -277,7 +296,7 @@ trait RtpsQueueTrait
                     'success' => false,
                     'app_id' => $appId,
                     'status' => $res['status'] ?? 'UNAVAILABLE',
-                    'message' => $res['message'] ?? 'Certificate not yet generated or ready on Bihar RTPS portal. Next check scheduled at 12:00 AM.'
+                    'message' => $res['message'] ?? 'Certificate not yet generated or ready on Bihar RTPS portal. Next check scheduled in 5 hours.'
                 ]);
             }
         } catch (\Throwable $e) {

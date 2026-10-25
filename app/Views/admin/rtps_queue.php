@@ -58,9 +58,9 @@ require dirname(__DIR__) . '/layouts/header.php';
         <div class="col-6 col-md-4 col-xl-2">
             <div class="card border-0 shadow-2xs rounded-3 h-100 bg-white border-start border-4 border-warning">
                 <div class="card-body p-3">
-                    <span class="text-muted small fw-medium text-uppercase d-block mb-1">Scheduled (12 AM)</span>
+                    <span class="text-muted small fw-medium text-uppercase d-block mb-1">Scheduled (5-Hr)</span>
                     <h3 class="fw-bold mb-0 text-warning"><?= number_format($stats['pending_check'] ?? 0) ?></h3>
-                    <small class="text-muted" style="font-size: 0.72rem;">Queued for next check</small>
+                    <small class="text-muted" style="font-size: 0.72rem;">5-Hour / 7 AM Cycle</small>
                 </div>
             </div>
         </div>
@@ -78,7 +78,7 @@ require dirname(__DIR__) . '/layouts/header.php';
                 <div class="card-body p-3">
                     <span class="text-muted small fw-medium text-uppercase d-block mb-1">Unavailable</span>
                     <h3 class="fw-bold mb-0 text-secondary"><?= number_format($stats['unavailable'] ?? 0) ?></h3>
-                    <small class="text-muted" style="font-size: 0.72rem;">Retrying next 12 AM</small>
+                    <small class="text-muted" style="font-size: 0.72rem;">Retrying every 5 hours</small>
                 </div>
             </div>
         </div>
@@ -120,7 +120,7 @@ require dirname(__DIR__) . '/layouts/header.php';
                         <select name="status" class="form-select form-select-sm">
                             <option value="">All Statuses</option>
                             <option value="QUEUED" <?= $filters['status'] === 'QUEUED' ? 'selected' : '' ?>>Queued</option>
-                            <option value="UNAVAILABLE" <?= $filters['status'] === 'UNAVAILABLE' ? 'selected' : '' ?>>Unavailable (Next 12 AM)</option>
+                            <option value="UNAVAILABLE" <?= $filters['status'] === 'UNAVAILABLE' ? 'selected' : '' ?>>Unavailable (5-Hr Retry)</option>
                             <option value="ATTACHED" <?= $filters['status'] === 'ATTACHED' ? 'selected' : '' ?>>Attached &amp; Completed</option>
                             <option value="FAILED" <?= $filters['status'] === 'FAILED' ? 'selected' : '' ?>>Portal Retry</option>
                         </select>
@@ -251,7 +251,7 @@ require dirname(__DIR__) . '/layouts/header.php';
                                         </span>
                                     <?php elseif ($row['status'] === 'UNAVAILABLE'): ?>
                                         <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle px-2 py-1">
-                                            <i class="bi bi-clock-history me-1"></i> Unavailable (12 AM Retry)
+                                            <i class="bi bi-clock-history me-1"></i> Unavailable (5-Hr Retry)
                                         </span>
                                     <?php elseif ($row['status'] === 'FAILED'): ?>
                                         <span class="badge bg-danger-subtle text-danger border border-danger-subtle px-2 py-1">
@@ -274,7 +274,7 @@ require dirname(__DIR__) . '/layouts/header.php';
                                     <div class="fw-semibold text-dark" style="font-size: 0.78rem;">
                                         <?= date('d M Y, h:i A', strtotime($row['next_check_at'])) ?>
                                     </div>
-                                    <small class="text-muted" style="font-size: 0.7rem;">Asia/Kolkata (Nightly 12 AM)</small>
+                                    <small class="text-muted" style="font-size: 0.7rem;">Asia/Kolkata (Every 5 Hours)</small>
                                 </td>
 
                                 <td class="text-center">
@@ -309,7 +309,7 @@ require dirname(__DIR__) . '/layouts/header.php';
                                         </button>
 
                                         <?php if ($row['status'] !== 'ATTACHED'): ?>
-                                            <button type="button" class="btn btn-outline-warning" title="Mark as not ready on portal (Retains IN_PROCESS, schedules next check at 12:00 AM)" onclick="openUnavailableModal(<?= (int)$row['application_id'] ?>, '<?= e($row['application_number']) ?>')">
+                                            <button type="button" class="btn btn-outline-warning" title="Mark as not ready on portal (Retains IN_PROCESS, schedules next check in 5 hours / 7 AM)" onclick="openUnavailableModal(<?= (int)$row['application_id'] ?>, '<?= e($row['application_number']) ?>')">
                                                 <i class="bi bi-clock-history"></i>
                                             </button>
                                         <?php endif; ?>
@@ -435,7 +435,7 @@ require dirname(__DIR__) . '/layouts/header.php';
     </div>
 </div>
 
-<!-- Modal 2: Mark Unavailable (Next 12:00 AM Check) -->
+<!-- Modal 2: Mark Unavailable (Next 5-Hour / 7:00 AM Check) -->
 <div class="modal fade" id="unavailableModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-sm">
         <form method="POST" action="/admin/rtps-queue/unavailable" class="modal-content rounded-3 shadow">
@@ -444,7 +444,7 @@ require dirname(__DIR__) . '/layouts/header.php';
 
             <div class="modal-header border-bottom py-2.5 px-3">
                 <h6 class="modal-title fw-bold text-dark">
-                    <i class="bi bi-clock-history text-warning me-1"></i> Reschedule Next 12 AM Check
+                    <i class="bi bi-clock-history text-warning me-1"></i> Reschedule RTPS Check
                 </h6>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
@@ -453,6 +453,20 @@ require dirname(__DIR__) . '/layouts/header.php';
                 <p class="small text-muted mb-2">
                     Application <strong id="unavailableAppNumberText">-</strong> is currently pending on the RTPS portal.
                 </p>
+                <div class="mb-2">
+                    <label class="form-label small fw-semibold text-secondary">Schedule Next Run</label>
+                    <select name="schedule_preset" id="schedulePresetSelect" class="form-select form-select-sm" onchange="toggleCustomScheduleInput(this.value)">
+                        <option value="5_hours" selected>Next 5 Hours (Auto Cycle)</option>
+                        <option value="7_am_today">Today 7:00 AM (Due Now / Test)</option>
+                        <option value="7_am_tomorrow">Tomorrow 7:00 AM (Morning Schedule)</option>
+                        <option value="due_now">Immediate (Due Right Now)</option>
+                        <option value="custom">Custom Date &amp; Time...</option>
+                    </select>
+                </div>
+                <div class="mb-2 d-none" id="customDatetimeContainer">
+                    <label class="form-label small fw-semibold text-secondary">Custom Datetime</label>
+                    <input type="datetime-local" name="custom_datetime" class="form-control form-control-sm">
+                </div>
                 <div class="mb-2">
                     <label class="form-label small fw-semibold text-secondary">Status Note</label>
                     <input type="text" name="reason" class="form-control form-control-sm rounded-2" value="Certificate not generated yet on RTPS portal (Application under process)" required>
@@ -465,7 +479,7 @@ require dirname(__DIR__) . '/layouts/header.php';
             <div class="modal-footer border-top py-2 px-3">
                 <button type="button" class="btn btn-light btn-sm border rounded-2" data-bs-dismiss="modal">Cancel</button>
                 <button type="submit" class="btn btn-warning btn-sm rounded-2 fw-semibold">
-                    Confirm 12 AM Reschedule
+                    <i class="bi bi-check2 me-1"></i> Confirm Reschedule
                 </button>
             </div>
         </form>
@@ -480,7 +494,7 @@ require dirname(__DIR__) . '/layouts/header.php';
 
             <div class="modal-header border-bottom py-2.5 px-3">
                 <h6 class="modal-title fw-bold text-dark">
-                    <i class="bi bi-play-circle text-primary me-1"></i> Run Nightly Worker
+                    <i class="bi bi-play-circle text-primary me-1"></i> Run Queue Worker (5-Hr Cycle)
                 </h6>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
@@ -496,7 +510,7 @@ require dirname(__DIR__) . '/layouts/header.php';
                     </label>
                 </div>
                 <small class="text-muted d-block" style="font-size: 0.72rem;">
-                    Normally runs automatically every night at 12:00 AM Asia/Kolkata.
+                    Runs automatically every 5 hours (and daily 7:00 AM) Asia/Kolkata.
                 </small>
             </div>
 
@@ -611,11 +625,11 @@ async function autoFetchFromQueue(appId, btn) {
                 Swal.fire({
                     icon: 'info',
                     title: 'RTPS Portal Notice',
-                    text: data.message || 'Certificate not ready yet on RTPS portal. Next check scheduled at 12:00 AM.',
+                    text: data.message || 'Certificate not ready yet on RTPS portal. Next check scheduled in 5 hours.',
                     confirmButtonColor: '#0284c7'
                 });
             } else {
-                alert(data.message || 'Certificate pending on portal; next check scheduled at 12:00 AM.');
+                alert(data.message || 'Certificate pending on portal; next check scheduled in 5 hours.');
             }
             if (btn) {
                 btn.disabled = false;
@@ -631,9 +645,23 @@ async function autoFetchFromQueue(appId, btn) {
     }
 }
 
+function toggleCustomScheduleInput(val) {
+    const container = document.getElementById('customDatetimeContainer');
+    if (container) {
+        if (val === 'custom') {
+            container.classList.remove('d-none');
+        } else {
+            container.classList.add('d-none');
+        }
+    }
+}
+
 function openUnavailableModal(appId, appNumber) {
     document.getElementById('unavailableAppId').value = appId;
     document.getElementById('unavailableAppNumberText').textContent = appNumber;
+    const preset = document.getElementById('schedulePresetSelect');
+    if (preset) preset.value = '5_hours';
+    toggleCustomScheduleInput('5_hours');
     new bootstrap.Modal(document.getElementById('unavailableModal')).show();
 }
 
@@ -678,7 +706,7 @@ async function runAdminBatchRtpsCheck(btn) {
                         <div class="text-start p-2 small">
                             <p class="mb-2"><strong>Total Eligible Applications Checked:</strong> ${data.processed}</p>
                             <p class="mb-2 text-success"><strong>Certificates Downloaded &amp; Attached:</strong> <span class="badge bg-success fs-6">${data.ready}</span></p>
-                            <p class="mb-0 text-secondary"><strong>Pending at Govt Office (Scheduled for 12 AM):</strong> ${data.unavailable}</p>
+                            <p class="mb-0 text-secondary"><strong>Pending at Govt Office (Scheduled Every 5 Hours):</strong> ${data.unavailable}</p>
                         </div>
                     `,
                     confirmButtonText: 'OK',
@@ -754,6 +782,44 @@ document.addEventListener('DOMContentLoaded', function () {
                     blkSelect.disabled = true;
                 });
         });
+    }
+
+    // Automatic Live Checker if due items exist
+    const dueCount = <?= (int)($stats['due_now'] ?? 0) ?>;
+    if (dueCount > 0) {
+        console.log('[RTPS Auto-Checker] ' + dueCount + ' due application(s) detected. Running auto verification in background...');
+        setTimeout(() => {
+            const formData = new FormData();
+            formData.append('ajax', '1');
+            formData.append('force', '0'); // check due items
+            formData.append('limit', '10');
+
+            fetch('/admin/rtps-queue/trigger', {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success && data.ready > 0) {
+                    if (typeof Swal !== 'undefined') {
+                        Swal.fire({
+                            toast: true,
+                            position: 'top-end',
+                            icon: 'success',
+                            title: 'Auto-Attached ' + data.ready + ' certificate(s)!',
+                            showConfirmButton: false,
+                            timer: 3000
+                        });
+                    }
+                    setTimeout(() => window.location.reload(), 1500);
+                }
+            })
+            .catch(e => console.warn('[RTPS Auto-Checker]', e));
+        }, 1200);
     }
 });
 </script>
