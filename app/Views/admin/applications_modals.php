@@ -758,14 +758,76 @@ document.addEventListener('DOMContentLoaded', function () {
         // Dynamic Submitted Fields
         const fBox = document.getElementById('detailFieldsContainer');
         if (app.fields && Object.keys(app.fields).length > 0) {
-            let html = '<div class="row g-2">';
+            let photoUrl = '';
+            let signUrl = '';
+
             Object.entries(app.fields).forEach(([k, f]) => {
+                const kLower = k.toLowerCase();
+                const val = String(f.value || '');
+                if (kLower.includes('photo') && (val.startsWith('/uploads/') || val.startsWith('http') || val.startsWith('data:'))) {
+                    photoUrl = val;
+                }
+                if ((kLower.includes('signature') || kLower.includes('sign')) && (val.startsWith('/uploads/') || val.startsWith('http') || val.startsWith('data:'))) {
+                    signUrl = val;
+                }
+            });
+
+            let bannerHtml = '';
+            if (photoUrl || signUrl || app.application_code === 'PAN_CARD') {
+                bannerHtml = `
+                    <div class="p-2.5 mb-3 bg-warning-subtle border border-warning-subtle rounded-3 d-flex flex-wrap align-items-center justify-content-between gap-2 shadow-2xs">
+                        <div>
+                            <span class="badge bg-warning text-dark fw-bold font-monospace me-1">UTI PSA</span>
+                            <strong class="text-dark small"><i class="bi bi-crop text-warning me-1"></i> UTI / NSDL Photo & Fresh Signature:</strong>
+                            <div class="text-muted" style="font-size: 0.7rem;">Photo: 213x213 @ 300 DPI (&lt;30KB) • Signature: 400x200 @ 600 DPI (&lt;60KB, Fresh Whitened Paper)</div>
+                        </div>
+                        <div class="d-flex gap-1.5 flex-wrap">
+                            ${photoUrl ? `
+                                <button type="button" class="btn btn-xs btn-primary fw-bold rounded-2 px-2.5 py-1" onclick="downloadUtiPhoto('${photoUrl}', '${escapeHtml(app.applicant_name)}', this)" title="Download 213x213 @ 300 DPI Photo">
+                                    <i class="bi bi-download me-1"></i> Photo (213x213)
+                                </button>
+                            ` : ''}
+                            ${signUrl ? `
+                                <button type="button" class="btn btn-xs btn-danger fw-bold rounded-2 px-2.5 py-1" onclick="downloadUtiSignature('${signUrl}', '${escapeHtml(app.applicant_name)}', this)" title="Download Fresh 400x200 @ 600 DPI Signature">
+                                    <i class="bi bi-download me-1"></i> Fresh Sign (400x200)
+                                </button>
+                            ` : ''}
+                            <button type="button" class="btn btn-xs btn-dark fw-bold rounded-2 px-2 py-1" onclick="openUtiCroppingTool('${photoUrl}', '${signUrl}', '${escapeHtml(app.applicant_name)}')" title="Interactive Crop & Levels Tool">
+                                <i class="bi bi-sliders me-1"></i> PSA Crop Tool
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+
+            let html = bannerHtml + '<div class="row g-2">';
+            Object.entries(app.fields).forEach(([k, f]) => {
+                const kLower = k.toLowerCase();
                 const isUrl = String(f.value).startsWith('/uploads/') || String(f.value).startsWith('http');
+                let extraBtns = '';
+                if (isUrl && kLower.includes('photo')) {
+                    extraBtns = `
+                        <div class="mt-1">
+                            <button type="button" class="btn btn-2xs btn-outline-primary py-0 px-1.5 rounded" style="font-size: 0.65rem;" onclick="downloadUtiPhoto('${escapeHtml(f.value)}', '${escapeHtml(app.applicant_name)}', this)">
+                                <i class="bi bi-download"></i> UTI 213x213
+                            </button>
+                        </div>
+                    `;
+                } else if (isUrl && (kLower.includes('signature') || kLower.includes('sign'))) {
+                    extraBtns = `
+                        <div class="mt-1 d-flex gap-1">
+                            <button type="button" class="btn btn-2xs btn-outline-danger py-0 px-1.5 rounded" style="font-size: 0.65rem;" onclick="downloadUtiSignature('${escapeHtml(f.value)}', '${escapeHtml(app.applicant_name)}', this)">
+                                <i class="bi bi-download"></i> UTI Fresh 400x200
+                            </button>
+                        </div>
+                    `;
+                }
+
                 html += `
                     <div class="col-6 col-md-4">
                         <span class="text-muted d-block" style="font-size: 0.72rem;">${escapeHtml(f.label || k)}:</span>
                         ${isUrl
-                            ? `<a href="${escapeHtml(f.value)}" target="_blank" class="fw-bold text-primary text-truncate d-inline-block" style="max-width: 100%;"><i class="bi bi-file-earmark me-1"></i>View Document</a>`
+                            ? `<a href="${escapeHtml(f.value)}" target="_blank" class="fw-bold text-primary text-truncate d-inline-block" style="max-width: 100%;"><i class="bi bi-file-earmark me-1"></i>View Document</a>${extraBtns}`
                             : `<strong class="text-dark text-truncate d-block">${escapeHtml(f.value)}</strong>`
                         }
                     </div>

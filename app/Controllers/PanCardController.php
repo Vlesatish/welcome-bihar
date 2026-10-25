@@ -550,4 +550,239 @@ class PanCardController
 
         return null;
     }
+
+    /**
+     * UTI / NSDL PSA Crop & Level Processing Endpoint
+     * GET/POST /api/uti-crop?type=photo|signature&url=/uploads/...&applicant=Name
+     */
+    public function utiCrop(): void
+    {
+        if (!AuthService::check()) {
+            http_response_code(401);
+            echo "Unauthorized access.";
+            exit;
+        }
+
+        $type = strtolower(trim((string)($_GET['type'] ?? 'photo')));
+        $rawUrl = trim((string)($_GET['url'] ?? ''));
+        $applicant = trim((string)($_GET['applicant'] ?? 'Applicant'));
+        $safeApplicant = preg_replace('/[^a-zA-Z0-9_-]/', '_', $applicant) ?: 'Applicant';
+        $whiteLevel = max(100, min(250, (int)($_GET['white_level'] ?? 195)));
+        $darkLevel = max(10, min(150, (int)($_GET['dark_level'] ?? 80)));
+
+        if ($rawUrl === '') {
+            http_response_code(400);
+            echo "Missing image URL.";
+            exit;
+        }
+
+        // Resolve local file path if relative or local URL
+        $baseDir = dirname(__DIR__, 2);
+        $localPath = null;
+
+        if (str_starts_with($rawUrl, '/uploads/')) {
+            $candidate1 = $baseDir . '/public' . $rawUrl;
+            $candidate2 = $baseDir . '/storage' . $rawUrl;
+            if (file_exists($candidate1) && is_file($candidate1)) {
+                $localPath = $candidate1;
+            } elseif (file_exists($candidate2) && is_file($candidate2)) {
+                $localPath = $candidate2;
+            }
+        } elseif (preg_match('#^https?://#i', $rawUrl)) {
+            $parsed = parse_url($rawUrl, PHP_URL_PATH);
+            if ($parsed && str_starts_with($parsed, '/uploads/')) {
+                $candidate1 = $baseDir . '/public' . $parsed;
+                $candidate2 = $baseDir . '/storage' . $parsed;
+                if (file_exists($candidate1) && is_file($candidate1)) {
+                    $localPath = $candidate1;
+                } elseif (file_exists($candidate2) && is_file($candidate2)) {
+                    $localPath = $candidate2;
+                }
+            }
+        }
+
+        $imgData = null;
+        if ($localPath && file_exists($localPath)) {
+            $imgData = @file_get_contents($localPath);
+        } else {
+            if (str_starts_with($rawUrl, 'data:')) {
+                if (preg_match('/^data:image\/[a-z0-9]+;base64,(.+)$/i', $rawUrl, $m)) {
+                    $imgData = base64_decode($m[1]);
+                }
+            } elseif (preg_match('#^https?://#i', $rawUrl)) {
+                $ch = curl_init($rawUrl);
+                curl_setopt_array($ch, [
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_TIMEOUT => 15,
+                    CURLOPT_SSL_VERIFYPEER => false,
+                    CURLOPT_SSL_VERIFYHOST => 0
+                ]);
+                $imgData = curl_exec($ch);
+                curl_close($ch);
+            }
+        }
+
+        if (!$imgData) {
+            http_response_code(404);
+            echo "Image file could not be found or read.";
+            exit;
+        }
+
+        if (!extension_loaded('gd')) {
+            header('Content-Type: image/jpeg');
+            header('Content-Disposition: attachment; filename="UTI_' . ucfirst($type) . '_' . $safeApplicant . '.jpg"');
+            echo $imgData;
+            exit;
+        }
+
+        $srcImg = @imagecreatefromstring($imgData);
+        if (!$srcImg) {
+            http_response_code(422);
+            echo "Unsupported or corrupted image data.";
+            exit;
+        }
+
+        $srcW = imagesx($srcImg);
+        $srcH = imagesy($srcImg);
+
+        if ($type === 'signature') {
+            // UTI PSA Signature: 400x200 px, 600 DPI, < 60 KB, Level Enhanced (Darsh kam, Brith karo)
+            $targetW = 400;
+            $targetH = 200;
+            $dpi = 600;
+            $maxKb = 60;
+            $filename = "UTI_Signature_{$safeApplicant}_400x200_600dpi_Fresh.jpg";
+
+            $tempImg = imagecreatetruecolor($srcW, $srcH);
+            imagecopy($tempImg, $srcImg, 0, 0, 0, 0, $srcW, $srcH);
+
+            for ($y = 0; $y < $srcH; $y++) {
+                for ($x = 0; $x < $srcW; $x++) {
+                    $rgb = imagecolorat($tempImg, $x, $y);
+                    $r = ($rgb >> 16) & 0xFF;
+                    $g = ($rgb >> 8) & 0xFF;
+                    $b = $rgb & 0xFF;
+
+                    $lum = 0.299 * $r + 0.587 * $g + 0.114 * $b;
+
+                    if ($lum >= $whiteLevel) {
+                        imagesetpixel($tempImg, $x, $y, 0xFFFFFF);
+                    } elseif ($lum <= $darkLevel) {
+                        imagesetpixel($tempImg, $x, $y, 0x000000);
+                    } else {
+                        $t = ($lum - $darkLevel) / ($whiteLevel - $darkLevel);
+                        $c = (int)round(pow($t, 1.45) * 255);
+                        $c = max(0, min(255, $c));
+                        $col = ($c << 16) | ($c << 8) | $c;
+                        imagesetpixel($tempImg, $x, $y, $col);
+                    }
+                }
+            }
+
+            $dest = imagecreatetruecolor($targetW, $targetH);
+            $bgWhite = imagecolorallocate($dest, 255, 255, 255);
+            imagefilledrectangle($dest, 0, 0, $targetW, $targetH, $bgWhite);
+
+            $padding = 10;
+            $maxDrawW = $targetW - ($padding * 2);
+            $maxDrawH = $targetH - ($padding * 2);
+
+            $ratio = $srcW / $srcH;
+            if ($ratio > ($maxDrawW / $maxDrawH)) {
+                $drawW = $maxDrawW;
+                $drawH = (int)round($maxDrawW / $ratio);
+            } else {
+                $drawH = $maxDrawH;
+                $drawW = (int)round($maxDrawH * $ratio);
+            }
+
+            $dx = (int)(($targetW - $drawW) / 2);
+            $dy = (int)(($targetH - $drawH) / 2);
+
+            imagecopyresampled($dest, $tempImg, $dx, $dy, 0, 0, $drawW, $drawH, $srcW, $srcH);
+            imagedestroy($tempImg);
+            imagedestroy($srcImg);
+        } else {
+            // UTI PSA Photo: 213x213 px, 300 DPI, < 30 KB
+            $targetW = 213;
+            $targetH = 213;
+            $dpi = 300;
+            $maxKb = 30;
+            $filename = "UTI_Photo_{$safeApplicant}_213x213_300dpi.jpg";
+
+            $dest = imagecreatetruecolor($targetW, $targetH);
+            $bgWhite = imagecolorallocate($dest, 255, 255, 255);
+            imagefilledrectangle($dest, 0, 0, $targetW, $targetH, $bgWhite);
+
+            $targetRatio = $targetW / $targetH;
+            $srcRatio = $srcW / $srcH;
+
+            if ($srcRatio > $targetRatio) {
+                $sH = $srcH;
+                $sW = (int)round($srcH * $targetRatio);
+                $sx = (int)(($srcW - $sW) / 2);
+                $sy = 0;
+            } else {
+                $sW = $srcW;
+                $sH = (int)round($srcW / $targetRatio);
+                $sx = 0;
+                $sy = (int)max(0, ($srcH - $sH) * 0.2);
+            }
+
+            imagecopyresampled($dest, $srcImg, 0, 0, $sx, $sy, $targetW, $targetH, $sW, $sH);
+            imagedestroy($srcImg);
+        }
+
+        if (function_exists('imageresolution')) {
+            @imageresolution($dest, $dpi, $dpi);
+        }
+
+        $quality = 92;
+        $jpegData = '';
+        while ($quality >= 45) {
+            ob_start();
+            imagejpeg($dest, null, $quality);
+            $jpegData = ob_get_clean();
+            if (strlen($jpegData) / 1024 < $maxKb) {
+                break;
+            }
+            $quality -= 8;
+        }
+        imagedestroy($dest);
+
+        $finalData = $this->injectJfifDpi($jpegData, $dpi);
+
+        header('Content-Type: image/jpeg');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Content-Length: ' . strlen($finalData));
+        header('Cache-Control: public, max-age=86400');
+        echo $finalData;
+        exit;
+    }
+
+    /**
+     * Inject JFIF APP0 Segment with specified DPI (300 or 600)
+     */
+    private function injectJfifDpi(string $jpegData, int $dpi): string
+    {
+        if (strlen($jpegData) < 4 || substr($jpegData, 0, 2) !== "\xFF\xD8") {
+            return $jpegData;
+        }
+
+        if (substr($jpegData, 2, 2) === "\xFF\xE0" && strlen($jpegData) >= 18) {
+            $jpegData[13] = "\x01";
+            $jpegData[14] = chr(($dpi >> 8) & 0xFF);
+            $jpegData[15] = chr($dpi & 0xFF);
+            $jpegData[16] = chr(($dpi >> 8) & 0xFF);
+            $jpegData[17] = chr($dpi & 0xFF);
+            return $jpegData;
+        }
+
+        $app0 = "\xFF\xE0\x00\x10JFIF\x00\x01\x02\x01" 
+              . chr(($dpi >> 8) & 0xFF) . chr($dpi & 0xFF) 
+              . chr(($dpi >> 8) & 0xFF) . chr($dpi & 0xFF) 
+              . "\x00\x00";
+
+        return substr($jpegData, 0, 2) . $app0 . substr($jpegData, 2);
+    }
 }

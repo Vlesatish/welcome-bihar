@@ -85,6 +85,10 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                     <span>Pan Card Service</span>
                     <span class="badge bg-danger ms-auto" style="font-size: 0.65rem;">New</span>
                 </a>
+                <a class="wb-sidebar-link" href="javascript:void(0)" onclick="openUtiCroppingTool()">
+                    <i class="bi bi-crop text-info"></i>
+                    <span>UTI PSA Cropping Tool</span>
+                </a>
                 <a class="wb-sidebar-link <?= (strpos($currentUri, '/admin/users') === 0 && strpos($currentUri, '/admin/users/location-report') === false) ? 'active' : '' ?>" href="/admin/users">
                     <i class="bi bi-people"></i>
                     <span>Users & Operators</span>
@@ -242,6 +246,10 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                     <i class="bi bi-credit-card-2-front text-primary"></i>
                     <span>New Pan Card Apply</span>
                     <span class="badge bg-danger ms-auto" style="font-size: 0.65rem;">New</span>
+                </a>
+                <a class="wb-sidebar-link" href="javascript:void(0)" onclick="openUtiCroppingTool()">
+                    <i class="bi bi-crop text-info"></i>
+                    <span>UTI PSA Cropping Tool</span>
                 </a>
                 <a class="wb-sidebar-link <?= ($currentUri === '/applications' && $currentUri !== '/applications/new') ? 'active' : '' ?>" href="/applications">
                     <i class="bi bi-file-earmark-text"></i>

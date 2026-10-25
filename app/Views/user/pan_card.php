@@ -644,10 +644,14 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
             <h5 class="mb-0 fw-bold text-dark">Previous Requests</h5>
             <span class="badge bg-primary rounded-pill px-2.5 py-1" style="font-size: 0.78rem;"><?= $totalRequests ?></span>
         </div>
-        <div class="dropdown">
-            <button class="btn btn-sm btn-outline-secondary dropdown-toggle rounded-pill px-3" type="button" data-bs-toggle="dropdown">
-                <i class="bi bi-calendar3 me-1"></i> All Date
+        <div class="d-flex align-items-center gap-2">
+            <button type="button" class="btn btn-sm btn-primary rounded-pill px-3 fw-bold shadow-2xs" onclick="openUtiCroppingTool()" title="UTI / NSDL Photo & Signature Resize Tool">
+                <i class="bi bi-crop me-1"></i> PSA Cropping Tool
             </button>
+            <div class="dropdown">
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle rounded-pill px-3" type="button" data-bs-toggle="dropdown">
+                    <i class="bi bi-calendar3 me-1"></i> All Date
+                </button>
             <ul class="dropdown-menu dropdown-menu-end shadow-sm">
                 <li><a class="dropdown-item" href="?status=<?= urlencode($statusFilter) ?>">All Time</a></li>
                 <li><a class="dropdown-item" href="?status=<?= urlencode($statusFilter) ?>&date=today">Today</a></li>
@@ -824,9 +828,14 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                                         <div class="req-field-label text-center mb-1">PHOTO</div>
                                         <?php if ($photoUrl): ?>
                                             <img src="<?= e($photoUrl) ?>" class="req-thumb-img" alt="Photo" onclick="openImageModal('<?= e($photoUrl) ?>', 'Photo Preview')">
-                                            <button type="button" class="btn btn-sm btn-outline-primary w-100 mt-1 py-0.5" style="font-size: 0.7rem;" onclick="openImageModal('<?= e($photoUrl) ?>', 'Photo Preview')">
-                                                <i class="bi bi-eye"></i> View Image
-                                            </button>
+                                            <div class="d-flex gap-1 mt-1">
+                                                <button type="button" class="btn btn-sm btn-outline-secondary w-50 py-0.5" style="font-size: 0.68rem;" onclick="openImageModal('<?= e($photoUrl) ?>', 'Photo Preview')">
+                                                    <i class="bi bi-eye"></i> View
+                                                </button>
+                                                <button type="button" class="btn btn-sm btn-primary w-50 py-0.5 fw-bold" style="font-size: 0.68rem;" onclick="downloadUtiPhoto('<?= e($photoUrl) ?>', '<?= e(addslashes($req['applicant_name'])) ?>', this)" title="Download UTI 213x213 @ 300 DPI">
+                                                    <i class="bi bi-download"></i> UTI
+                                                </button>
+                                            </div>
                                         <?php else: ?>
                                             <div class="text-muted small py-4">No Photo</div>
                                         <?php endif; ?>
@@ -839,8 +848,16 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                                         <div class="req-field-label text-center mb-1">SIGNATURE</div>
                                         <?php if ($sigUrl): ?>
                                             <img src="<?= e($sigUrl) ?>" class="req-thumb-img" alt="Signature" onclick="openImageModal('<?= e($sigUrl) ?>', 'Signature Preview')">
-                                            <button type="button" class="btn btn-sm btn-outline-primary w-100 mt-1 py-0.5" style="font-size: 0.7rem;" onclick="openImageModal('<?= e($sigUrl) ?>', 'Signature Preview')">
-                                                <i class="bi bi-eye"></i> View Image
+                                            <div class="d-flex gap-1 mt-1">
+                                                <button type="button" class="btn btn-sm btn-outline-secondary w-50 py-0.5" style="font-size: 0.68rem;" onclick="openImageModal('<?= e($sigUrl) ?>', 'Signature Preview')">
+                                                    <i class="bi bi-eye"></i> View
+                                                </button>
+                                                <button type="button" class="btn btn-sm btn-danger w-50 py-0.5 fw-bold" style="font-size: 0.68rem;" onclick="downloadUtiSignature('<?= e($sigUrl) ?>', '<?= e(addslashes($req['applicant_name'])) ?>', this)" title="Download Fresh 400x200 @ 600 DPI">
+                                                    <i class="bi bi-download"></i> Fresh
+                                                </button>
+                                            </div>
+                                            <button type="button" class="btn btn-sm btn-outline-dark w-100 mt-1 py-0.5" style="font-size: 0.65rem;" onclick="openUtiCroppingTool('<?= e($photoUrl) ?>', '<?= e($sigUrl) ?>', '<?= e(addslashes($req['applicant_name'])) ?>')" title="Interactive Crop & Adjust Levels">
+                                                <i class="bi bi-sliders"></i> PSA Crop Tool
                                             </button>
                                         <?php else: ?>
                                             <div class="text-muted small py-4">No Signature</div>

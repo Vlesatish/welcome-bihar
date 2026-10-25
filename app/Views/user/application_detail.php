@@ -176,10 +176,24 @@
                                             ? $fv['field_value']
                                             : '/' . $fv['field_value'];
                                     ?>
-                                        <div class="d-flex align-items-center gap-2">
-                                            <a href="<?= e($fVal) ?>" target="_blank" class="btn btn-sm btn-outline-primary fw-semibold">
-                                                <i class="bi bi-file-earmark-arrow-down me-1"></i> View / Download Document
+                                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                                            <a href="<?= e($fVal) ?>" target="_blank" class="btn btn-sm btn-outline-secondary fw-semibold">
+                                                <i class="bi bi-file-earmark-arrow-down me-1"></i> View Original
                                             </a>
+                                            <?php 
+                                                $fnLower = strtolower($fv['field_name'] . ' ' . ($fv['label_en'] ?? ''));
+                                                if (str_contains($fnLower, 'photo')): ?>
+                                                    <button type="button" class="btn btn-sm btn-primary fw-bold shadow-2xs" onclick="downloadUtiPhoto('<?= e($fVal) ?>', '<?= e(addslashes($app['applicant_name'])) ?>', this)">
+                                                        <i class="bi bi-download me-1"></i> UTI Photo (213x213 @ 300 DPI)
+                                                    </button>
+                                                <?php elseif (str_contains($fnLower, 'signature') || str_contains($fnLower, 'sign')): ?>
+                                                    <button type="button" class="btn btn-sm btn-danger fw-bold shadow-2xs" onclick="downloadUtiSignature('<?= e($fVal) ?>', '<?= e(addslashes($app['applicant_name'])) ?>', this)">
+                                                        <i class="bi bi-download me-1"></i> UTI Signature (400x200 Fresh & Clean)
+                                                    </button>
+                                                    <button type="button" class="btn btn-sm btn-outline-dark" onclick="openUtiCroppingTool(null, '<?= e($fVal) ?>', '<?= e(addslashes($app['applicant_name'])) ?>')">
+                                                        <i class="bi bi-sliders me-1"></i> PSA Crop Tool
+                                                    </button>
+                                                <?php endif; ?>
                                             <span class="small text-muted font-monospace"><?= e(basename($fv['field_value'])) ?></span>
                                         </div>
                                     <?php elseif ($fv['field_type'] === 'textarea'): ?>

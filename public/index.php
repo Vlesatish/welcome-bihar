@@ -659,6 +659,11 @@ try {
             $ctrl->apply();
             break;
 
+        case '/api/uti-crop':
+            $ctrl = new \App\Controllers\PanCardController();
+            $ctrl->utiCrop();
+            break;
+
         // Applications
         case '/applications':
             $ctrl = new \App\Controllers\ApplicationController();
