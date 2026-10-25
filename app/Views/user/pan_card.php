@@ -818,12 +818,12 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                         </div>
                         <div class="d-flex align-items-center gap-2 flex-wrap">
                             <?php if (!empty($resultFile)): ?>
-                                <a href="<?= e($resultFile) ?>" download class="btn btn-sm btn-success fw-bold px-3 py-1 shadow-2xs rounded-2" style="font-size: 0.76rem;">
-                                    <i class="bi bi-download me-1"></i> Download PDF
-                                </a>
+                                <button type="button" class="btn btn-sm btn-success fw-bold px-3 py-1.5 shadow-2xs rounded-pill d-inline-flex align-items-center gap-1.5" style="font-size: 0.76rem;" onclick="openReceivingModal('<?= e($resultFile) ?>', '<?= e($req['app_ref']) ?>', '<?= e(addslashes($req['applicant_name'] ?? 'Applicant')) ?>')" title="रसीद देखें, प्रिंट करें और डाउनलोड करें">
+                                    <i class="bi bi-file-earmark-check-fill"></i> रसीद देखें (View Slip)
+                                </button>
                             <?php endif; ?>
                             <?php if ($isStaffOrAdmin): ?>
-                                <button type="button" class="btn btn-sm text-white fw-bold px-3 py-1.5 shadow-2xs rounded-2" style="background:#ff7700; border-color:#ff7700; font-size: 0.78rem;" onclick="openProcessStatusModal(<?= (int)$req['id'] ?>)" title="Process Request, Update Status, Remarks and Upload Receiving Slip">
+                                <button type="button" class="btn btn-sm text-white fw-bold px-3 py-1.5 shadow-2xs rounded-pill" style="background:#ff7700; border-color:#ff7700; font-size: 0.78rem;" onclick="openProcessStatusModal(<?= (int)$req['id'] ?>)" title="Process Request, Update Status, Remarks and Upload Receiving Slip">
                                     <i class="bi bi-gear-wide-connected me-1"></i> Process / Status
                                 </button>
                             <?php endif; ?>
@@ -1085,16 +1085,16 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
 
                         <!-- Green Output File Box (If Completed or Output Attached) -->
                         <?php if ($st === 'COMPLETED' || $st === 'APPROVED' || !empty($resultFile)): ?>
-                            <div class="req-output-box">
+                            <div class="req-output-box rounded-3">
                                 <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
                                     <div class="d-flex align-items-center gap-2 text-success fw-bold">
                                         <i class="bi bi-check-circle-fill fs-5"></i>
-                                        <span>Receiving / Output File (यहाँ से रसीद मिला है)</span>
+                                        <span>Receiving / Output Slip (यहाँ से रसीद देखें और प्रिंट करें)</span>
                                     </div>
                                     <?php if (!empty($resultFile)): ?>
-                                        <a href="<?= e($resultFile) ?>" target="_blank" class="btn btn-sm btn-outline-success bg-white fw-semibold">
-                                            <i class="bi bi-eye me-1"></i> View
-                                        </a>
+                                        <button type="button" class="btn btn-sm btn-success fw-bold rounded-pill px-3 py-1 shadow-2xs" onclick="openReceivingModal('<?= e($resultFile) ?>', '<?= e($req['app_ref']) ?>', '<?= e(addslashes($req['applicant_name'] ?? 'Applicant')) ?>')">
+                                            <i class="bi bi-eye-fill me-1"></i> रसीद देखें (View Slip)
+                                        </button>
                                     <?php endif; ?>
                                 </div>
 
@@ -1103,9 +1103,14 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                                 </div>
 
                                 <?php if (!empty($resultFile)): ?>
-                                    <a href="<?= e($resultFile) ?>" download class="btn btn-sm btn-success rounded-pill px-3 py-1.5 fw-bold text-white shadow-2xs">
-                                        <i class="bi bi-download me-1"></i> Download PDF File (यहाँ क्लिक करके डाउनलोड करें)
-                                    </a>
+                                    <div class="d-flex align-items-center gap-2 flex-wrap mt-2">
+                                        <button type="button" class="btn btn-sm btn-success rounded-pill px-3.5 py-1.5 fw-bold text-white shadow-2xs d-inline-flex align-items-center gap-1.5" onclick="openReceivingModal('<?= e($resultFile) ?>', '<?= e($req['app_ref']) ?>', '<?= e(addslashes($req['applicant_name'] ?? 'Applicant')) ?>')">
+                                            <i class="bi bi-printer-fill"></i> रसीद देखें / Print Slip
+                                        </button>
+                                        <a href="<?= e($resultFile) ?>" download class="btn btn-sm btn-outline-success rounded-pill px-3.5 py-1.5 fw-bold bg-white shadow-2xs d-inline-flex align-items-center gap-1.5">
+                                            <i class="bi bi-download"></i> Download File
+                                        </a>
+                                    </div>
                                 <?php endif; ?>
                             </div>
                         <?php elseif ($st === 'REJECTED'): ?>
@@ -1131,16 +1136,24 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
      MODALS: Process Request (Image 2), Image Viewer & Camera
      ======================================================== -->
 
-<!-- Process Request Modal (matching Image 2) -->
+<!-- Process Request Modal (matching Image 2 with Clean, Fresh Rounded UI) -->
 <div class="modal fade" id="processStatusModal" tabindex="-1" aria-labelledby="processStatusModalTitle" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-lg">
-        <div class="modal-content border-0 shadow-lg rounded-3 overflow-hidden" id="processModalContent" style="border: 2px solid #f59e0b; border-top: 6px solid #f59e0b; transition: all 0.25s ease;">
+        <div class="modal-content border-0 shadow-lg rounded-4 overflow-hidden" id="processModalContent" style="border: 2px solid #f59e0b; border-top: 6px solid #f59e0b; transition: all 0.25s ease;">
             <!-- Modal Header -->
-            <div class="modal-header py-2.5 px-3 bg-white border-bottom d-flex align-items-center justify-content-between">
-                <h6 class="modal-title fw-bold text-dark d-flex align-items-center gap-2 mb-0" id="processStatusModalTitle">
-                    <i class="bi bi-gear-fill text-warning"></i>
-                    <span>Process Request <span id="modalProcTitleRef" class="badge bg-dark font-monospace">#...</span> <span class="text-muted fw-normal" style="font-size:0.85rem;">(New Pan Card Apply)</span></span>
-                </h6>
+            <div class="modal-header py-3 px-4 bg-white border-bottom d-flex align-items-center justify-content-between">
+                <div class="d-flex align-items-center gap-2.5">
+                    <div class="p-2 rounded-circle bg-warning-subtle text-warning">
+                        <i class="bi bi-gear-fill fs-5"></i>
+                    </div>
+                    <div>
+                        <h6 class="modal-title fw-bold text-dark mb-0 d-flex align-items-center gap-2" id="processStatusModalTitle">
+                            <span>Process Request</span>
+                            <span id="modalProcTitleRef" class="badge bg-dark font-monospace rounded-pill px-2.5 py-1">#...</span>
+                        </h6>
+                        <span class="text-muted small" style="font-size:0.75rem;">New Pan Card Apply</span>
+                    </div>
+                </div>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
 
@@ -1150,13 +1163,13 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                 <input type="hidden" name="redirect_to" value="/services/pan-card">
                 <input type="hidden" name="result_file_base64" id="modalResultFileBase64" value="">
 
-                <div class="modal-body p-3 p-md-4">
-                    <!-- Status Selection (state) -->
+                <div class="modal-body p-4">
+                    <!-- Status Selection -->
                     <div class="mb-3">
                         <label class="form-label fw-bold text-dark small mb-1">
                             <i class="bi bi-tag-fill text-primary me-1"></i> New Status
                         </label>
-                        <select name="status" id="modalProcStatus" class="form-select fw-semibold" onchange="onModalStatusChange(this.value)">
+                        <select name="status" id="modalProcStatus" class="form-select rounded-3 py-2 px-3 fw-semibold" onchange="onModalStatusChange(this.value)">
                             <option value="COMPLETED">COMPLETED (Completed / Approved)</option>
                             <option value="IN_PROCESS">IN_PROCESS (In Process / Working)</option>
                             <option value="PENDING">PENDING (Pending / In Queue)</option>
@@ -1169,62 +1182,58 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                         <label class="form-label fw-bold text-dark small mb-1">
                             <i class="bi bi-chat-left-text-fill text-primary me-1"></i> Operator Remarks
                         </label>
-                        <div class="input-group">
-                            <span class="input-group-text bg-light text-muted"><i class="bi bi-pencil-square"></i></span>
-                            <input type="text" name="admin_remarks" id="modalProcRemarks" class="form-control" placeholder="e.g. Ack slip generated, Pan card in process...">
-                        </div>
-                        <div class="form-text" style="font-size: 0.72rem;">Visible to retailer on their dashboard & request cards.</div>
+                        <input type="text" name="admin_remarks" id="modalProcRemarks" class="form-control rounded-3 py-2 px-3" placeholder="e.g. Pan card processed, Ack slip generated...">
                     </div>
 
-                    <!-- Output Document Upload & Paste Zone -->
+                    <!-- Output Document Upload & Paste Zone (Clean, Fresh, Rounded, Minimal text) -->
                     <div class="mb-3">
                         <div class="d-flex align-items-center justify-content-between mb-1.5 flex-wrap gap-1">
                             <label class="form-label fw-bold text-dark small mb-0">
-                                <i class="bi bi-file-earmark-check-fill text-success me-1"></i> Generated Output File / Certificate Slip *
+                                <i class="bi bi-file-earmark-check-fill text-success me-1"></i> Generated Output / Receiving Slip *
                             </label>
-                            <span class="badge text-white px-2 py-1 rounded-pill" style="background: #7c3aed; font-size: 0.70rem; letter-spacing: 0.3px;">
+                            <span class="badge text-white px-2.5 py-1 rounded-pill" style="background: #7c3aed; font-size: 0.70rem; letter-spacing: 0.3px;">
                                 <i class="bi bi-clipboard2-check me-1"></i> Supports Ctrl + V Paste
                             </span>
                         </div>
 
                         <!-- Dropzone / Paste container -->
-                        <div class="p-3 rounded-3 text-center border-2 border-dashed position-relative" id="modalPasteDropZone" style="border: 2px dashed #a855f7; background: #faf5ff; transition: all 0.2s ease;">
+                        <div class="p-3.5 rounded-4 text-center border-2 border-dashed position-relative" id="modalPasteDropZone" style="border: 2px dashed #c084fc; background: #faf5ff; transition: all 0.2s ease;">
                             <div class="d-flex align-items-center justify-content-center gap-2 flex-wrap mb-2">
-                                <button type="button" class="btn btn-sm text-white fw-bold px-3 py-1.5 rounded-2 shadow-2xs" style="background: #7c3aed; border-color: #7c3aed;" onclick="triggerModalFileInput()">
-                                    <i class="bi bi-laptop me-1"></i> Select File from Computer / Device
+                                <button type="button" class="btn btn-sm text-white fw-bold px-3.5 py-2 rounded-pill shadow-xs" style="background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%); border:none;" onclick="triggerModalFileInput()">
+                                    <i class="bi bi-cloud-arrow-up-fill me-1"></i> Select File (PDF / Image)
                                 </button>
-                                <button type="button" class="btn btn-sm btn-outline-secondary fw-semibold px-3 py-1.5 rounded-2 bg-white shadow-2xs" onclick="triggerClipboardRead()">
-                                    <i class="bi bi-clipboard-plus me-1"></i> Paste Ctrl + V
+                                <button type="button" class="btn btn-sm btn-white border fw-semibold px-3.5 py-2 rounded-pill shadow-xs bg-white text-dark" onclick="triggerClipboardRead()">
+                                    <i class="bi bi-clipboard-plus me-1 text-primary"></i> Paste (Ctrl + V)
                                 </button>
                             </div>
 
                             <input type="file" id="modalResultFileInput" name="result_file" class="d-none" accept=".pdf,.png,.jpg,.jpeg,.webp" onchange="onModalFileSelected(this)">
 
-                            <div class="text-muted small mb-2" style="font-size: 0.76rem;">
-                                💡 <strong>Image Paste Active:</strong> Copy any screenshot/image and press <kbd class="bg-dark text-white px-1.5 py-0.5 rounded font-monospace" style="font-size: 0.70rem;">Ctrl + V</kbd> anywhere, or drag file here!
+                            <div class="text-muted small mb-2" style="font-size: 0.74rem;">
+                                Copy screenshot and press <kbd class="bg-white text-dark border px-1.5 py-0.5 rounded font-monospace">Ctrl + V</kbd> or drag file here
                             </div>
 
-                            <div class="d-flex align-items-center my-2 text-muted" style="font-size: 0.70rem;">
-                                <hr class="flex-grow-1 my-0 border-secondary-subtle">
-                                <span class="px-2 fw-semibold text-secondary">-- OR ENTER DIRECT LINK --</span>
-                                <hr class="flex-grow-1 my-0 border-secondary-subtle">
+                            <!-- Subtle direct link toggle -->
+                            <div class="d-flex align-items-center justify-content-center">
+                                <a class="small text-decoration-none text-muted" data-bs-toggle="collapse" href="#modalDirectUrlBox" role="button" aria-expanded="false" style="font-size: 0.72rem;">
+                                    <i class="bi bi-link-45deg me-0.5"></i> Direct file link (Optional)
+                                </a>
+                            </div>
+                            <div class="collapse mt-1" id="modalDirectUrlBox">
+                                <input type="text" name="result_file_url" id="modalResultFileUrl" class="form-control form-control-sm rounded-pill px-3" placeholder="https://... or /uploads/..." oninput="onModalUrlTyped(this.value)">
                             </div>
 
-                            <div class="input-group input-group-sm mb-1">
-                                <span class="input-group-text bg-white text-muted"><i class="bi bi-link-45deg fs-6"></i></span>
-                                <input type="text" name="result_file_url" id="modalResultFileUrl" class="form-control form-control-sm" placeholder="e.g. /uploads/image-1792...png or https://..." oninput="onModalUrlTyped(this.value)">
-                            </div>
-
-                            <!-- Attached File Display Pill -->
-                            <div id="modalAttachedDisplay" class="d-none mt-2 p-2 rounded-2 bg-white border border-success d-flex align-items-center justify-content-between gap-2 shadow-2xs text-start">
+                            <!-- Attached File Display Pill (Clean Rounded-Pill) -->
+                            <div id="modalAttachedDisplay" class="d-none mt-2.5 p-2 px-3 rounded-pill bg-white border border-success d-flex align-items-center justify-content-between gap-2 shadow-xs text-start">
                                 <div class="d-flex align-items-center gap-2 text-truncate">
-                                    <span class="badge bg-success text-white px-2 py-1"><i class="bi bi-check-lg me-1"></i> Attached</span>
-                                    <span id="modalAttachedFilename" class="small fw-bold text-dark text-truncate">slip.png</span>
-                                    <span id="modalAttachedFilesize" class="badge bg-light text-muted border font-monospace">150 KB</span>
+                                    <span class="badge bg-success text-white rounded-pill px-2.5 py-1"><i class="bi bi-check-lg me-1"></i> Attached</span>
+                                    <span id="modalAttachedFilename" class="small fw-bold text-dark text-truncate" style="max-width: 280px;">slip.png</span>
+                                    <span id="modalAttachedFilesize" class="badge bg-light text-muted border rounded-pill font-monospace">150 KB</span>
                                 </div>
-                                <button type="button" class="btn btn-sm btn-outline-danger py-0.5 px-2" style="font-size: 0.72rem;" onclick="clearModalAttachedFile()">
-                                    <i class="bi bi-trash3 me-1"></i> Remove
-                                </button>
+                                <div class="d-flex align-items-center gap-1.5">
+                                    <button type="button" id="modalViewAttachedBtn" class="btn btn-xs btn-outline-success rounded-pill px-2.5 py-1 fw-semibold d-none" style="font-size: 0.72rem;" onclick="viewModalAttachedFile()"><i class="bi bi-eye me-1"></i> View</button>
+                                    <button type="button" class="btn btn-xs btn-outline-danger rounded-pill px-2.5 py-1 fw-semibold" style="font-size: 0.72rem;" onclick="clearModalAttachedFile()"><i class="bi bi-trash3 me-1"></i> Remove</button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1234,19 +1243,91 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                         <label class="form-label fw-bold text-danger small mb-1">
                             <i class="bi bi-exclamation-triangle-fill me-1"></i> Rejection Reason *
                         </label>
-                        <input type="text" name="rejection_reason" id="modalProcRejectionReason" class="form-control border-danger" placeholder="Please state clear reason for rejection so retailer can correct it...">
-                        <div class="form-text text-danger" style="font-size: 0.72rem;">Mandatory when status is marked as REJECTED. Retailer will see this message.</div>
+                        <input type="text" name="rejection_reason" id="modalProcRejectionReason" class="form-control border-danger rounded-3 py-2 px-3" placeholder="Please state clear reason for rejection...">
+                        <div class="form-text text-danger" style="font-size: 0.72rem;">Mandatory when status is marked as REJECTED.</div>
                     </div>
                 </div>
 
                 <!-- Modal Footer -->
-                <div class="modal-footer bg-light py-2 px-3 d-flex align-items-center justify-content-between">
-                    <button type="button" class="btn btn-sm btn-secondary px-3" data-bs-dismiss="modal">Cancel</button>
-                    <button type="submit" id="modalProcSubmitBtn" class="btn btn-sm btn-primary fw-bold px-4 py-1.5 shadow-sm" style="background:#2563eb; border-color:#2563eb;">
+                <div class="modal-footer bg-light py-2.5 px-4 d-flex align-items-center justify-content-between">
+                    <button type="button" class="btn btn-sm btn-light border rounded-pill px-4 py-2 fw-semibold" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" id="modalProcSubmitBtn" class="btn btn-sm btn-primary rounded-pill px-4 py-2 fw-bold shadow-sm" style="background:#2563eb; border-color:#2563eb;">
                         <i class="bi bi-check-circle-fill me-1"></i> Update & Notify Retailer
                     </button>
                 </div>
             </form>
+        </div>
+    </div>
+</div>
+
+<!-- ========================================================
+     RECEIVING SLIP VIEWER MODAL (Image & PDF with View, Print & Download)
+     ======================================================== -->
+<div class="modal fade" id="receivingViewerModal" tabindex="-1" aria-labelledby="receivingViewerModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-xl">
+        <div class="modal-content border-0 shadow-lg rounded-4 overflow-hidden">
+            <!-- Modal Header -->
+            <div class="modal-header py-2.5 px-3 px-md-4 bg-white border-bottom d-flex align-items-center justify-content-between">
+                <div class="d-flex align-items-center gap-2.5">
+                    <div class="p-2 rounded-circle bg-success-subtle text-success">
+                        <i class="bi bi-file-earmark-check-fill fs-5"></i>
+                    </div>
+                    <div>
+                        <h6 class="modal-title fw-bold text-dark mb-0 d-flex align-items-center gap-2" id="receivingViewerModalTitle">
+                            <span>रसीद / Receiving Slip</span>
+                            <span id="recViewerAppRefBadge" class="badge bg-dark font-monospace rounded-pill" style="font-size:0.75rem;">#REF</span>
+                        </h6>
+                        <div class="text-muted small" style="font-size:0.75rem;">
+                            Applicant: <strong id="recViewerApplicantName" class="text-dark">Applicant</strong>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="d-flex align-items-center gap-2">
+                    <!-- Print Button -->
+                    <button type="button" class="btn btn-sm btn-outline-dark rounded-pill px-3 py-1.5 fw-bold shadow-2xs d-inline-flex align-items-center gap-1.5" onclick="printReceivingSlip()">
+                        <i class="bi bi-printer-fill text-primary"></i> <span>Print / प्रिंट</span>
+                    </button>
+                    <!-- Download Button -->
+                    <a id="recViewerDownloadBtn" href="" download class="btn btn-sm btn-success rounded-pill px-3 py-1.5 fw-bold text-white shadow-2xs d-inline-flex align-items-center gap-1.5">
+                        <i class="bi bi-download"></i> <span>Download</span>
+                    </a>
+                    <button type="button" class="btn-close ms-2" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+            </div>
+
+            <!-- Modal Body (Preview) -->
+            <div class="modal-body p-2 p-md-3 bg-light text-center position-relative" style="min-height: 60vh;">
+                <!-- PDF Viewer (iframe) -->
+                <iframe id="recViewerIframe" src="" class="d-none w-100 rounded-3 shadow-xs" style="height: 75vh; border: 1px solid #cbd5e1; background: #ffffff;"></iframe>
+
+                <!-- Image Viewer -->
+                <div id="recViewerImageContainer" class="d-none py-2 text-center" style="max-height: 78vh; overflow-y: auto;">
+                    <img id="recViewerImage" src="" class="img-fluid rounded-3 shadow-sm border" style="max-height: 74vh; object-fit: contain; background: #ffffff;" alt="Receiving Slip">
+                </div>
+
+                <!-- Fallback / Loading -->
+                <div id="recViewerLoading" class="text-center py-5 text-muted">
+                    <div class="spinner-border text-primary spinner-border-sm me-2" role="status"></div>
+                    <span>Loading document...</span>
+                </div>
+            </div>
+
+            <!-- Modal Footer -->
+            <div class="modal-footer py-2 px-3 px-md-4 bg-white border-top d-flex align-items-center justify-content-between flex-wrap gap-2">
+                <div class="text-muted small" style="font-size: 0.76rem;">
+                    <i class="bi bi-patch-check-fill text-success me-1"></i> Print या Download करके ग्राहक (Customer) को रसीद दे सकते हैं।
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    <button type="button" class="btn btn-sm btn-outline-dark rounded-pill px-3.5 py-1.5 fw-semibold" onclick="printReceivingSlip()">
+                        <i class="bi bi-printer me-1"></i> Print Slip
+                    </button>
+                    <a id="recViewerDownloadBtnFooter" href="" download class="btn btn-sm btn-success rounded-pill px-3.5 py-1.5 fw-bold text-white shadow-xs">
+                        <i class="bi bi-download me-1"></i> Download File
+                    </a>
+                    <button type="button" class="btn btn-sm btn-secondary rounded-pill px-3 py-1.5" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
         </div>
     </div>
 </div>
@@ -1814,6 +1895,8 @@ function onModalUrlTyped(url) {
     }
 }
 
+let currentAttachedResultUrl = null;
+
 function clearModalAttachedFile() {
     const fileInput = document.getElementById('modalResultFileInput');
     if (fileInput) fileInput.value = '';
@@ -1822,17 +1905,39 @@ function clearModalAttachedFile() {
     const urlInput = document.getElementById('modalResultFileUrl');
     if (urlInput) urlInput.value = '';
 
+    currentAttachedResultUrl = null;
+    const viewBtn = document.getElementById('modalViewAttachedBtn');
+    if (viewBtn) viewBtn.classList.add('d-none');
+
     const pill = document.getElementById('modalAttachedDisplay');
     if (pill) pill.classList.add('d-none');
 }
 
-function showModalAttachedPill(name, sizeStr, type) {
+function showModalAttachedPill(name, sizeStr, type, directUrl = null) {
     const pill = document.getElementById('modalAttachedDisplay');
     const nameEl = document.getElementById('modalAttachedFilename');
     const sizeEl = document.getElementById('modalAttachedFilesize');
+    const viewBtn = document.getElementById('modalViewAttachedBtn');
+
     if (nameEl) nameEl.textContent = name;
     if (sizeEl) sizeEl.textContent = sizeStr;
+
+    currentAttachedResultUrl = directUrl || (type === 'url' ? name : null);
+    if (viewBtn) {
+        if (currentAttachedResultUrl) {
+            viewBtn.classList.remove('d-none');
+        } else {
+            viewBtn.classList.add('d-none');
+        }
+    }
     if (pill) pill.classList.remove('d-none');
+}
+
+function viewModalAttachedFile() {
+    if (currentAttachedResultUrl) {
+        const ref = (document.getElementById('modalProcTitleRef')?.textContent || '').replace('#', '').trim();
+        openReceivingModal(currentAttachedResultUrl, ref, 'Attached Output');
+    }
 }
 
 function applyPastedResultImage(dataUrl, fileSize, defaultName) {
@@ -1967,6 +2072,145 @@ document.getElementById('modalProcessForm')?.addEventListener('submit', function
         btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Updating & Notifying...';
     }
 });
+
+// ========================================================
+// Receiving Slip Viewer Modal Handlers (View, Print & Download for PDF & Image)
+// ========================================================
+
+function openReceivingModal(fileUrl, appRef, applicantName) {
+    if (!fileUrl) {
+        alert('रसीद उपलब्ध नहीं है (No receiving slip found).');
+        return;
+    }
+
+    const refBadge = document.getElementById('recViewerAppRefBadge');
+    if (refBadge) refBadge.textContent = appRef ? ('#' + appRef) : '#REF';
+
+    const nameEl = document.getElementById('recViewerApplicantName');
+    if (nameEl) nameEl.textContent = applicantName || 'Applicant';
+
+    const safeRef = (appRef || 'Slip').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const cleanUrl = fileUrl.split('?')[0].toLowerCase();
+    const isPdf = cleanUrl.endsWith('.pdf');
+    const downloadFilename = isPdf ? `Receiving_${safeRef}.pdf` : `Receiving_${safeRef}.png`;
+
+    const downloadBtnHeader = document.getElementById('recViewerDownloadBtn');
+    if (downloadBtnHeader) {
+        downloadBtnHeader.href = fileUrl;
+        downloadBtnHeader.download = downloadFilename;
+    }
+
+    const downloadBtnFooter = document.getElementById('recViewerDownloadBtnFooter');
+    if (downloadBtnFooter) {
+        downloadBtnFooter.href = fileUrl;
+        downloadBtnFooter.download = downloadFilename;
+    }
+
+    const iframe = document.getElementById('recViewerIframe');
+    const imgContainer = document.getElementById('recViewerImageContainer');
+    const img = document.getElementById('recViewerImage');
+    const loading = document.getElementById('recViewerLoading');
+
+    if (loading) {
+        loading.classList.remove('d-none');
+        loading.innerHTML = '<div class="spinner-border text-primary spinner-border-sm me-2" role="status"></div><span>दस्तावेज लोड हो रहा है...</span>';
+    }
+    if (iframe) iframe.classList.add('d-none');
+    if (imgContainer) imgContainer.classList.add('d-none');
+
+    if (isPdf) {
+        if (iframe) {
+            iframe.src = fileUrl + '#toolbar=1';
+            iframe.onload = function() {
+                if (loading) loading.classList.add('d-none');
+                iframe.classList.remove('d-none');
+            };
+        }
+    } else {
+        if (img && imgContainer) {
+            img.src = fileUrl;
+            img.onload = function() {
+                if (loading) loading.classList.add('d-none');
+                imgContainer.classList.remove('d-none');
+            };
+            img.onerror = function() {
+                if (loading) loading.innerHTML = '<span class="text-danger"><i class="bi bi-exclamation-triangle me-1"></i> रसीद इमेज लोड नहीं हो सकी।</span>';
+            };
+        }
+    }
+
+    const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('receivingViewerModal'));
+    modal.show();
+}
+
+function printReceivingSlip() {
+    const fileUrl = document.getElementById('recViewerDownloadBtn')?.href;
+    if (!fileUrl) {
+        alert('Print करने के लिए रसीद उपलब्ध नहीं है।');
+        return;
+    }
+
+    const cleanUrl = fileUrl.split('?')[0].toLowerCase();
+    const isPdf = cleanUrl.endsWith('.pdf');
+
+    if (isPdf) {
+        const iframe = document.getElementById('recViewerIframe');
+        if (iframe && iframe.contentWindow) {
+            try {
+                iframe.contentWindow.focus();
+                iframe.contentWindow.print();
+                return;
+            } catch (e) {
+                console.warn('Iframe print access restricted, opening direct print tab:', e);
+            }
+        }
+        const win = window.open(fileUrl, '_blank');
+        if (win) {
+            win.focus();
+            setTimeout(() => { try { win.print(); } catch(e){} }, 1000);
+        }
+    } else {
+        // Image print in clean pop-up window
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) {
+            alert('Pop-up ब्लॉक है। प्रिंट करने के लिए ब्राउज़र में Pop-ups को allow करें।');
+            return;
+        }
+        printWindow.document.write(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="utf-8">
+                <title>Receiving Slip Print</title>
+                <style>
+                    @page { margin: 8mm; size: auto; }
+                    body {
+                        margin: 0;
+                        padding: 10px;
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                        min-height: 95vh;
+                        background: #fff;
+                        font-family: system-ui, -apple-system, sans-serif;
+                    }
+                    img {
+                        max-width: 100%;
+                        max-height: 98vh;
+                        object-fit: contain;
+                        display: block;
+                        margin: 0 auto;
+                    }
+                </style>
+            </head>
+            <body>
+                <img src="${fileUrl}" onload="window.print(); setTimeout(() => window.close(), 1200);" onerror="alert('Failed to load image for printing.'); window.close();" />
+            </body>
+            </html>
+        `);
+        printWindow.document.close();
+    }
+}
 </script>
 
 <?php if ($isStaffOrAdmin): ?>
