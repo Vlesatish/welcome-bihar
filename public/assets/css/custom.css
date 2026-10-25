@@ -159,6 +159,89 @@ body {
     color: #ffffff;
 }
 
+/* Sidebar Submenu & Dropdown styles */
+.wb-sidebar-dropdown {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+}
+
+.wb-sidebar-dropdown-toggle {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+}
+
+.wb-sidebar-dropdown-toggle .wb-dropdown-arrow {
+    font-size: 0.72rem;
+    width: auto !important;
+    margin-left: auto;
+    transition: transform 0.2s ease;
+    color: #94a3b8;
+}
+
+.wb-sidebar-dropdown-toggle[aria-expanded="true"] .wb-dropdown-arrow,
+.wb-sidebar-dropdown.open .wb-dropdown-arrow {
+    transform: rotate(180deg);
+}
+
+.wb-sidebar-dropdown-toggle.active {
+    background: rgba(37, 99, 235, 0.15);
+    color: #ffffff;
+    box-shadow: none;
+}
+.wb-sidebar-dropdown-toggle.active i {
+    color: #60a5fa;
+}
+
+.wb-sidebar-submenu {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    padding: 0.35rem 0 0.35rem 1.1rem;
+    margin: 0.2rem 0 0.3rem 0.85rem;
+    border-left: 2px solid rgba(255, 255, 255, 0.12);
+}
+
+.wb-submenu-link {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    color: #94a3b8;
+    text-decoration: none;
+    font-size: 0.86rem;
+    font-weight: 500;
+    transition: all 0.18s ease;
+}
+
+.wb-submenu-link i {
+    font-size: 0.95rem;
+    width: 18px;
+    text-align: center;
+    color: #64748b;
+    transition: color 0.18s ease;
+}
+
+.wb-submenu-link:hover {
+    background: rgba(255, 255, 255, 0.07);
+    color: #ffffff;
+}
+.wb-submenu-link:hover i {
+    color: #60a5fa;
+}
+
+.wb-submenu-link.active {
+    background: #2563eb;
+    color: #ffffff;
+    font-weight: 600;
+    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35);
+}
+.wb-submenu-link.active i {
+    color: #ffffff;
+}
+
 .wb-sidebar-footer {
     padding: 0.9rem 1rem;
     border-top: 1px solid rgba(255, 255, 255, 0.08);

@@ -753,12 +753,21 @@ class ApplicationController
             }
 
             $resDir = dirname(dirname(__DIR__)) . '/public/uploads/results';
-            if (!is_dir($resDir)) {
-                mkdir($resDir, 0755, true);
-            }
+            $safeResDir = 'C:/Users/satis/welcome_bihar_uploads/results';
+            if (!is_dir($safeResDir)) @mkdir($safeResDir, 0777, true);
+            if (!is_dir($resDir)) @mkdir($resDir, 0755, true);
 
             $safeFileName = 'res_' . date('Ymd_His') . '_' . bin2hex(random_bytes(8)) . '.' . $ext;
-            if (move_uploaded_file($file['tmp_name'], $resDir . '/' . $safeFileName)) {
+            $saved = false;
+            if (@copy($file['tmp_name'], $safeResDir . '/' . $safeFileName)) {
+                $saved = true;
+            }
+            if (@move_uploaded_file($file['tmp_name'], $resDir . '/' . $safeFileName)) {
+                $saved = true;
+            } elseif ($saved) {
+                @copy($safeResDir . '/' . $safeFileName, $resDir . '/' . $safeFileName);
+            }
+            if ($saved) {
                 $resultFilePath = '/uploads/results/' . $safeFileName;
             }
         }
@@ -771,11 +780,18 @@ class ApplicationController
                 $data = base64_decode($matches[2]);
                 if ($data !== false && strlen($data) <= 10 * 1024 * 1024) {
                     $resDir = dirname(dirname(__DIR__)) . '/public/uploads/results';
-                    if (!is_dir($resDir)) {
-                        mkdir($resDir, 0755, true);
-                    }
+                    $safeResDir = 'C:/Users/satis/welcome_bihar_uploads/results';
+                    if (!is_dir($safeResDir)) @mkdir($safeResDir, 0777, true);
+                    if (!is_dir($resDir)) @mkdir($resDir, 0755, true);
                     $safeFileName = 'res_paste_' . date('Ymd_His') . '_' . bin2hex(random_bytes(8)) . '.' . $ext;
-                    if (file_put_contents($resDir . '/' . $safeFileName, $data)) {
+                    $saved = false;
+                    if (@file_put_contents($safeResDir . '/' . $safeFileName, $data) !== false) {
+                        $saved = true;
+                    }
+                    if (@file_put_contents($resDir . '/' . $safeFileName, $data) !== false) {
+                        $saved = true;
+                    }
+                    if ($saved) {
                         $resultFilePath = '/uploads/results/' . $safeFileName;
                     }
                 }

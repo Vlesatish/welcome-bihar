@@ -21,23 +21,31 @@ if (php_sapi_name() === 'cli-server') {
             return false;
         }
 
-        // Fallback: check storage/uploads if file was uploaded to storage directory
+        // Fallback: check safe upload store, public/uploads, or storage/uploads
         if (str_starts_with($urlPath, '/uploads/')) {
-            $storageTarget = dirname(__DIR__) . '/storage' . $urlPath;
-            if (file_exists($storageTarget) && is_file($storageTarget)) {
-                $ext = strtolower(pathinfo($storageTarget, PATHINFO_EXTENSION));
-                $mimes = [
-                    'pdf' => 'application/pdf',
-                    'jpg' => 'image/jpeg',
-                    'jpeg' => 'image/jpeg',
-                    'png' => 'image/png'
-                ];
-                $mime = $mimes[$ext] ?? 'application/octet-stream';
-                header('Content-Type: ' . $mime);
-                header('Content-Length: ' . filesize($storageTarget));
-                header('Content-Disposition: inline; filename="' . basename($storageTarget) . '"');
-                readfile($storageTarget);
-                exit;
+            $relSub = substr($urlPath, strlen('/uploads/'));
+            $targets = [
+                'C:/Users/satis/welcome_bihar_uploads/' . $relSub,
+                dirname(__DIR__) . '/public' . $urlPath,
+                dirname(__DIR__) . '/storage' . $urlPath,
+            ];
+
+            foreach ($targets as $storageTarget) {
+                if (@file_exists($storageTarget) && @is_file($storageTarget)) {
+                    $ext = strtolower(pathinfo($storageTarget, PATHINFO_EXTENSION));
+                    $mimes = [
+                        'pdf' => 'application/pdf',
+                        'jpg' => 'image/jpeg',
+                        'jpeg' => 'image/jpeg',
+                        'png' => 'image/png'
+                    ];
+                    $mime = $mimes[$ext] ?? 'application/octet-stream';
+                    header('Content-Type: ' . $mime);
+                    header('Content-Length: ' . filesize($storageTarget));
+                    header('Content-Disposition: inline; filename="' . basename($storageTarget) . '"');
+                    readfile($storageTarget);
+                    exit;
+                }
             }
         }
     }
@@ -651,6 +659,13 @@ try {
         case '/pan-card':
             $ctrl = new \App\Controllers\PanCardController();
             $ctrl->index();
+            break;
+
+        case '/services/pan-card/list':
+        case '/pan-card/list':
+        case '/services/pan-card-list':
+            $ctrl = new \App\Controllers\PanCardController();
+            $ctrl->list();
             break;
 
         case '/services/pan-card/apply':

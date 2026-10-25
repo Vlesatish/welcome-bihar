@@ -77,6 +77,15 @@ document.addEventListener('DOMContentLoaded', function () {
         backdrop.addEventListener('click', closeSidebar);
     }
 
+    // Sidebar Submenu Dropdowns (Sync .open class on collapse events)
+    document.querySelectorAll('.wb-sidebar-dropdown').forEach(dropdown => {
+        const collapseEl = dropdown.querySelector('.collapse');
+        if (collapseEl) {
+            collapseEl.addEventListener('show.bs.collapse', () => dropdown.classList.add('open'));
+            collapseEl.addEventListener('hide.bs.collapse', () => dropdown.classList.remove('open'));
+        }
+    });
+
     // 1. Cascading District -> Block Loader (for AJAX-driven forms like user permissions)
     const districtSelect = document.getElementById('district_select');
     const blockSelect = document.getElementById('block_select');

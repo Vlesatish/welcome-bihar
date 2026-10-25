@@ -80,9 +80,9 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                     <i class="bi bi-folder2-open"></i>
                     <span>Applications</span>
                 </a>
-                <a class="wb-sidebar-link <?= strpos($currentUri, '/services/pan-card') === 0 ? 'active' : '' ?>" href="/services/pan-card">
-                    <i class="bi bi-credit-card-2-front text-warning"></i>
-                    <span>Pan Card Service</span>
+                <a class="wb-sidebar-link <?= (strpos($currentUri, '/services/pan-card') === 0 || strpos($currentUri, '/pan-card') === 0) ? 'active' : '' ?>" href="/services/pan-card/list">
+                    <i class="bi bi-card-checklist text-warning"></i>
+                    <span>New Pan Card List</span>
                     <span class="badge bg-danger ms-auto" style="font-size: 0.65rem;">New</span>
                 </a>
                 <a class="wb-sidebar-link <?= (strpos($currentUri, '/admin/users') === 0 && strpos($currentUri, '/admin/users/location-report') === false) ? 'active' : '' ?>" href="/admin/users">
@@ -188,9 +188,9 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                     <i class="bi bi-folder2-open"></i>
                     <span>Assigned Applications</span>
                 </a>
-                <a class="wb-sidebar-link <?= strpos($currentUri, '/services/pan-card') === 0 ? 'active' : '' ?>" href="/services/pan-card">
-                    <i class="bi bi-credit-card-2-front text-primary"></i>
-                    <span>Pan Card Service</span>
+                <a class="wb-sidebar-link <?= (strpos($currentUri, '/services/pan-card') === 0 || strpos($currentUri, '/pan-card') === 0) ? 'active' : '' ?>" href="/services/pan-card/list">
+                    <i class="bi bi-card-checklist text-primary"></i>
+                    <span>New Pan Card List</span>
                 </a>
                 <a class="wb-sidebar-link <?= ($currentUri === '/admin/applications' && ($_GET['status'] ?? '') === 'PENDING') ? 'active' : '' ?>" href="/admin/applications?status=PENDING">
                     <i class="bi bi-hourglass-split text-warning"></i>
@@ -238,11 +238,36 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                     <i class="bi bi-plus-circle"></i>
                     <span>New Application</span>
                 </a>
-                <a class="wb-sidebar-link <?= strpos($currentUri, '/services/pan-card') === 0 ? 'active' : '' ?>" href="/services/pan-card">
-                    <i class="bi bi-credit-card-2-front text-primary"></i>
-                    <span>New Pan Card Apply</span>
-                    <span class="badge bg-danger ms-auto" style="font-size: 0.65rem;">New</span>
-                </a>
+                <?php
+                $isPanApplyActive = ($currentUri === '/services/pan-card' || $currentUri === '/pan-card' || $currentUri === '/services/pan-card/apply');
+                $isPanListActive = ($currentUri === '/services/pan-card/list' || $currentUri === '/pan-card/list' || $currentUri === '/services/pan-card-list');
+                $isPanParentActive = $isPanApplyActive || $isPanListActive;
+                ?>
+                <div class="wb-sidebar-dropdown <?= $isPanParentActive ? 'open' : '' ?>">
+                    <a class="wb-sidebar-link wb-sidebar-dropdown-toggle <?= $isPanParentActive ? 'active' : '' ?>" 
+                       data-bs-toggle="collapse" 
+                       href="#panCardSubmenu" 
+                       role="button" 
+                       aria-expanded="<?= $isPanParentActive ? 'true' : 'false' ?>" 
+                       aria-controls="panCardSubmenu">
+                        <i class="bi bi-credit-card-2-front text-primary"></i>
+                        <span>New Pan Card</span>
+                        <span class="badge bg-danger ms-auto me-1" style="font-size: 0.65rem;">New</span>
+                        <i class="bi bi-chevron-down wb-dropdown-arrow"></i>
+                    </a>
+                    <div class="collapse <?= $isPanParentActive ? 'show' : '' ?>" id="panCardSubmenu">
+                        <div class="wb-sidebar-submenu">
+                            <a class="wb-submenu-link <?= $isPanApplyActive ? 'active' : '' ?>" href="/services/pan-card">
+                                <i class="bi bi-plus-circle"></i>
+                                <span>New Pan Card Apply</span>
+                            </a>
+                            <a class="wb-submenu-link <?= $isPanListActive ? 'active' : '' ?>" href="/services/pan-card/list">
+                                <i class="bi bi-card-checklist"></i>
+                                <span>New Pan Card List</span>
+                            </a>
+                        </div>
+                    </div>
+                </div>
                 <a class="wb-sidebar-link <?= ($currentUri === '/applications' && $currentUri !== '/applications/new') ? 'active' : '' ?>" href="/applications">
                     <i class="bi bi-file-earmark-text"></i>
                     <span>Application List</span>

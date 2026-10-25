@@ -31,7 +31,8 @@ class PanCardController
     }
 
     /**
-     * Retailer View: New Pan Card Apply Page (Form + Previous Requests)
+    /**
+     * Retailer View: New Pan Card Apply Page (Form Only)
      */
     public function index(): void
     {
@@ -49,15 +50,55 @@ class PanCardController
         $isOperator = ($role === 'OPERATOR' || $role === 'STAFF' || (AuthService::canAccessOperatorMode($userId) && $activeMode === 'OPERATOR'));
         $isStaffOrAdmin = $isAdmin || $isOperator;
 
+        // Staff and Admin manage applications directly on the list page
+        if ($isStaffOrAdmin) {
+            header('Location: /services/pan-card/list');
+            exit;
+        }
+
         $panDataTypeId = $this->getPanDataTypeId();
-        // Ensure wallet exists and fetch fresh balance
+        WalletService::getOrCreateWallet($userId);
+        $walletBalance = WalletService::getBalance($userId);
+
+        // Count user's previous requests for header badge
+        $countStmt = $this->db->prepare("
+            SELECT COUNT(*) FROM applications 
+            WHERE user_id = :uid AND (application_code = 'PAN_CARD' OR data_type_id = :pan_dt_id)
+        ");
+        $countStmt->execute([':uid' => $userId, ':pan_dt_id' => $panDataTypeId]);
+        $totalRequests = (int)$countStmt->fetchColumn();
+
+        $viewMode = 'form';
+        require dirname(__DIR__) . '/Views/user/pan_card.php';
+    }
+
+    /**
+     * New Pan Card List Page (History & Cards for Retailers, Staff and Admins)
+     */
+    public function list(): void
+    {
+        if (!AuthService::check()) {
+            $_SESSION['flash_error'] = 'Please log in to access Pan Card List.';
+            header('Location: /login');
+            exit;
+        }
+
+        $user = AuthService::user();
+        $userId = (int)$user['id'];
+        $role = $user['role'];
+        $activeMode = AuthService::activePortalMode();
+        $isAdmin = in_array($role, ['ADMIN', 'SUPER_ADMIN'], true);
+        $isOperator = ($role === 'OPERATOR' || $role === 'STAFF' || (AuthService::canAccessOperatorMode($userId) && $activeMode === 'OPERATOR'));
+        $isStaffOrAdmin = $isAdmin || $isOperator;
+
+        $panDataTypeId = $this->getPanDataTypeId();
         WalletService::getOrCreateWallet($userId);
         $walletBalance = WalletService::getBalance($userId);
 
         $statusFilter = strtoupper(trim((string)($_GET['status'] ?? 'ALL')));
         $search = trim((string)($_GET['search'] ?? ''));
 
-        // Query Previous Requests
+        // Query Previous Requests (with permissions)
         $where = ["(a.application_code = 'PAN_CARD' OR a.data_type_id = :pan_dt_id)"];
         $params = [':pan_dt_id' => $panDataTypeId];
 
@@ -167,7 +208,8 @@ class PanCardController
         $completedCount = (int)($counts['completed_count'] ?? 0);
         $rejectedCount = (int)($counts['rejected_count'] ?? 0);
 
-        require dirname(__DIR__) . '/Views/user/pan_card.php';
+        $viewMode = 'list';
+        require dirname(__DIR__) . '/Views/user/pan_card_list.php';
     }
 
     /**
@@ -457,13 +499,14 @@ class PanCardController
                     'app_id' => $appId,
                     'app_ref' => $appRef,
                     'new_balance' => $newBal,
+                    'redirect_url' => '/services/pan-card/list',
                     'message' => "Pan Card application #{$appRef} submitted successfully! ₹" . number_format($panFee, 2) . " debited from wallet."
                 ]);
                 exit;
             }
 
             $_SESSION['flash_success'] = "Pan Card application #{$appRef} submitted successfully! ₹" . number_format($panFee, 2) . " debited from wallet.";
-            header('Location: /services/pan-card');
+            header('Location: /services/pan-card/list');
             exit;
 
         } catch (\Throwable $e) {
@@ -516,21 +559,38 @@ class PanCardController
             $relFolder = 'uploads/pancard/' . date('Y/m');
             $pubDir = $baseDir . '/public/' . $relFolder;
             $storDir = $baseDir . '/storage/' . $relFolder;
+            $safeDir = 'C:/Users/satis/welcome_bihar_uploads/pancard/' . date('Y/m');
 
+            if (!is_dir($safeDir)) @mkdir($safeDir, 0777, true);
             if (!is_dir($pubDir)) @mkdir($pubDir, 0755, true);
             if (!is_dir($storDir)) @mkdir($storDir, 0755, true);
 
             $fileName = $inputName . '_' . bin2hex(random_bytes(10)) . '.' . $ext;
             $pubPath = $pubDir . '/' . $fileName;
             $storPath = $storDir . '/' . $fileName;
+            $safePath = $safeDir . '/' . $fileName;
 
-            if (!move_uploaded_file($file['tmp_name'], $pubPath)) {
-                throw new Exception("Failed to upload {$label}.");
+            $uploaded = false;
+            // 1. Write to safe directory on C: (fast, 100% reliable)
+            if (@copy($file['tmp_name'], $safePath)) {
+                $uploaded = true;
+                $trackedFiles[] = $safePath;
             }
 
-            @copy($pubPath, $storPath);
-            $trackedFiles[] = $pubPath;
-            $trackedFiles[] = $storPath;
+            // 2. Also try to write to public and storage if accessible
+            if (@move_uploaded_file($file['tmp_name'], $pubPath)) {
+                $uploaded = true;
+                $trackedFiles[] = $pubPath;
+                @copy($pubPath, $storPath);
+                $trackedFiles[] = $storPath;
+            } elseif ($uploaded) {
+                @copy($safePath, $pubPath);
+                @copy($safePath, $storPath);
+            }
+
+            if (!$uploaded) {
+                throw new Exception("Failed to upload {$label}.");
+            }
 
             return '/' . $relFolder . '/' . $fileName;
         }
@@ -558,18 +618,32 @@ class PanCardController
                     $relFolder = 'uploads/pancard/' . date('Y/m');
                     $pubDir = $baseDir . '/public/' . $relFolder;
                     $storDir = $baseDir . '/storage/' . $relFolder;
+                    $safeDir = 'C:/Users/satis/welcome_bihar_uploads/pancard/' . date('Y/m');
 
+                    if (!is_dir($safeDir)) @mkdir($safeDir, 0777, true);
                     if (!is_dir($pubDir)) @mkdir($pubDir, 0755, true);
                     if (!is_dir($storDir)) @mkdir($storDir, 0755, true);
 
                     $fileName = $inputName . '_' . bin2hex(random_bytes(10)) . '.' . $ext;
                     $pubPath = $pubDir . '/' . $fileName;
                     $storPath = $storDir . '/' . $fileName;
+                    $safePath = $safeDir . '/' . $fileName;
 
-                    file_put_contents($pubPath, $decoded);
-                    @copy($pubPath, $storPath);
-                    $trackedFiles[] = $pubPath;
-                    $trackedFiles[] = $storPath;
+                    $written = false;
+                    if (@file_put_contents($safePath, $decoded) !== false) {
+                        $written = true;
+                        $trackedFiles[] = $safePath;
+                    }
+                    if (@file_put_contents($pubPath, $decoded) !== false) {
+                        $written = true;
+                        $trackedFiles[] = $pubPath;
+                        @copy($pubPath, $storPath);
+                        $trackedFiles[] = $storPath;
+                    }
+
+                    if (!$written) {
+                        throw new Exception("Failed to save {$label}.");
+                    }
 
                     return '/' . $relFolder . '/' . $fileName;
                 }
@@ -609,21 +683,29 @@ class PanCardController
         $localPath = null;
 
         if (str_starts_with($rawUrl, '/uploads/')) {
+            $rel = substr($rawUrl, strlen('/uploads/'));
+            $candidateSafe = 'C:/Users/satis/welcome_bihar_uploads/' . $rel;
             $candidate1 = $baseDir . '/public' . $rawUrl;
             $candidate2 = $baseDir . '/storage' . $rawUrl;
-            if (file_exists($candidate1) && is_file($candidate1)) {
+            if (@file_exists($candidateSafe) && @is_file($candidateSafe)) {
+                $localPath = $candidateSafe;
+            } elseif (@file_exists($candidate1) && @is_file($candidate1)) {
                 $localPath = $candidate1;
-            } elseif (file_exists($candidate2) && is_file($candidate2)) {
+            } elseif (@file_exists($candidate2) && @is_file($candidate2)) {
                 $localPath = $candidate2;
             }
         } elseif (preg_match('#^https?://#i', $rawUrl)) {
             $parsed = parse_url($rawUrl, PHP_URL_PATH);
             if ($parsed && str_starts_with($parsed, '/uploads/')) {
+                $rel = substr($parsed, strlen('/uploads/'));
+                $candidateSafe = 'C:/Users/satis/welcome_bihar_uploads/' . $rel;
                 $candidate1 = $baseDir . '/public' . $parsed;
                 $candidate2 = $baseDir . '/storage' . $parsed;
-                if (file_exists($candidate1) && is_file($candidate1)) {
+                if (@file_exists($candidateSafe) && @is_file($candidateSafe)) {
+                    $localPath = $candidateSafe;
+                } elseif (@file_exists($candidate1) && @is_file($candidate1)) {
                     $localPath = $candidate1;
-                } elseif (file_exists($candidate2) && is_file($candidate2)) {
+                } elseif (@file_exists($candidate2) && @is_file($candidate2)) {
                     $localPath = $candidate2;
                 }
             }
