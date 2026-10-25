@@ -473,6 +473,16 @@ class SystemUpdateService
                 ");
             }
 
+            // Ensure pan_card service exists
+            $chkPan = $db->query("SELECT id FROM data_types WHERE code = 'pan_card' LIMIT 1")->fetch();
+            if (!$chkPan) {
+                $db->exec("
+                    INSERT INTO data_types (id, code, name_en, name_hi, badge, description_en, fee_amount, distributor_commission, is_active, sort_order)
+                    VALUES (5, 'pan_card', 'New Pan Card Apply', 'नया पैन कार्ड आवेदन (सिर्फ आधार से)', 'PAN_CARD', 'Pan Card Apply Sirf Aadhaar Card Se. Physical Pan Card ke sath E-Pan Card Bhi Milega.', 107.00, 7.00, 1, 2)
+                    ON DUPLICATE KEY UPDATE is_active = 1
+                ");
+            }
+
             // 5. Payment Gateway Configuration Self-Healing:
             // Ensure is_credited column exists on topup_orders
             if (in_array('topup_orders', $tables, true)) {

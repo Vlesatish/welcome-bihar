@@ -80,6 +80,11 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                     <i class="bi bi-folder2-open"></i>
                     <span>Applications</span>
                 </a>
+                <a class="wb-sidebar-link <?= strpos($currentUri, '/services/pan-card') === 0 ? 'active' : '' ?>" href="/services/pan-card">
+                    <i class="bi bi-credit-card-2-front text-warning"></i>
+                    <span>Pan Card Service</span>
+                    <span class="badge bg-danger ms-auto" style="font-size: 0.65rem;">New</span>
+                </a>
                 <a class="wb-sidebar-link <?= (strpos($currentUri, '/admin/users') === 0 && strpos($currentUri, '/admin/users/location-report') === false) ? 'active' : '' ?>" href="/admin/users">
                     <i class="bi bi-people"></i>
                     <span>Users & Operators</span>
@@ -183,6 +188,10 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                     <i class="bi bi-folder2-open"></i>
                     <span>Assigned Applications</span>
                 </a>
+                <a class="wb-sidebar-link <?= strpos($currentUri, '/services/pan-card') === 0 ? 'active' : '' ?>" href="/services/pan-card">
+                    <i class="bi bi-credit-card-2-front text-primary"></i>
+                    <span>Pan Card Service</span>
+                </a>
                 <a class="wb-sidebar-link <?= ($currentUri === '/admin/applications' && ($_GET['status'] ?? '') === 'PENDING') ? 'active' : '' ?>" href="/admin/applications?status=PENDING">
                     <i class="bi bi-hourglass-split text-warning"></i>
                     <span>Pending</span>
@@ -228,6 +237,11 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                 <a class="wb-sidebar-link <?= $currentUri === '/applications/new' ? 'active' : '' ?>" href="/applications/new">
                     <i class="bi bi-plus-circle"></i>
                     <span>New Application</span>
+                </a>
+                <a class="wb-sidebar-link <?= strpos($currentUri, '/services/pan-card') === 0 ? 'active' : '' ?>" href="/services/pan-card">
+                    <i class="bi bi-credit-card-2-front text-primary"></i>
+                    <span>New Pan Card Apply</span>
+                    <span class="badge bg-danger ms-auto" style="font-size: 0.65rem;">New</span>
                 </a>
                 <a class="wb-sidebar-link <?= ($currentUri === '/applications' && $currentUri !== '/applications/new') ? 'active' : '' ?>" href="/applications">
                     <i class="bi bi-file-earmark-text"></i>

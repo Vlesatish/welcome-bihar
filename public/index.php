@@ -646,6 +646,19 @@ try {
             $ctrl->unblockWhatsApp();
             break;
 
+        // Pan Card Service (Sirf Aadhaar Card Se)
+        case '/services/pan-card':
+        case '/pan-card':
+            $ctrl = new \App\Controllers\PanCardController();
+            $ctrl->index();
+            break;
+
+        case '/services/pan-card/apply':
+        case '/pan-card/apply':
+            $ctrl = new \App\Controllers\PanCardController();
+            $ctrl->apply();
+            break;
+
         // Applications
         case '/applications':
             $ctrl = new \App\Controllers\ApplicationController();
