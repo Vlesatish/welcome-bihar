@@ -248,23 +248,43 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
 
 .req-card {
     background: #ffffff;
-    border: 1px solid #e2e8f0;
+    border: 2px solid #e2e8f0;
     border-radius: 12px;
-    margin-bottom: 1.25rem;
-    box-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.04);
+    margin-bottom: 1.5rem;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
     overflow: hidden;
-    transition: all 0.2s ease;
+    transition: all 0.25s ease;
+}
+
+/* Dynamic status-based border colors (state ke hisab se border color) */
+.req-card.status-completed, .req-card.status-approved {
+    border: 2px solid #22c55e !important;
+    border-top: 5px solid #22c55e !important;
+}
+
+.req-card.status-pending {
+    border: 2px solid #f59e0b !important;
+    border-top: 5px solid #f59e0b !important;
+}
+
+.req-card.status-in-process, .req-card.status-under-review {
+    border: 2px solid #3b82f6 !important;
+    border-top: 5px solid #3b82f6 !important;
+}
+
+.req-card.status-rejected {
+    border: 2px solid #ef4444 !important;
+    border-top: 5px solid #ef4444 !important;
 }
 
 .req-card:hover {
-    border-color: #cbd5e1;
-    box-shadow: 0 6px 16px -2px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 }
 
 .req-card-header {
-    background: #f8fafc;
-    border-bottom: 1px solid #e2e8f0;
-    padding: 0.75rem 1.25rem;
+    background: #ffffff;
+    border-bottom: 1px solid #f1f5f9;
+    padding: 0.85rem 1.25rem;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -272,6 +292,36 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
 
 .req-card-body {
     padding: 1.15rem 1.25rem;
+}
+
+.req-grid-box {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 0.45rem 0.75rem;
+    height: 100%;
+    transition: all 0.2s ease;
+}
+
+.req-grid-box:hover {
+    background: #ffffff;
+    border-color: #cbd5e1;
+}
+
+.req-grid-box .req-field-label {
+    font-size: 0.66rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    color: #64748b;
+    margin-bottom: 0.15rem;
+    letter-spacing: 0.03em;
+}
+
+.req-grid-box .req-field-value {
+    font-size: 0.84rem;
+    font-weight: 700;
+    color: #0f172a;
+    word-break: break-word;
 }
 
 .req-field-row {
@@ -741,103 +791,155 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                     $panFormUrl = $fields['pan_form'] ?? null;
                     $resultFile = $req['result_file'] ?? null;
                 ?>
-                <div class="req-card" id="row-app-<?= (int)$req['id'] ?>" data-app="<?= htmlspecialchars(json_encode($req), ENT_QUOTES, 'UTF-8') ?>" data-ref="<?= e($req['app_ref']) ?>" data-name="<?= e(strtolower($req['applicant_name'] ?? '')) ?>" data-aadhar="<?= e($req['applicant_identifier'] ?? '') ?>">
-                    <!-- Card Header -->
-                    <div class="req-card-header">
+                <?php
+                    $statusBorderClass = 'status-pending';
+                    if ($st === 'COMPLETED' || $st === 'APPROVED') {
+                        $statusBorderClass = 'status-completed';
+                    } elseif ($st === 'IN_PROCESS' || $st === 'UNDER_REVIEW') {
+                        $statusBorderClass = 'status-in-process';
+                    } elseif ($st === 'REJECTED') {
+                        $statusBorderClass = 'status-rejected';
+                    }
+                ?>
+                <div class="req-card <?= $statusBorderClass ?>" id="row-app-<?= (int)$req['id'] ?>" data-app="<?= htmlspecialchars(json_encode($req), ENT_QUOTES, 'UTF-8') ?>" data-ref="<?= e($req['app_ref']) ?>" data-name="<?= e(strtolower($req['applicant_name'] ?? '')) ?>" data-aadhar="<?= e($req['applicant_identifier'] ?? '') ?>">
+                    <!-- Card Header (matching Image 1) -->
+                    <div class="req-card-header bg-white d-flex align-items-center justify-content-between flex-wrap gap-2 py-2 px-3">
                         <div class="d-flex align-items-center gap-2 flex-wrap">
-                            <span class="badge bg-dark text-white fw-bold px-2.5 py-1" style="font-size: 0.76rem;">
+                            <span class="badge bg-dark text-white fw-bold px-2 py-1 font-monospace" style="font-size: 0.82rem;">
                                 #<?= e($req['app_ref']) ?>
                             </span>
-                            <span class="text-muted small">
-                                <i class="bi bi-clock me-1"></i> <?= $datePrefix . $reqDate ?>
+                            <strong class="text-dark fs-6">New Pan Card Apply</strong>
+                            <span class="badge <?= $badgeClass ?> px-2.5 py-1 fw-bold text-uppercase" style="font-size: 0.72rem;">
+                                <?= e($st) ?>
                             </span>
-                            <?php if ($isStaffOrAdmin && !empty($req['retailer_name'])): ?>
-                                <span class="badge bg-light text-secondary border px-2 py-0.5 small">
-                                    <i class="bi bi-shop me-1"></i> Retailer: <?= e($req['retailer_name']) ?> (<?= e($req['retailer_mobile'] ?: 'User') ?>)
-                                </span>
-                            <?php endif; ?>
+                            <span class="badge bg-secondary-subtle text-secondary border px-2 py-0.5" style="font-size: 0.70rem;">
+                                PAN
+                            </span>
                         </div>
-                        <div class="d-flex align-items-center gap-2">
-                            <span class="badge <?= $badgeClass ?> px-2.5 py-1.5 fw-bold" style="font-size: 0.75rem;">
-                                <i class="bi <?= $badgeIcon ?> me-1"></i> <?= e($st) ?>
-                            </span>
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                            <?php if (!empty($resultFile)): ?>
+                                <a href="<?= e($resultFile) ?>" download class="btn btn-sm btn-success fw-bold px-3 py-1 shadow-2xs rounded-2" style="font-size: 0.76rem;">
+                                    <i class="bi bi-download me-1"></i> Download PDF
+                                </a>
+                            <?php endif; ?>
                             <?php if ($isStaffOrAdmin): ?>
-                                <button type="button" class="btn btn-xs btn-primary fw-bold rounded-2 px-2.5 py-1 shadow-2xs" onclick="scrollToAdminPanel(<?= (int)$req['id'] ?>)" title="Update Status, Enter Remark & Upload Receiving Slip">
-                                    <i class="bi bi-gear-fill me-1"></i> Process
+                                <button type="button" class="btn btn-sm text-white fw-bold px-3 py-1.5 shadow-2xs rounded-2" style="background:#ff7700; border-color:#ff7700; font-size: 0.78rem;" onclick="openProcessStatusModal(<?= (int)$req['id'] ?>)" title="Process Request, Update Status, Remarks and Upload Receiving Slip">
+                                    <i class="bi bi-gear-wide-connected me-1"></i> Process / Status
                                 </button>
                             <?php endif; ?>
                         </div>
                     </div>
 
+                    <!-- Card Meta Subline -->
+                    <div class="px-3 py-1.5 bg-light border-bottom d-flex align-items-center justify-content-between flex-wrap gap-2 text-muted" style="font-size: 0.74rem;">
+                        <div>
+                            <strong>Retailer:</strong> <?= e($req['retailer_name'] ?: 'Direct User') ?> (<?= e($req['retailer_mobile'] ?: '-') ?>) • <strong>Fee:</strong> <span class="text-success fw-bold font-monospace">₹<?= number_format((float)($req['fee_debited'] ?? 107), 2) ?></span>
+                        </div>
+                        <div>
+                            <i class="bi bi-clock me-1"></i> <strong>Entry Time / समय:</strong> <?= $datePrefix . $reqDate ?>
+                        </div>
+                    </div>
+
                     <!-- Card Body -->
                     <div class="req-card-body">
-                        <!-- 2-Column Info Grid matching the screenshot -->
-                        <div class="row g-3">
-                            <!-- Left Column -->
-                            <div class="col-12 col-md-6 border-end-md">
-                                <div class="req-field-row">
+                        <div class="fw-bold text-muted small text-uppercase mb-2.5" style="font-size: 0.72rem; letter-spacing: 0.5px;">
+                            <i class="bi bi-ui-checks-grid text-primary me-1"></i> SUBMITTED FORM DATA & ATTACHMENTS
+                        </div>
+
+                        <!-- 3-Column Clean Boxed Grid (matching Image 1) -->
+                        <div class="row g-2 mb-3">
+                            <div class="col-12 col-md-4">
+                                <div class="req-grid-box">
                                     <div class="req-field-label">FULL NAME</div>
                                     <div class="req-field-value text-uppercase"><?= e($req['applicant_name'] ?: ($fields['full_name'] ?? '-')) ?></div>
                                 </div>
-                                <div class="req-field-row">
-                                    <div class="req-field-label">DATE OF BIRTH</div>
-                                    <div class="req-field-value"><?= e($fields['dob'] ?? '-') ?></div>
-                                </div>
-                                <div class="req-field-row">
-                                    <div class="req-field-label">AADHAAR NO</div>
-                                    <div class="req-field-value text-primary font-monospace"><?= e($req['applicant_identifier'] ?: ($fields['aadhaar_no'] ?? '-')) ?></div>
-                                </div>
-                                <div class="req-field-row">
-                                    <div class="req-field-label">MOBILE NO</div>
-                                    <div class="req-field-value"><?= e($req['applicant_mobile'] ?: ($fields['mobile_no'] ?? '-')) ?></div>
-                                </div>
-                                <div class="req-field-row">
-                                    <div class="req-field-label">EMAIL ID</div>
-                                    <div class="req-field-value text-lowercase"><?= e($fields['email_id'] ?? '-') ?></div>
-                                </div>
-                                <div class="req-field-row">
-                                    <div class="req-field-label">FATHER NAME</div>
-                                    <div class="req-field-value text-uppercase"><?= e($fields['father_name'] ?? '-') ?></div>
-                                </div>
-                                <div class="req-field-row">
-                                    <div class="req-field-label">VILLAGE</div>
-                                    <div class="req-field-value text-uppercase"><?= e($fields['village'] ?? '-') ?></div>
-                                </div>
-                                <div class="req-field-row">
-                                    <div class="req-field-label">PINCODE</div>
-                                    <div class="req-field-value font-monospace"><?= e($fields['pincode'] ?? '-') ?></div>
-                                </div>
                             </div>
-
-                            <!-- Right Column -->
-                            <div class="col-12 col-md-6">
-                                <div class="req-field-row">
+                            <div class="col-12 col-md-4">
+                                <div class="req-grid-box">
                                     <div class="req-field-label">GENDER</div>
                                     <div class="req-field-value"><?= e($fields['gender'] ?? '-') ?></div>
                                 </div>
-                                <div class="req-field-row">
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <div class="req-grid-box">
+                                    <div class="req-field-label">DATE OF BIRTH</div>
+                                    <div class="req-field-value font-monospace"><?= e($fields['dob'] ?? '-') ?></div>
+                                </div>
+                            </div>
+
+                            <div class="col-12 col-md-4">
+                                <div class="req-grid-box">
                                     <div class="req-field-label">SELECT STATE</div>
                                     <div class="req-field-value"><?= e($fields['state'] ?? 'Bihar') ?></div>
                                 </div>
-                                <div class="req-field-row">
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <div class="req-grid-box">
+                                    <div class="req-field-label">AADHAR NO</div>
+                                    <div class="req-field-value text-primary font-monospace"><?= e($req['applicant_identifier'] ?: ($fields['aadhaar_no'] ?? '-')) ?></div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <div class="req-grid-box">
+                                    <div class="req-field-label">मोबाईल नंबर</div>
+                                    <div class="req-field-value font-monospace"><?= e($req['applicant_mobile'] ?: ($fields['mobile_no'] ?? '-')) ?></div>
+                                </div>
+                            </div>
+
+                            <div class="col-12 col-md-4">
+                                <div class="req-grid-box">
+                                    <div class="req-field-label">EMAIL ID</div>
+                                    <div class="req-field-value text-lowercase"><?= e($fields['email_id'] ?? '-') ?></div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <div class="req-grid-box">
+                                    <div class="req-field-label">FATHER NAME</div>
+                                    <div class="req-field-value text-uppercase"><?= e($fields['father_name'] ?? '-') ?></div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <div class="req-grid-box">
                                     <div class="req-field-label">MOTHER NAME</div>
                                     <div class="req-field-value text-uppercase"><?= e($fields['mother_name'] ?? '-') ?></div>
                                 </div>
-                                <div class="req-field-row">
+                            </div>
+
+                            <div class="col-12 col-md-4">
+                                <div class="req-grid-box">
                                     <div class="req-field-label">HUSBAND NAME</div>
                                     <div class="req-field-value text-uppercase"><?= e(!empty($fields['husband_name']) ? $fields['husband_name'] : '-') ?></div>
                                 </div>
-                                <div class="req-field-row">
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <div class="req-grid-box">
+                                    <div class="req-field-label">VILLAGE</div>
+                                    <div class="req-field-value text-uppercase"><?= e($fields['village'] ?? '-') ?></div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <div class="req-grid-box">
                                     <div class="req-field-label">POST OFFICE</div>
                                     <div class="req-field-value text-uppercase"><?= e($fields['post_office'] ?? '-') ?></div>
                                 </div>
-                                <div class="req-field-row">
+                            </div>
+
+                            <div class="col-12 col-md-4">
+                                <div class="req-grid-box">
                                     <div class="req-field-label">BLOCK NAME</div>
                                     <div class="req-field-value text-uppercase"><?= e($fields['block_name'] ?? '-') ?></div>
                                 </div>
-                                <div class="req-field-row">
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <div class="req-grid-box">
                                     <div class="req-field-label">DISTRIC NAME</div>
                                     <div class="req-field-value text-uppercase"><?= e($fields['district_name'] ?? '-') ?></div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-md-4">
+                                <div class="req-grid-box">
+                                    <div class="req-field-label">PINCODE</div>
+                                    <div class="req-field-value font-monospace"><?= e($fields['pincode'] ?? '-') ?></div>
                                 </div>
                             </div>
                         </div>
@@ -848,7 +950,12 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                                 <!-- Photo Preview -->
                                 <div class="col-6 col-sm-3">
                                     <div class="req-thumb-box">
-                                        <div class="req-field-label text-center mb-1">PHOTO</div>
+                                        <div class="d-flex align-items-center justify-content-between mb-1">
+                                            <span class="req-field-label mb-0">PHOTO</span>
+                                            <?php if ($photoUrl): ?>
+                                                <a href="<?= e($photoUrl) ?>" target="_blank" class="badge bg-light text-secondary border" style="font-size: 0.60rem;">IMAGE <i class="bi bi-box-arrow-up-right"></i></a>
+                                            <?php endif; ?>
+                                        </div>
                                         <?php if ($photoUrl): ?>
                                             <img src="<?= e($photoUrl) ?>" class="req-thumb-img" alt="Photo" onclick="openImageModal('<?= e($photoUrl) ?>', 'Photo Preview')">
                                             <div class="d-flex gap-1 mt-1">
@@ -868,7 +975,12 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                                 <!-- Signature Preview -->
                                 <div class="col-6 col-sm-3">
                                     <div class="req-thumb-box">
-                                        <div class="req-field-label text-center mb-1">SIGNATURE</div>
+                                        <div class="d-flex align-items-center justify-content-between mb-1">
+                                            <span class="req-field-label mb-0">SIGNATURE</span>
+                                            <?php if ($sigUrl): ?>
+                                                <a href="<?= e($sigUrl) ?>" target="_blank" class="badge bg-light text-secondary border" style="font-size: 0.60rem;">IMAGE <i class="bi bi-box-arrow-up-right"></i></a>
+                                            <?php endif; ?>
+                                        </div>
                                         <?php if ($sigUrl): ?>
                                             <!-- Dynamic Fresh Signature Canvas (shown when sliders moved/rendered) -->
                                             <canvas id="card_sign_canvas_<?= (int)$req['id'] ?>" class="req-thumb-img d-none" style="background:#fff; width:100%; height:84px; object-fit:contain; cursor:pointer;" onclick="viewCardSignPreview(<?= (int)$req['id'] ?>)"></canvas>
@@ -925,7 +1037,12 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                                 <div class="col-6 col-sm-3">
                                     <div class="req-thumb-box h-100 d-flex flex-column justify-content-between">
                                         <div>
-                                            <div class="req-field-label text-center mb-1">AADHAR CARD</div>
+                                            <div class="d-flex align-items-center justify-content-between mb-1">
+                                                <span class="req-field-label mb-0">AADHAR CARD</span>
+                                                <?php if ($aadharUrl): ?>
+                                                    <a href="<?= e($aadharUrl) ?>" target="_blank" class="badge bg-light text-secondary border" style="font-size: 0.60rem;">DOC <i class="bi bi-box-arrow-up-right"></i></a>
+                                                <?php endif; ?>
+                                            </div>
                                             <div class="py-2 text-danger">
                                                 <i class="bi bi-file-earmark-pdf-fill fs-1"></i>
                                             </div>
@@ -944,7 +1061,12 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                                 <div class="col-6 col-sm-3">
                                     <div class="req-thumb-box h-100 d-flex flex-column justify-content-between">
                                         <div>
-                                            <div class="req-field-label text-center mb-1">PAN FORM</div>
+                                            <div class="d-flex align-items-center justify-content-between mb-1">
+                                                <span class="req-field-label mb-0">PAN FORM</span>
+                                                <?php if ($panFormUrl): ?>
+                                                    <a href="<?= e($panFormUrl) ?>" target="_blank" class="badge bg-light text-secondary border" style="font-size: 0.60rem;">DOC <i class="bi bi-box-arrow-up-right"></i></a>
+                                                <?php endif; ?>
+                                            </div>
                                             <div class="py-2 text-primary">
                                                 <i class="bi bi-file-earmark-text-fill fs-1"></i>
                                             </div>
@@ -997,84 +1119,6 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                                 </div>
                             </div>
                         <?php endif; ?>
-
-                        <!-- ADMIN PROCESS, REMARK & RECEIVING UPLOAD ACTION PANEL -->
-                        <?php if ($isStaffOrAdmin): ?>
-                            <div id="admin_panel_<?= (int)$req['id'] ?>" class="pan-admin-action-panel mt-3 p-3 bg-light rounded-3 border">
-                                <div class="d-flex align-items-center justify-content-between mb-2 border-bottom pb-2">
-                                    <div class="d-flex align-items-center gap-2">
-                                        <span class="badge bg-primary px-2 py-1"><i class="bi bi-shield-check me-1"></i> ADMIN / OPERATOR ACTION</span>
-                                        <span class="small text-muted fw-bold">Update Status, Add Official Remark & Upload Receiving Slip</span>
-                                    </div>
-                                    <span class="small text-muted font-monospace">#<?= e($req['app_ref']) ?></span>
-                                </div>
-                                <form method="POST" action="/applications/update-status" enctype="multipart/form-data">
-                                    <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
-                                    <input type="hidden" name="application_id" value="<?= (int)$req['id'] ?>">
-                                    <input type="hidden" name="redirect_to" value="/services/pan-card">
-
-                                    <div class="row g-2 align-items-end">
-                                        <!-- Status Selector -->
-                                        <div class="col-12 col-md-3">
-                                            <label class="form-label small fw-bold text-dark mb-1">
-                                                <i class="bi bi-toggles text-primary me-1"></i> Change Status <span class="text-danger">*</span>
-                                            </label>
-                                            <select name="status" class="form-select form-select-sm fw-bold" onchange="toggleRejectionBox(<?= (int)$req['id'] ?>, this.value)">
-                                                <option value="PENDING" <?= $st === 'PENDING' ? 'selected' : '' ?>>⏳ PENDING (प्रतीक्षारत)</option>
-                                                <option value="IN_PROCESS" <?= ($st === 'IN_PROCESS' || $st === 'UNDER_REVIEW') ? 'selected' : '' ?>>⚙️ IN PROCESS (प्रक्रियाधीन)</option>
-                                                <option value="COMPLETED" <?= ($st === 'COMPLETED' || $st === 'APPROVED') ? 'selected' : '' ?>>✅ COMPLETED (स्वीकृत / तैयार)</option>
-                                                <option value="REJECTED" <?= $st === 'REJECTED' ? 'selected' : '' ?>>❌ REJECTED (अस्वीकृत)</option>
-                                            </select>
-                                        </div>
-
-                                        <!-- Official Remark -->
-                                        <div class="col-12 col-md-4">
-                                            <label class="form-label small fw-bold text-dark mb-1">
-                                                <i class="bi bi-chat-left-text text-primary me-1"></i> Admin Remark / Ack Slip No.
-                                            </label>
-                                            <input type="text" name="admin_remarks" class="form-control form-control-sm" 
-                                                   placeholder="E.g. Ack: 1002938472 / Dispatched" 
-                                                   value="<?= e($req['admin_remarks'] ?: ($req['remarks'] ?? '')) ?>">
-                                        </div>
-
-                                        <!-- Upload Receiving Slip File -->
-                                        <div class="col-12 col-md-3">
-                                            <label class="form-label small fw-bold text-dark mb-1">
-                                                <i class="bi bi-cloud-arrow-up-fill text-success me-1"></i> Upload Receiving (PDF/JPG)
-                                            </label>
-                                            <input type="file" name="result_file" class="form-control form-control-sm" accept=".pdf,.jpg,.jpeg,.png">
-                                        </div>
-
-                                        <!-- Save Button -->
-                                        <div class="col-12 col-md-2">
-                                            <button type="submit" class="btn btn-sm btn-primary w-100 py-1.5 fw-bold shadow-2xs">
-                                                <i class="bi bi-check-circle-fill me-1"></i> Save
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    <!-- Rejection Reason (Mandatory if Rejected) -->
-                                    <div id="rej_reason_box_<?= (int)$req['id'] ?>" class="mt-2 <?= $st === 'REJECTED' ? '' : 'd-none' ?>">
-                                        <label class="form-label small fw-bold text-danger mb-1">
-                                            <i class="bi bi-exclamation-triangle-fill me-1"></i> Rejection Reason (अस्वीकृति का कारण) <span class="text-danger">*</span>
-                                        </label>
-                                        <input type="text" name="rejection_reason" class="form-control form-control-sm border-danger" 
-                                               placeholder="Enter mandatory reason for rejection..." 
-                                               value="<?= e($req['rejection_reason'] ?? '') ?>">
-                                    </div>
-
-                                    <?php if (!empty($resultFile)): ?>
-                                        <div class="mt-2 pt-2 border-top d-flex align-items-center justify-content-between flex-wrap gap-2 small">
-                                            <span class="text-success fw-bold">
-                                                <i class="bi bi-file-earmark-check-fill me-1"></i> Current Receiving Slip: 
-                                                <a href="<?= e($resultFile) ?>" target="_blank" class="text-decoration-underline text-success"><?= e(basename($resultFile)) ?></a>
-                                            </span>
-                                            <span class="text-muted" style="font-size: 0.72rem;">(Upload a new file above to replace the existing receiving)</span>
-                                        </div>
-                                    <?php endif; ?>
-                                </form>
-                            </div>
-                        <?php endif; ?>
                     </div>
                 </div>
             <?php endforeach; ?>
@@ -1084,8 +1128,128 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
 </div>
 
 <!-- ========================================================
-     MODALS: Image Viewer & Camera Photo Capture
+     MODALS: Process Request (Image 2), Image Viewer & Camera
      ======================================================== -->
+
+<!-- Process Request Modal (matching Image 2) -->
+<div class="modal fade" id="processStatusModal" tabindex="-1" aria-labelledby="processStatusModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content border-0 shadow-lg rounded-3 overflow-hidden" id="processModalContent" style="border: 2px solid #f59e0b; border-top: 6px solid #f59e0b; transition: all 0.25s ease;">
+            <!-- Modal Header -->
+            <div class="modal-header py-2.5 px-3 bg-white border-bottom d-flex align-items-center justify-content-between">
+                <h6 class="modal-title fw-bold text-dark d-flex align-items-center gap-2 mb-0" id="processStatusModalTitle">
+                    <i class="bi bi-gear-fill text-warning"></i>
+                    <span>Process Request <span id="modalProcTitleRef" class="badge bg-dark font-monospace">#...</span> <span class="text-muted fw-normal" style="font-size:0.85rem;">(New Pan Card Apply)</span></span>
+                </h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+
+            <form id="modalProcessForm" action="/applications/update-status" method="POST" enctype="multipart/form-data">
+                <input type="hidden" name="csrf_token" value="<?= e($csrfToken) ?>">
+                <input type="hidden" name="application_id" id="modalProcAppId" value="">
+                <input type="hidden" name="redirect_to" value="/services/pan-card">
+                <input type="hidden" name="result_file_base64" id="modalResultFileBase64" value="">
+
+                <div class="modal-body p-3 p-md-4">
+                    <!-- Status Selection (state) -->
+                    <div class="mb-3">
+                        <label class="form-label fw-bold text-dark small mb-1">
+                            <i class="bi bi-tag-fill text-primary me-1"></i> New Status
+                        </label>
+                        <select name="status" id="modalProcStatus" class="form-select fw-semibold" onchange="onModalStatusChange(this.value)">
+                            <option value="COMPLETED">COMPLETED (Completed / Approved)</option>
+                            <option value="IN_PROCESS">IN_PROCESS (In Process / Working)</option>
+                            <option value="PENDING">PENDING (Pending / In Queue)</option>
+                            <option value="REJECTED">REJECTED (Rejected / Error)</option>
+                        </select>
+                    </div>
+
+                    <!-- Operator Remarks -->
+                    <div class="mb-3">
+                        <label class="form-label fw-bold text-dark small mb-1">
+                            <i class="bi bi-chat-left-text-fill text-primary me-1"></i> Operator Remarks
+                        </label>
+                        <div class="input-group">
+                            <span class="input-group-text bg-light text-muted"><i class="bi bi-pencil-square"></i></span>
+                            <input type="text" name="admin_remarks" id="modalProcRemarks" class="form-control" placeholder="e.g. Ack slip generated, Pan card in process...">
+                        </div>
+                        <div class="form-text" style="font-size: 0.72rem;">Visible to retailer on their dashboard & request cards.</div>
+                    </div>
+
+                    <!-- Output Document Upload & Paste Zone -->
+                    <div class="mb-3">
+                        <div class="d-flex align-items-center justify-content-between mb-1.5 flex-wrap gap-1">
+                            <label class="form-label fw-bold text-dark small mb-0">
+                                <i class="bi bi-file-earmark-check-fill text-success me-1"></i> Generated Output File / Certificate Slip *
+                            </label>
+                            <span class="badge text-white px-2 py-1 rounded-pill" style="background: #7c3aed; font-size: 0.70rem; letter-spacing: 0.3px;">
+                                <i class="bi bi-clipboard2-check me-1"></i> Supports Ctrl + V Paste
+                            </span>
+                        </div>
+
+                        <!-- Dropzone / Paste container -->
+                        <div class="p-3 rounded-3 text-center border-2 border-dashed position-relative" id="modalPasteDropZone" style="border: 2px dashed #a855f7; background: #faf5ff; transition: all 0.2s ease;">
+                            <div class="d-flex align-items-center justify-content-center gap-2 flex-wrap mb-2">
+                                <button type="button" class="btn btn-sm text-white fw-bold px-3 py-1.5 rounded-2 shadow-2xs" style="background: #7c3aed; border-color: #7c3aed;" onclick="triggerModalFileInput()">
+                                    <i class="bi bi-laptop me-1"></i> Select File from Computer / Device
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary fw-semibold px-3 py-1.5 rounded-2 bg-white shadow-2xs" onclick="triggerClipboardRead()">
+                                    <i class="bi bi-clipboard-plus me-1"></i> Paste Ctrl + V
+                                </button>
+                            </div>
+
+                            <input type="file" id="modalResultFileInput" name="result_file" class="d-none" accept=".pdf,.png,.jpg,.jpeg,.webp" onchange="onModalFileSelected(this)">
+
+                            <div class="text-muted small mb-2" style="font-size: 0.76rem;">
+                                💡 <strong>Image Paste Active:</strong> Copy any screenshot/image and press <kbd class="bg-dark text-white px-1.5 py-0.5 rounded font-monospace" style="font-size: 0.70rem;">Ctrl + V</kbd> anywhere, or drag file here!
+                            </div>
+
+                            <div class="d-flex align-items-center my-2 text-muted" style="font-size: 0.70rem;">
+                                <hr class="flex-grow-1 my-0 border-secondary-subtle">
+                                <span class="px-2 fw-semibold text-secondary">-- OR ENTER DIRECT LINK --</span>
+                                <hr class="flex-grow-1 my-0 border-secondary-subtle">
+                            </div>
+
+                            <div class="input-group input-group-sm mb-1">
+                                <span class="input-group-text bg-white text-muted"><i class="bi bi-link-45deg fs-6"></i></span>
+                                <input type="text" name="result_file_url" id="modalResultFileUrl" class="form-control form-control-sm" placeholder="e.g. /uploads/image-1792...png or https://..." oninput="onModalUrlTyped(this.value)">
+                            </div>
+
+                            <!-- Attached File Display Pill -->
+                            <div id="modalAttachedDisplay" class="d-none mt-2 p-2 rounded-2 bg-white border border-success d-flex align-items-center justify-content-between gap-2 shadow-2xs text-start">
+                                <div class="d-flex align-items-center gap-2 text-truncate">
+                                    <span class="badge bg-success text-white px-2 py-1"><i class="bi bi-check-lg me-1"></i> Attached</span>
+                                    <span id="modalAttachedFilename" class="small fw-bold text-dark text-truncate">slip.png</span>
+                                    <span id="modalAttachedFilesize" class="badge bg-light text-muted border font-monospace">150 KB</span>
+                                </div>
+                                <button type="button" class="btn btn-sm btn-outline-danger py-0.5 px-2" style="font-size: 0.72rem;" onclick="clearModalAttachedFile()">
+                                    <i class="bi bi-trash3 me-1"></i> Remove
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Rejection Reason (Mandatory when Rejected) -->
+                    <div class="mb-3 d-none" id="modalRejectionBox">
+                        <label class="form-label fw-bold text-danger small mb-1">
+                            <i class="bi bi-exclamation-triangle-fill me-1"></i> Rejection Reason *
+                        </label>
+                        <input type="text" name="rejection_reason" id="modalProcRejectionReason" class="form-control border-danger" placeholder="Please state clear reason for rejection so retailer can correct it...">
+                        <div class="form-text text-danger" style="font-size: 0.72rem;">Mandatory when status is marked as REJECTED. Retailer will see this message.</div>
+                    </div>
+                </div>
+
+                <!-- Modal Footer -->
+                <div class="modal-footer bg-light py-2 px-3 d-flex align-items-center justify-content-between">
+                    <button type="button" class="btn btn-sm btn-secondary px-3" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" id="modalProcSubmitBtn" class="btn btn-sm btn-primary fw-bold px-4 py-1.5 shadow-sm" style="background:#2563eb; border-color:#2563eb;">
+                        <i class="bi bi-check-circle-fill me-1"></i> Update & Notify Retailer
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 
 <!-- Lightbox Modal for Image Inspection -->
 <div class="modal fade" id="imageViewerModal" tabindex="-1" aria-hidden="true">
@@ -1539,12 +1703,268 @@ function toggleRejectionBox(appId, status) {
     }
 }
 
-// Form Submission Spinner
-document.getElementById('panCardForm')?.addEventListener('submit', function(e) {
-    const btn = document.getElementById('submitPanBtn');
+// ========================================================
+// Process / Status Modal & Ctrl + V Paste Handlers (Image 2)
+// ========================================================
+
+function openProcessStatusModal(appId) {
+    const card = document.getElementById('row-app-' + appId);
+    if (!card) {
+        console.error('Card not found for app ID:', appId);
+        return;
+    }
+
+    let appData = {};
+    try {
+        const rawJson = card.getAttribute('data-app');
+        if (rawJson) {
+            appData = JSON.parse(rawJson);
+        }
+    } catch (e) {
+        console.warn('Failed to parse data-app JSON:', e);
+    }
+
+    document.getElementById('modalProcAppId').value = appId;
+    document.getElementById('modalProcTitleRef').textContent = '#' + (appData.app_ref || card.getAttribute('data-ref') || appId);
+
+    const st = (appData.status || 'PENDING').toUpperCase();
+    const statusSelect = document.getElementById('modalProcStatus');
+    if (statusSelect) {
+        statusSelect.value = st;
+        onModalStatusChange(st);
+    }
+
+    document.getElementById('modalProcRemarks').value = appData.admin_remarks || appData.remarks || '';
+    document.getElementById('modalProcRejectionReason').value = appData.rejection_reason || '';
+
+    // Handle initial result file if already attached
+    clearModalAttachedFile();
+    if (appData.result_file) {
+        document.getElementById('modalResultFileUrl').value = appData.result_file;
+        showModalAttachedPill(appData.result_file, 'Existing Output File', 'url');
+    }
+
+    const modalEl = document.getElementById('processStatusModal');
+    if (modalEl) {
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        modal.show();
+    }
+}
+
+function onModalStatusChange(statusVal) {
+    statusVal = (statusVal || '').toUpperCase();
+    const rejBox = document.getElementById('modalRejectionBox');
+    if (rejBox) {
+        if (statusVal === 'REJECTED') {
+            rejBox.classList.remove('d-none');
+            setTimeout(() => {
+                document.getElementById('modalProcRejectionReason')?.focus();
+            }, 100);
+        } else {
+            rejBox.classList.add('d-none');
+        }
+    }
+
+    // Dynamic border color based on state (state ke hisab se form ka border color)
+    const modalContent = document.getElementById('processModalContent');
+    if (modalContent) {
+        let borderColor = '#f59e0b'; // Amber for PENDING
+        if (statusVal === 'COMPLETED' || statusVal === 'APPROVED') {
+            borderColor = '#22c55e'; // Green for COMPLETED
+        } else if (statusVal === 'IN_PROCESS' || statusVal === 'UNDER_REVIEW') {
+            borderColor = '#3b82f6'; // Blue for IN_PROCESS
+        } else if (statusVal === 'REJECTED') {
+            borderColor = '#ef4444'; // Red for REJECTED
+        }
+        modalContent.style.border = '2px solid ' + borderColor;
+        modalContent.style.borderTop = '6px solid ' + borderColor;
+    }
+}
+
+function triggerModalFileInput() {
+    document.getElementById('modalResultFileInput')?.click();
+}
+
+function onModalFileSelected(input) {
+    if (!input.files || input.files.length === 0) return;
+    const file = input.files[0];
+
+    if (file.size > 10 * 1024 * 1024) {
+        alert('Result file size exceeds 10MB limit. Please choose a smaller file.');
+        input.value = '';
+        return;
+    }
+
+    // Reset base64 and url input
+    document.getElementById('modalResultFileBase64').value = '';
+    document.getElementById('modalResultFileUrl').value = '';
+
+    showModalAttachedPill(file.name, (file.size / 1024).toFixed(1) + ' KB', 'file');
+}
+
+function onModalUrlTyped(url) {
+    const trimmed = (url || '').trim();
+    if (trimmed.length > 0) {
+        const fileInput = document.getElementById('modalResultFileInput');
+        if (fileInput) fileInput.value = '';
+        document.getElementById('modalResultFileBase64').value = '';
+        showModalAttachedPill(trimmed, 'Direct URL / File', 'url');
+    } else {
+        clearModalAttachedFile();
+    }
+}
+
+function clearModalAttachedFile() {
+    const fileInput = document.getElementById('modalResultFileInput');
+    if (fileInput) fileInput.value = '';
+    const b64Input = document.getElementById('modalResultFileBase64');
+    if (b64Input) b64Input.value = '';
+    const urlInput = document.getElementById('modalResultFileUrl');
+    if (urlInput) urlInput.value = '';
+
+    const pill = document.getElementById('modalAttachedDisplay');
+    if (pill) pill.classList.add('d-none');
+}
+
+function showModalAttachedPill(name, sizeStr, type) {
+    const pill = document.getElementById('modalAttachedDisplay');
+    const nameEl = document.getElementById('modalAttachedFilename');
+    const sizeEl = document.getElementById('modalAttachedFilesize');
+    if (nameEl) nameEl.textContent = name;
+    if (sizeEl) sizeEl.textContent = sizeStr;
+    if (pill) pill.classList.remove('d-none');
+}
+
+function applyPastedResultImage(dataUrl, fileSize, defaultName) {
+    document.getElementById('modalResultFileBase64').value = dataUrl;
+    const fileInput = document.getElementById('modalResultFileInput');
+    if (fileInput) fileInput.value = '';
+    document.getElementById('modalResultFileUrl').value = '';
+
+    const safeName = defaultName || ('Pasted_Screenshot_' + Date.now() + '.png');
+    showModalAttachedPill(safeName, (fileSize / 1024).toFixed(1) + ' KB', 'paste');
+
+    const zone = document.getElementById('modalPasteDropZone');
+    if (zone) {
+        zone.style.borderColor = '#22c55e';
+        zone.style.backgroundColor = '#ecfdf5';
+        setTimeout(() => {
+            zone.style.borderColor = '#a855f7';
+            zone.style.backgroundColor = '#faf5ff';
+        }, 1200);
+    }
+
+    if (window.showToast) {
+        window.showToast('✓ Screenshot pasted successfully from clipboard!', 'success');
+    }
+}
+
+async function triggerClipboardRead() {
+    try {
+        if (!navigator.clipboard || !navigator.clipboard.read) {
+            alert('Please press Ctrl + V on your keyboard anywhere to paste the screenshot directly!');
+            return;
+        }
+        const clipboardItems = await navigator.clipboard.read();
+        let found = false;
+        for (const item of clipboardItems) {
+            for (const type of item.types) {
+                if (type.startsWith('image/')) {
+                    const blob = await item.getType(type);
+                    const reader = new FileReader();
+                    reader.onload = function(evt) {
+                        applyPastedResultImage(evt.target.result, blob.size, 'Pasted_Screenshot_' + Date.now() + '.png');
+                    };
+                    reader.readAsDataURL(blob);
+                    found = true;
+                    break;
+                }
+            }
+            if (found) break;
+        }
+        if (!found) {
+            alert('No image found on clipboard. Please copy an image or take a screenshot first, then press Ctrl + V or click Paste!');
+        }
+    } catch (err) {
+        console.warn('Clipboard read failed, asking user to use Ctrl+V:', err);
+        alert('Clipboard permission denied or not supported. Please simply press Ctrl + V on your keyboard to paste the copied screenshot!');
+    }
+}
+
+// Global Ctrl + V event listener for pasting screenshots into modal
+document.addEventListener('paste', function(e) {
+    const modalEl = document.getElementById('processStatusModal');
+    if (!modalEl || !modalEl.classList.contains('show')) return;
+
+    const items = (e.clipboardData || window.clipboardData)?.items;
+    if (!items) return;
+
+    for (let i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf('image') !== -1) {
+            e.preventDefault();
+            const blob = items[i].getAsFile();
+            if (!blob) continue;
+
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                applyPastedResultImage(evt.target.result, blob.size, 'Pasted_Screenshot_' + Date.now() + '.png');
+            };
+            reader.readAsDataURL(blob);
+            return;
+        }
+    }
+});
+
+// Drag & drop support on modal paste dropzone
+(function initModalDragAndDrop() {
+    const zone = document.getElementById('modalPasteDropZone');
+    if (!zone) return;
+
+    ['dragenter', 'dragover'].forEach(evt => {
+        zone.addEventListener(evt, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            zone.style.borderColor = '#22c55e';
+            zone.style.backgroundColor = '#ecfdf5';
+        }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(evt => {
+        zone.addEventListener(evt, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            zone.style.borderColor = '#a855f7';
+            zone.style.backgroundColor = '#faf5ff';
+        }, false);
+    });
+
+    zone.addEventListener('drop', (e) => {
+        const dt = e.dataTransfer;
+        const files = dt?.files;
+        if (files && files.length > 0) {
+            const fileInput = document.getElementById('modalResultFileInput');
+            if (fileInput) {
+                fileInput.files = files;
+                onModalFileSelected(fileInput);
+            }
+        }
+    }, false);
+})();
+
+// Process Form Submit validation
+document.getElementById('modalProcessForm')?.addEventListener('submit', function(e) {
+    const statusVal = document.getElementById('modalProcStatus')?.value;
+    const rejReason = document.getElementById('modalProcRejectionReason')?.value?.trim();
+    if (statusVal === 'REJECTED' && !rejReason) {
+        e.preventDefault();
+        alert('Please enter a rejection reason so the retailer understands why the request was rejected.');
+        document.getElementById('modalProcRejectionReason')?.focus();
+        return false;
+    }
+    const btn = document.getElementById('modalProcSubmitBtn');
     if (btn) {
         btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Processing & Debiting ₹107.00...';
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span> Updating & Notifying...';
     }
 });
 </script>

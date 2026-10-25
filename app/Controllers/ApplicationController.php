@@ -763,6 +763,33 @@ class ApplicationController
             }
         }
 
+        // Handle Base64 pasted screenshot (Ctrl + V) if provided
+        if (empty($resultFilePath) && !empty($_POST['result_file_base64'])) {
+            $base64 = trim($_POST['result_file_base64']);
+            if (preg_match('/^data:image\/(png|jpeg|jpg);base64,(.+)$/', $base64, $matches)) {
+                $ext = $matches[1] === 'jpeg' ? 'jpg' : $matches[1];
+                $data = base64_decode($matches[2]);
+                if ($data !== false && strlen($data) <= 10 * 1024 * 1024) {
+                    $resDir = dirname(dirname(__DIR__)) . '/public/uploads/results';
+                    if (!is_dir($resDir)) {
+                        mkdir($resDir, 0755, true);
+                    }
+                    $safeFileName = 'res_paste_' . date('Ymd_His') . '_' . bin2hex(random_bytes(8)) . '.' . $ext;
+                    if (file_put_contents($resDir . '/' . $safeFileName, $data)) {
+                        $resultFilePath = '/uploads/results/' . $safeFileName;
+                    }
+                }
+            }
+        }
+
+        // Handle Direct URL input if provided
+        if (empty($resultFilePath) && !empty($_POST['result_file_url'])) {
+            $directUrl = trim((string)$_POST['result_file_url']);
+            if (str_starts_with($directUrl, '/uploads/') || filter_var($directUrl, FILTER_VALIDATE_URL)) {
+                $resultFilePath = $directUrl;
+            }
+        }
+
         $effectiveRole = $isAdmin ? 'ADMIN' : (($isStaff) ? 'OPERATOR' : $user['role']);
         try {
             $result = ApplicationService::updateStatus(
