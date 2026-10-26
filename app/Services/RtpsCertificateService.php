@@ -13,6 +13,7 @@ class RtpsCertificateService
 {
     public const PORTAL_URL = 'https://swcs.bihar.gov.in/RtpsReportView/certificate_download.jsp';
     public const PORTAL_DOWNLOAD_ACTION = 'https://swcs.bihar.gov.in/RtpsReportView/certificateDownload.do';
+    public const SERVICEONLINE_BASE_URL = 'https://serviceonline.bihar.gov.in';
 
     /**
      * Resolve the service type for the RTPS Portal form ('RTPS' or 'OTHER')
@@ -212,13 +213,375 @@ class RtpsCertificateService
     }
 
     /**
+     * Ensure Windows native OCR script exists in temp directory
+     */
+    private static function ensureOcrScript(): string
+    {
+        $psPath = sys_get_temp_dir() . '/wb_ocr.ps1';
+        if (!file_exists($psPath) || filesize($psPath) < 50) {
+            $code = <<<'POWERSHELL'
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+$asTaskGeneric = [System.WindowsRuntimeSystemExtensions].GetMethods() | ? { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' }
+function Await($WinRtTask, $ResultType) {
+    $asTask = $asTaskGeneric.MakeGenericMethod($ResultType)
+    $netTask = $asTask.Invoke($null, @($WinRtTask))
+    $netTask.Wait(-1) | Out-Null
+    $netTask.Result
+}
+[Windows.Storage.StorageFile, Windows.Storage, ContentType = WindowsRuntime] | Out-Null
+[Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType = WindowsRuntime] | Out-Null
+[Windows.Graphics.Imaging.BitmapDecoder, Windows.Foundation, ContentType = WindowsRuntime] | Out-Null
+$imagePath = [System.IO.Path]::GetFullPath($args[0])
+$file = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($imagePath)) ([Windows.Storage.StorageFile])
+$stream = Await ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+$decoder = Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+$bitmap = Await ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+$engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+if ($null -eq $engine) { exit 1 }
+$ocrResult = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
+Write-Output $ocrResult.Text
+POWERSHELL;
+            @file_put_contents($psPath, $code);
+        }
+        return $psPath;
+    }
+
+    /**
+     * Solve ServicePlus 6-digit captcha using color-filtering and Windows native OCR
+     */
+    public static function solveServiceOnlineCaptcha(string $rawImgBytes): ?string
+    {
+        $rawPath = sys_get_temp_dir() . '/so_cap_' . uniqid() . '.jpg';
+        file_put_contents($rawPath, $rawImgBytes);
+
+        $img = @imagecreatefromjpeg($rawPath);
+        if (!$img) {
+            @unlink($rawPath);
+            return null;
+        }
+
+        $w = imagesx($img);
+        $h = imagesy($img);
+        $out = imagecreatetruecolor($w, $h);
+        $white = imagecolorallocate($out, 255, 255, 255);
+        $black = imagecolorallocate($out, 0, 0, 0);
+        imagefill($out, 0, 0, $white);
+
+        for ($y = 0; $y < $h; $y++) {
+            for ($x = 0; $x < $w; $x++) {
+                $rgb = imagecolorat($img, $x, $y);
+                $r = ($rgb >> 16) & 0xFF;
+                $g = ($rgb >> 8) & 0xFF;
+                $b = $rgb & 0xFF;
+                if ($g > 100 && $g > ($r + 30) && $g > ($b + 30)) {
+                    imagesetpixel($out, $x, $y, $black);
+                }
+            }
+        }
+
+        $cleanPath = sys_get_temp_dir() . '/so_clean_' . uniqid() . '.png';
+        imagepng($out, $cleanPath);
+        imagedestroy($img);
+        imagedestroy($out);
+        @unlink($rawPath);
+
+        $psScript = self::ensureOcrScript();
+        $cmd = 'powershell -ExecutionPolicy Bypass -File ' . escapeshellarg($psScript) . ' ' . escapeshellarg($cleanPath);
+        $res = shell_exec($cmd);
+        @unlink($cleanPath);
+
+        $digits = preg_replace('/[^0-9]/', '', trim((string)$res));
+        return (strlen($digits) === 6) ? $digits : null;
+    }
+
+    /**
+     * Real-time live check and certificate download from serviceonline.bihar.gov.in tracking flow.
+     * Overcomes the 24-hour delay on swcs.bihar.gov.in by downloading certificates the same day they are approved.
+     */
+    public static function fetchLiveCertificateFromServiceOnline(
+        string $applicationNumber,
+        string $applicantName,
+        array $candidateDates = [],
+        string $fatherName = '',
+        string $motherName = ''
+    ): array {
+        $appNum = trim($applicationNumber);
+        $cleanName = trim(preg_replace('/\s+/', ' ', $applicantName));
+        if (empty($appNum) || empty($cleanName)) {
+            return ['success' => false, 'message' => 'Missing Application Number or Applicant Name.'];
+        }
+
+        $cleanNameNormalized = trim(preg_replace('/^(Mr\.?|Mrs\.?|Ms\.?|Shri\.?|Smt\.?)\s+/i', '', $cleanName));
+
+        $dates = [];
+        foreach ($candidateDates as $d) {
+            $ts = is_numeric($d) ? (int)$d : strtotime(str_replace('/', '-', (string)$d));
+            if ($ts && $ts > 0) {
+                $dates[] = date('d/m/Y', $ts);
+            }
+        }
+        $dates[] = date('d/m/Y');
+        $dates[] = date('d/m/Y', strtotime('-1 day'));
+        $dates = array_unique(array_filter($dates));
+
+        $cookieJar = tempnam(sys_get_temp_dir(), 'so_ck_');
+
+        $curlFn = function (string $url, $post = null, ?string $referer = null) use ($cookieJar): array {
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_COOKIEJAR, $cookieJar);
+            curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieJar);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 25);
+            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+            if ($referer) {
+                curl_setopt($ch, CURLOPT_REFERER, $referer);
+            }
+            if ($post !== null) {
+                curl_setopt($ch, CURLOPT_POST, true);
+                curl_setopt($ch, CURLOPT_POSTFIELDS, is_array($post) ? http_build_query($post) : $post);
+            }
+            $res = curl_exec($ch);
+            $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            return [$code, $res ?: ''];
+        };
+
+        try {
+            $curlFn(self::SERVICEONLINE_BASE_URL . '/');
+
+            list($caCode, $caHtml) = $curlFn(
+                self::SERVICEONLINE_BASE_URL . '/officials/citizenApplication.html',
+                ['' => ''],
+                self::SERVICEONLINE_BASE_URL . '/'
+            );
+
+            if ($caCode !== 200 || empty($caHtml)) {
+                return ['success' => false, 'message' => "Live portal citizenApplication.html unreachable (HTTP $caCode)"];
+            }
+
+            preg_match('/name="OWASP_CSRFTOKEN"\s+value="([^"]+)"/i', $caHtml, $csrfM);
+            $csrfToken = $csrfM[1] ?? '';
+
+            $trackOptions = [2, 1]; // 2 = Delivery Date, 1 = Submission Date
+            $step1Success = false;
+            $s1Html = '';
+            $matchedDate = '';
+            $matchedTrackUsing = 2;
+
+            foreach ($dates as $dateStr) {
+                foreach ($trackOptions as $trackUsing) {
+                    $captcha = null;
+                    for ($att = 1; $att <= 3; $att++) {
+                        list($cCap, $capBytes) = $curlFn(
+                            self::SERVICEONLINE_BASE_URL . '/officials/captchaImage',
+                            null,
+                            self::SERVICEONLINE_BASE_URL . '/officials/citizenApplication.html'
+                        );
+                        if ($cCap === 200 && !empty($capBytes)) {
+                            $captcha = self::solveServiceOnlineCaptcha($capBytes);
+                            if (!empty($captcha)) break;
+                        }
+                        usleep(200000);
+                    }
+
+                    if (empty($captcha)) {
+                        continue;
+                    }
+
+                    $postStep1 = [
+                        'OWASP_CSRFTOKEN' => $csrfToken,
+                        'track_option' => 'R',
+                        'spdv_appl_ref_no' => $appNum,
+                        'trackusing' => (string)$trackUsing,
+                        'applyDate' => $dateStr,
+                        'captchaAnswer' => $captcha,
+                        'whichTab' => 'liATab1',
+                        'submitFlag' => '',
+                        'otpDivShowFlag' => '',
+                    ];
+
+                    list($c1, $res1) = $curlFn(
+                        self::SERVICEONLINE_BASE_URL . '/officials/citizenServiceTrackList.do',
+                        $postStep1,
+                        self::SERVICEONLINE_BASE_URL . '/officials/citizenApplication.html'
+                    );
+
+                    if ($c1 === 200 && stripos($res1, "secTabOpen = 'YES'") !== false) {
+                        $step1Success = true;
+                        $s1Html = $res1;
+                        $matchedDate = $dateStr;
+                        $matchedTrackUsing = $trackUsing;
+                        break 2;
+                    }
+                }
+            }
+
+            if (!$step1Success || empty($s1Html)) {
+                return [
+                    'success' => false,
+                    'message' => 'Application reference or date not matched on serviceonline.bihar.gov.in tracking.'
+                ];
+            }
+
+            preg_match('/applRefServiceId\s*=\s*\'([^\']+)\'/i', $s1Html, $sidM);
+            $serviceId = $sidM[1] ?? '4630012';
+
+            preg_match('/applRefBaseServiceId\s*=\s*\'([^\']+)\'/i', $s1Html, $bsidM);
+            $baseServiceId = $bsidM[1] ?? '463';
+
+            $postRaf = [
+                'OWASP_CSRFTOKEN' => $csrfToken,
+                'track_option' => 'R',
+                'spdv_appl_ref_no' => $appNum,
+                'trackusing' => (string)$matchedTrackUsing,
+                'applyDate' => $matchedDate,
+                'whichTab' => 'liATab2',
+                'docSelectedVal' => '1',
+                'viewDocument' => '1',
+                'trackThrough' => 'A',
+                'trackThroughOption' => 'A',
+                'trackThroughOptionSelectedVal' => 'A',
+                'serviceId' => $serviceId,
+                'currentServiceId' => $serviceId,
+                'applRefHiddenServiceId' => $serviceId,
+                'currentBaseServiceId' => $baseServiceId,
+            ];
+
+            list($cRaf, $rafHtml) = $curlFn(
+                self::SERVICEONLINE_BASE_URL . '/officials/renderAdditionalFields.do',
+                $postRaf,
+                self::SERVICEONLINE_BASE_URL . '/officials/citizenServiceTrackList.do'
+            );
+
+            preg_match('/name="attributeIds"\s+id="attributeIds"\s+value="([^"]+)"/i', $rafHtml, $attrM);
+            $rawAttrs = trim($attrM[1] ?? '', ',');
+            $attrIds = explode(',', $rawAttrs);
+
+            $nameVal = $cleanNameNormalized;
+            $fatherVal = !empty($fatherName) ? trim($fatherName) : 'NA';
+            $motherVal = !empty($motherName) ? trim($motherName) : 'NA';
+
+            $postStep2 = $postRaf;
+            $postStep2['attributeIds'] = ',' . $rawAttrs;
+
+            $applAttrArr = [];
+            $applAttrEditArr = [];
+
+            foreach ($attrIds as $idx => $aId) {
+                $aId = trim($aId);
+                if (empty($aId)) continue;
+
+                $val = $nameVal;
+                if ($idx === 1) $val = $fatherVal;
+                if ($idx === 2) $val = $motherVal;
+
+                $postStep2[$aId] = $val;
+                $applAttrArr[] = "('$aId',''$val'')";
+                $applAttrEditArr[] = "{$aId}~$~{$val}~$@~";
+            }
+
+            $postStep2['serviceReportInboxApplAttrString'] = "'" . implode(',', $applAttrArr) . "'";
+            $postStep2['serviceReportInboxapplAttrStringEdit'] = implode('', $applAttrEditArr);
+
+            list($c2, $s2Html) = $curlFn(
+                self::SERVICEONLINE_BASE_URL . '/officials/citizenServiceTrackList.do',
+                $postStep2,
+                self::SERVICEONLINE_BASE_URL . '/officials/renderAdditionalFields.do'
+            );
+
+            $isDelivered = (stripos($s2Html, 'Delivered') !== false);
+            $isRejected = (stripos($s2Html, 'Rejected') !== false);
+            $isUnderProcess = (stripos($s2Html, 'Under Process') !== false || stripos($s2Html, 'Forwarded') !== false || stripos($s2Html, 'Initiated') !== false);
+
+            if (!$isDelivered) {
+                $msg = $isRejected
+                    ? 'Application has been REJECTED by department officials on live portal.'
+                    : ($isUnderProcess ? 'Live Status: Application is UNDER PROCESS with department officials (not yet delivered).' : 'Certificate not yet delivered.');
+                return [
+                    'success' => false,
+                    'status' => $isRejected ? 'REJECTED' : 'IN_PROCESS',
+                    'message' => $msg
+                ];
+            }
+
+            preg_match("/showDocument\('([^']+)','([^']+)','([^']+)','([^']+)','([123])','([^']+)'\)\">([^<]*Certificate[^<]*)</i", $s2Html, $docM);
+            if (!$docM) {
+                preg_match("/showDocument\('([^']+)','([^']+)','([^']+)','([^']+)','([123])','([^']+)'\)/i", $s2Html, $docM);
+            }
+
+            if (!$docM) {
+                return [
+                    'success' => false,
+                    'status' => 'DELIVERED_NO_LINK',
+                    'message' => 'Status is Delivered on live portal, but certificate link could not be parsed.'
+                ];
+            }
+
+            $applID = $docM[1];
+            $spdiCurrentProcId = $docM[2];
+            $applicationCertId = $docM[3];
+            $token = $docM[6];
+            $certTitle = trim($docM[7] ?? 'Certificate');
+
+            preg_match('/name="relatedDocumentToken"\s+value="([^"]+)"/i', $s2Html, $relM);
+            $relToken = $relM[1] ?? '';
+            parse_str($relToken, $csrfArr);
+
+            $downloadPost = array_merge($csrfArr, [
+                'token' => $token,
+                'applicationId' => $applID,
+                'applicationCertId' => $applicationCertId,
+                'currentProcessId' => $spdiCurrentProcId,
+            ]);
+
+            list($cDl, $pdfBytes) = $curlFn(
+                self::SERVICEONLINE_BASE_URL . '/officials/viewDeliveredCertificate.do',
+                $downloadPost,
+                self::SERVICEONLINE_BASE_URL . '/officials/citizenServiceTrackList.do'
+            );
+
+            if ($cDl === 200 && is_string($pdfBytes) && strlen($pdfBytes) >= 500 && strncmp($pdfBytes, '%PDF-', 5) === 0) {
+                return [
+                    'success' => true,
+                    'status' => 'DELIVERED',
+                    'pdf' => $pdfBytes,
+                    'size' => strlen($pdfBytes),
+                    'matched_service' => $certTitle,
+                    'message' => 'Official certificate PDF downloaded live from serviceonline.bihar.gov.in tracking.'
+                ];
+            }
+
+            return [
+                'success' => false,
+                'message' => "Download request returned HTTP $cDl or non-PDF binary."
+            ];
+        } catch (\Throwable $e) {
+            return [
+                'success' => false,
+                'message' => 'ServiceOnline tracking exception: ' . $e->getMessage()
+            ];
+        } finally {
+            if (file_exists($cookieJar)) {
+                @unlink($cookieJar);
+            }
+        }
+    }
+
+    /**
      * Connects to Bihar RTPS portal session, fetches form token,
      * submits application reference & applicant name, and returns PDF binary if ready.
+     * First checks live same-day tracking on serviceonline.bihar.gov.in,
+     * and falls back to swcs.bihar.gov.in report download.
      */
     public static function fetchCertificateFromPortal(
         string $applicationNumber,
         string $applicantName,
-        string $serviceType = 'RTPS'
+        string $serviceType = 'RTPS',
+        array $candidateDates = [],
+        string $fatherName = '',
+        string $motherName = ''
     ): array {
         $appNum = trim($applicationNumber);
         $cleanName = trim(preg_replace('/\s+/', ' ', $applicantName));
@@ -230,7 +593,24 @@ class RtpsCertificateService
             ];
         }
 
-        // Clean any punctuation or salutations (e.g. Mr., Shri, Smt.)
+        // 1. Live Same-Day Check via serviceonline.bihar.gov.in
+        $liveRes = self::fetchLiveCertificateFromServiceOnline(
+            $appNum,
+            $cleanName,
+            $candidateDates,
+            $fatherName,
+            $motherName
+        );
+
+        if (!empty($liveRes['success']) && !empty($liveRes['pdf'])) {
+            return $liveRes;
+        }
+
+        if (!empty($liveRes['status']) && in_array($liveRes['status'], ['IN_PROCESS', 'REJECTED'])) {
+            return $liveRes;
+        }
+
+        // 2. Fallback to swcs.bihar.gov.in portal download
         $cleanNameNormalized = trim(preg_replace('/^(Mr\.?|Mrs\.?|Ms\.?|Shri\.?|Smt\.?)\s+/i', '', $cleanName));
 
         // Smart candidate service types
@@ -347,7 +727,7 @@ class RtpsCertificateService
         $db = Database::getConnection();
 
         $stmt = $db->prepare("
-            SELECT id, app_ref, application_code, applicant_identifier, applicant_name, status, result_file
+            SELECT id, app_ref, application_code, applicant_identifier, applicant_name, status, result_file, created_at
             FROM applications
             WHERE id = ?
             LIMIT 1
@@ -377,7 +757,29 @@ class RtpsCertificateService
         $db->prepare("UPDATE rtps_certificate_queue SET status = 'CHECKING', application_code = ?, service_type = ?, updated_at = NOW() WHERE application_id = ?")
            ->execute([$detectedCode, $serviceType, $appId]);
 
-        $fetchRes = self::fetchCertificateFromPortal($appNum, $applicantName, $serviceType);
+        // Collect candidate dates and applicant details
+        $candidateDates = [];
+        if (!empty($app['created_at'])) {
+            $candidateDates[] = date('d/m/Y', strtotime((string)$app['created_at']));
+        }
+        $candidateDates[] = date('d/m/Y');
+        $candidateDates[] = date('d/m/Y', strtotime('-1 day'));
+
+        $fatherName = '';
+        $motherName = '';
+        try {
+            $fStmt = $db->prepare("SELECT field_name, field_value FROM application_field_values WHERE application_id = ?");
+            $fStmt->execute([$appId]);
+            while ($fRow = $fStmt->fetch(PDO::FETCH_ASSOC)) {
+                $fName = strtolower(trim((string)$fRow['field_name']));
+                $fVal = trim((string)$fRow['field_value']);
+                if (str_contains($fName, 'father')) $fatherName = $fVal;
+                if (str_contains($fName, 'mother')) $motherName = $fVal;
+                if (str_contains($fName, 'date') && !empty($fVal)) $candidateDates[] = $fVal;
+            }
+        } catch (\Throwable $e) {}
+
+        $fetchRes = self::fetchCertificateFromPortal($appNum, $applicantName, $serviceType, $candidateDates, $fatherName, $motherName);
 
         if (!empty($fetchRes['success']) && !empty($fetchRes['pdf'])) {
             // Update queue with matched service if different
@@ -688,11 +1090,35 @@ class RtpsCertificateService
                ->execute([$item['id']]);
 
             try {
-                // Fetch certificate from Bihar RTPS official portal
+                $candidateDates = [];
+                if (!empty($item['app_created_at'])) {
+                    $candidateDates[] = date('d/m/Y', strtotime((string)$item['app_created_at']));
+                }
+                $candidateDates[] = date('d/m/Y');
+                $candidateDates[] = date('d/m/Y', strtotime('-1 day'));
+
+                $fatherName = '';
+                $motherName = '';
+                try {
+                    $fStmt = $db->prepare("SELECT field_name, field_value FROM application_field_values WHERE application_id = ?");
+                    $fStmt->execute([$appId]);
+                    while ($fRow = $fStmt->fetch(PDO::FETCH_ASSOC)) {
+                        $fName = strtolower(trim((string)$fRow['field_name']));
+                        $fVal = trim((string)$fRow['field_value']);
+                        if (str_contains($fName, 'father')) $fatherName = $fVal;
+                        if (str_contains($fName, 'mother')) $motherName = $fVal;
+                        if (str_contains($fName, 'date') && !empty($fVal)) $candidateDates[] = $fVal;
+                    }
+                } catch (\Throwable $e) {}
+
+                // Fetch certificate from Bihar RTPS official portal (Live ServiceOnline First, SWCS Fallback)
                 $fetchRes = self::fetchCertificateFromPortal(
                     (string)$item['application_number'],
                     (string)$item['applicant_name'],
-                    (string)$item['service_type']
+                    (string)$item['service_type'],
+                    $candidateDates,
+                    $fatherName,
+                    $motherName
                 );
 
                 if (!empty($fetchRes['success']) && !empty($fetchRes['pdf'])) {
