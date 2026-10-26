@@ -497,39 +497,45 @@ POWERSHELL;
                 self::SERVICEONLINE_BASE_URL . '/officials/renderAdditionalFields.do'
             );
 
-            $isDelivered = (stripos($s2Html, 'Delivered') !== false);
-            $isRejected = (stripos($s2Html, 'Rejected') !== false);
-            $isUnderProcess = (stripos($s2Html, 'Under Process') !== false || stripos($s2Html, 'Forwarded') !== false || stripos($s2Html, 'Initiated') !== false);
-
-            if (!$isDelivered) {
-                $msg = $isRejected
-                    ? 'Application has been REJECTED by department officials on live portal.'
-                    : ($isUnderProcess ? 'Live Status: Application is UNDER PROCESS with department officials (not yet delivered).' : 'Certificate not yet delivered.');
+            $parsedTable = self::parseTrackingTable($s2Html);
+            if (empty($parsedTable)) {
+                $isRejected = (stripos($s2Html, 'Rejected') !== false);
+                $isUnderProcess = (stripos($s2Html, 'Under Process') !== false || stripos($s2Html, 'Forwarded') !== false);
                 return [
                     'success' => false,
                     'status' => $isRejected ? 'REJECTED' : 'IN_PROCESS',
-                    'message' => $msg
+                    'portal_status' => $isRejected ? 'Rejected' : ($isUnderProcess ? 'Under Process' : 'Pending'),
+                    'message' => $isRejected ? 'Application rejected on portal.' : 'Application is under process on portal.'
                 ];
             }
 
-            preg_match("/showDocument\('([^']+)','([^']+)','([^']+)','([^']+)','([123])','([^']+)'\)\">([^<]*Certificate[^<]*)</i", $s2Html, $docM);
-            if (!$docM) {
-                preg_match("/showDocument\('([^']+)','([^']+)','([^']+)','([^']+)','([123])','([^']+)'\)/i", $s2Html, $docM);
-            }
+            $evaluation = self::evaluateRtpsStatus($parsedTable);
 
-            if (!$docM) {
+            if ($evaluation['action'] === 'REJECT') {
                 return [
                     'success' => false,
-                    'status' => 'DELIVERED_NO_LINK',
-                    'message' => 'Status is Delivered on live portal, but certificate link could not be parsed.'
+                    'status' => 'REJECTED',
+                    'portal_status' => 'Rejected',
+                    'message' => $evaluation['message']
                 ];
             }
 
-            $applID = $docM[1];
-            $spdiCurrentProcId = $docM[2];
-            $applicationCertId = $docM[3];
-            $token = $docM[6];
-            $certTitle = trim($docM[7] ?? 'Certificate');
+            if ($evaluation['action'] === 'SHOW_STATUS') {
+                return [
+                    'success' => false,
+                    'status' => 'IN_PROCESS',
+                    'portal_status' => $evaluation['portal_status'],
+                    'message' => $evaluation['message']
+                ];
+            }
+
+            // action === 'DOWNLOAD_CERTIFICATE'
+            $certDoc = $evaluation['cert_doc'];
+            $applID = $certDoc['applID'];
+            $spdiCurrentProcId = $certDoc['spdiCurrentProcId'];
+            $applicationCertId = $certDoc['applicationCertId'];
+            $token = $certDoc['token'];
+            $certTitle = trim($certDoc['title'] ?? 'Certificate');
 
             preg_match('/name="relatedDocumentToken"\s+value="([^"]+)"/i', $s2Html, $relM);
             $relToken = $relM[1] ?? '';
@@ -552,6 +558,7 @@ POWERSHELL;
                 return [
                     'success' => true,
                     'status' => 'DELIVERED',
+                    'portal_status' => 'Delivered',
                     'pdf' => $pdfBytes,
                     'size' => strlen($pdfBytes),
                     'matched_service' => $certTitle,
@@ -561,6 +568,8 @@ POWERSHELL;
 
             return [
                 'success' => false,
+                'status' => 'IN_PROCESS',
+                'portal_status' => 'Delivered (PDF Not Available)',
                 'message' => "Download request returned HTTP $cDl or non-PDF binary."
             ];
         } catch (\Throwable $e) {
@@ -573,6 +582,163 @@ POWERSHELL;
                 @unlink($cookieJar);
             }
         }
+    }
+
+    /**
+     * Parse HTML tracking table rows from ServicePlus citizenServiceTrackList.do
+     */
+    public static function parseTrackingTable(string $html): array
+    {
+        $rows = [];
+        if (!preg_match('/<table[^>]*>(?:(?!<\/table>).)*?Task Name.*?<\/table>/si', $html, $tableMatch)) {
+            return $rows;
+        }
+
+        preg_match_all('/<tr[^>]*>(.*?)<\/tr>/si', $tableMatch[0], $trMatches);
+
+        foreach ($trMatches[1] as $tr) {
+            preg_match_all('/<td[^>]*>(.*?)<\/td>/si', $tr, $tdMatches);
+            if (count($tdMatches[1]) >= 5) {
+                $sNo = trim(strip_tags($tdMatches[1][0]));
+                $taskName = trim(strip_tags($tdMatches[1][1]));
+                $formDetail = trim(strip_tags($tdMatches[1][2]));
+                $issuedDocRaw = $tdMatches[1][3];
+                $issuedDocText = trim(strip_tags($issuedDocRaw));
+                $status = trim(strip_tags($tdMatches[1][4]));
+                $remarks = isset($tdMatches[1][5]) ? trim(strip_tags($tdMatches[1][5])) : '';
+
+                $docLink = null;
+                if (preg_match("/showDocument\('([^']+)','([^']+)','([^']+)','([^']+)','([0-9]+)','([^']+)'\)/i", $issuedDocRaw, $m)) {
+                    $docLink = [
+                        'applID' => $m[1],
+                        'spdiCurrentProcId' => $m[2],
+                        'applicationCertId' => $m[3],
+                        'token' => $m[6],
+                        'type' => $m[5],
+                        'title' => $issuedDocText,
+                    ];
+                }
+
+                $numKey = is_numeric($sNo) ? (int)$sNo : count($rows) + 1;
+                $rows[$numKey] = [
+                    's_no' => $sNo,
+                    'task_name' => $taskName,
+                    'form_detail' => $formDetail,
+                    'issued_doc' => $issuedDocText,
+                    'issued_doc_link' => $docLink,
+                    'status' => $status,
+                    'remarks' => $remarks,
+                ];
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Evaluate workflow stages according to Bihar RTPS ServicePlus business rules:
+     * - Row 3 (Field Verification): If 'Under Process' -> 'Pending'. If other -> exact text (e.g. 'Forwarded to CO').
+     * - Row 4 (Delivery of Application): If 'Under Process' -> 'Sign Pending (RO/CO Sign Baki Hai)'.
+     * - Row 4: If 'Delivered' / 'Completed' -> Only attach if real Certificate PDF link is present; otherwise show status.
+     */
+    public static function evaluateRtpsStatus(array $parsedRows): array
+    {
+        foreach ($parsedRows as $r) {
+            if (stripos($r['status'], 'Rejected') !== false) {
+                return [
+                    'action' => 'REJECT',
+                    'status' => 'REJECTED',
+                    'portal_status' => 'Rejected',
+                    'message' => 'Application has been Rejected on official portal.',
+                    'cert_doc' => null,
+                ];
+            }
+        }
+
+        $row3 = $parsedRows[3] ?? null;
+        $row4 = $parsedRows[4] ?? null;
+
+        if (!$row3 || !$row4) {
+            foreach ($parsedRows as $r) {
+                $task = strtolower($r['task_name']);
+                if (str_contains($task, 'verification') || str_contains($task, 'inquiry')) {
+                    $row3 = $row3 ?: $r;
+                }
+                if (str_contains($task, 'delivery') || str_contains($task, 'approval') || str_contains($task, 'issuance')) {
+                    $row4 = $row4 ?: $r;
+                }
+            }
+        }
+
+        $row3Status = trim($row3['status'] ?? '');
+        $row4Status = trim($row4['status'] ?? '');
+
+        // 1. Check Row 4 (Delivery stage) if Delivered / Completed
+        if ($row4 && (stripos($row4Status, 'Delivered') !== false || stripos($row4Status, 'Completed') !== false)) {
+            $doc = $row4['issued_doc_link'] ?? null;
+            $docTitle = strtolower($row4['issued_doc'] ?? '');
+
+            // Ensure document is genuinely the Certificate, not an acknowledgment or print form
+            if ($doc && !str_contains($docTitle, 'acknowledgment') && !str_contains($docTitle, 'print form')) {
+                return [
+                    'action' => 'DOWNLOAD_CERTIFICATE',
+                    'status' => 'DELIVERED',
+                    'portal_status' => 'Delivered',
+                    'message' => 'Certificate generated and ready for download.',
+                    'cert_doc' => $doc,
+                ];
+            }
+
+            return [
+                'action' => 'SHOW_STATUS',
+                'status' => 'IN_PROCESS',
+                'portal_status' => 'Delivered (PDF Not Available)',
+                'message' => 'Status is Delivered/Completed on portal, but certificate PDF is not yet available.',
+                'cert_doc' => null,
+            ];
+        }
+
+        // 2. Check Row 3 (Field Verification stage)
+        if ($row3 && !in_array(strtolower($row3Status), ['completed', 'delivered'])) {
+            if (stripos($row3Status, 'under process') !== false) {
+                return [
+                    'action' => 'SHOW_STATUS',
+                    'status' => 'IN_PROCESS',
+                    'portal_status' => 'Pending',
+                    'message' => 'Field Verification: Under Process (Pending).',
+                    'cert_doc' => null,
+                ];
+            } else {
+                return [
+                    'action' => 'SHOW_STATUS',
+                    'status' => 'IN_PROCESS',
+                    'portal_status' => $row3Status,
+                    'message' => "Field Verification: {$row3Status}.",
+                    'cert_doc' => null,
+                ];
+            }
+        }
+
+        // 3. Row 3 is completed, check Row 4
+        if ($row4 && stripos($row4Status, 'under process') !== false) {
+            return [
+                'action' => 'SHOW_STATUS',
+                'status' => 'IN_PROCESS',
+                'portal_status' => 'Sign Pending (RO/CO Sign Baki Hai)',
+                'message' => 'Delivery of Application: Under Process (Digital Signature Pending).',
+                'cert_doc' => null,
+            ];
+        }
+
+        // Default status
+        $finalStatus = !empty($row4Status) ? $row4Status : (!empty($row3Status) ? $row3Status : 'Under Process');
+        return [
+            'action' => 'SHOW_STATUS',
+            'status' => 'IN_PROCESS',
+            'portal_status' => $finalStatus,
+            'message' => "Live Portal Status: {$finalStatus}.",
+            'cert_doc' => null,
+        ];
     }
 
     /**
@@ -805,13 +971,47 @@ POWERSHELL;
             ];
         }
 
-        // Not ready yet: mark unavailable and reschedule for next 5-hour check
-        self::markCertificateUnavailable($appId, $fetchRes['message'] ?? 'Certificate not yet generated on portal');
+        // Live Portal Status returned (Pending, Forwarded to CO, Sign Pending, Rejected, etc.)
+        $portalStatus = $fetchRes['portal_status'] ?? null;
+        $reason = $fetchRes['message'] ?? 'Certificate not yet generated on portal';
+
+        if (!empty($fetchRes['status']) && $fetchRes['status'] === 'REJECTED') {
+            $db->prepare("
+                UPDATE applications
+                SET status = 'REJECTED',
+                    rejection_reason = ?,
+                    admin_remarks = 'Rejected on official portal',
+                    remarks = ?,
+                    updated_at = NOW()
+                WHERE id = ?
+            ")->execute([$reason, $reason, $appId]);
+
+            $db->prepare("
+                UPDATE rtps_certificate_queue
+                SET status = 'FAILED',
+                    last_checked_at = NOW(),
+                    last_status_message = ?,
+                    updated_at = NOW()
+                WHERE application_id = ?
+            ")->execute([$reason, $appId]);
+
+            return [
+                'success' => false,
+                'status' => 'REJECTED',
+                'portal_status' => 'Rejected',
+                'app_id' => $appId,
+                'message' => $reason
+            ];
+        }
+
+        // Not ready yet: mark unavailable and reschedule for next check
+        self::markCertificateUnavailable($appId, $reason, null, null, $portalStatus);
         return [
             'success' => false,
-            'status' => 'UNAVAILABLE',
+            'status' => 'IN_PROCESS',
+            'portal_status' => $portalStatus ?: 'Under Process',
             'app_id' => $appId,
-            'message' => $fetchRes['message'] ?? 'Certificate pending on portal; scheduled for next 5-hour check.'
+            'message' => $reason
         ];
     }
 
@@ -963,7 +1163,8 @@ POWERSHELL;
         int $appId,
         string $reason = 'Certificate not generated yet on RTPS portal',
         ?int $actorUserId = null,
-        ?string $customNextCheckAt = null
+        ?string $customNextCheckAt = null,
+        ?string $portalStatus = null
     ): void {
         $db = Database::getConnection();
         $nextCheckAt = $customNextCheckAt ?: self::calculateNextCheckTime(5);
@@ -980,13 +1181,24 @@ POWERSHELL;
         ");
         $upd->execute([$nextCheckAt, $reason, $appId]);
 
-        // Ensure application stays IN_PROCESS (never reject!)
-        $db->prepare("
-            UPDATE applications
-            SET status = 'IN_PROCESS',
-                updated_at = NOW()
-            WHERE id = ? AND status = 'PENDING'
-        ")->execute([$appId]);
+        // Ensure application stays IN_PROCESS and record live portal remarks
+        if (!empty($portalStatus)) {
+            $db->prepare("
+                UPDATE applications
+                SET status = 'IN_PROCESS',
+                    admin_remarks = ?,
+                    remarks = ?,
+                    updated_at = NOW()
+                WHERE id = ?
+            ")->execute([$portalStatus, $reason, $appId]);
+        } else {
+            $db->prepare("
+                UPDATE applications
+                SET status = 'IN_PROCESS',
+                    updated_at = NOW()
+                WHERE id = ? AND status = 'PENDING'
+            ")->execute([$appId]);
+        }
 
         AuditService::log('RTPS_CERTIFICATE_CHECK_UNAVAILABLE', 'APPLICATION', (string)$appId, [
             'reason' => $reason,

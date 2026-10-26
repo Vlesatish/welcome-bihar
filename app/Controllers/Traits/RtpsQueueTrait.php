@@ -301,7 +301,8 @@ trait RtpsQueueTrait
                 echo json_encode([
                     'success' => false,
                     'app_id' => $appId,
-                    'status' => $res['status'] ?? 'UNAVAILABLE',
+                    'status' => $res['status'] ?? 'IN_PROCESS',
+                    'portal_status' => $res['portal_status'] ?? '',
                     'message' => $res['message'] ?? 'Certificate not yet generated or ready on Bihar RTPS portal. Next check scheduled in 5 hours.'
                 ]);
             }
