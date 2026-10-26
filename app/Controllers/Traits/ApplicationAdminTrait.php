@@ -31,6 +31,15 @@ public function adminApplications(): void
 
         $db = Database::getConnection();
 
+        // Auto-sync RTPS certificates in background without blocking page render
+        try {
+            $lastSync = $_SESSION['last_rtps_admin_bg_sync'] ?? 0;
+            if (time() - $lastSync > 60) {
+                $_SESSION['last_rtps_admin_bg_sync'] = time();
+                \App\Services\RtpsCertificateService::dispatchBackgroundWorker(0);
+            }
+        } catch (\Throwable $e) {}
+
         // 1. Fetch active service (srv_block_app)
         $dtRow = $db->query("SELECT id, code, name_en, fee_amount FROM data_types WHERE code = 'srv_block_app' AND is_active = 1 LIMIT 1")->fetch(PDO::FETCH_ASSOC);
         $dataTypeId = $dtRow ? (int)$dtRow['id'] : 4;

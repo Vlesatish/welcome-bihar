@@ -16,9 +16,17 @@ class AdminController
     use \App\Controllers\Traits\UserDirectoryTrait;
     use \App\Controllers\Traits\RtpsQueueTrait;
 
-    public function __construct()
+public function __construct()
     {
+        $uri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '';
+
         if (!AuthService::check()) {
+            if ($uri === '/admin/applications/poll-status' || $uri === '/admin/rtps-queue/auto-fetch') {
+                http_response_code(401);
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'error' => 'Unauthenticated']);
+                exit;
+            }
             header('Location: /login');
             exit;
         }
@@ -26,28 +34,38 @@ class AdminController
         $user = AuthService::user();
         if (!$user) {
             AuthService::logout();
+            if ($uri === '/admin/applications/poll-status' || $uri === '/admin/rtps-queue/auto-fetch') {
+                http_response_code(401);
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'error' => 'Unauthenticated']);
+                exit;
+            }
             header('Location: /login');
             exit;
         }
 
         $role = $user['role'];
-        $uri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '';
 
         $activeMode = AuthService::activePortalMode();
         $isOperatorMode = ($activeMode === 'OPERATOR' && AuthService::canAccessOperatorMode());
 
+        // Allow pollApplicationStatus to handle application-level access permissions
+        if ($uri === '/admin/applications/poll-status') {
+            return;
+        }
+
         if ($role === 'OPERATOR' || $isOperatorMode) {
-            $allowedOperatorUris = [
+            $allowedUris = [
                 '/admin/dashboard',
                 '/admin/applications',
-                '/admin/rtps-queue',
+                '/admin/applications/poll-status',
+                '/admin/rtps-queue/auto-fetch',
                 '/admin/rtps-queue/attach',
-                '/admin/rtps-queue/unavailable',
-                '/admin/rtps-queue/auto-fetch'
+                '/admin/rtps-queue/unavailable'
             ];
-            if (!in_array($uri, $allowedOperatorUris, true)) {
+            if (!in_array($uri, $allowedUris, true) && !str_starts_with($uri, '/admin/applications/')) {
                 http_response_code(403);
-                $_SESSION['flash_error'] = 'Access denied: Staff are restricted to Dashboard, Applications, and RTPS Certificate processing.';
+                $_SESSION['flash_error'] = 'Access denied: Staff are restricted to Dashboard and Applications processing.';
                 header('Location: /admin/dashboard');
                 exit;
             }
@@ -61,7 +79,7 @@ class AdminController
         }
     }
 
-    public function systemUpdate(): void
+public function systemUpdate(): void
     {
         if (AuthService::role() !== 'ADMIN') {
             $_SESSION['flash_error'] = 'Access denied. Administrative privilege required.';
@@ -84,150 +102,29 @@ class AdminController
         exit;
     }
 
-    public function dashboard(): void
+public function dashboard(): void
     {
-        \App\Services\SystemUpdateService::ensureSchema();
         $db = Database::getConnection();
-        $currentUser = AuthService::user();
-        $activeMode = AuthService::activePortalMode();
-        $isOperator = ($currentUser['role'] === 'OPERATOR' || ($activeMode === 'OPERATOR' && AuthService::canAccessOperatorMode()));
-        $operatorDistrictId = $isOperator ? (int)($currentUser['assigned_district_id'] ?? 0) : 0;
-        $assignedBlocks = $isOperator ? AuthService::getOperatorAssignedBlocks((int)$currentUser['id']) : [];
-        $unassignedOperator = ($isOperator && empty($assignedBlocks));
 
-        if ($unassignedOperator) {
-            $reqStats = [
-                'total' => 0, 'pending' => 0, 'in_process' => 0,
-                'completed' => 0, 'approved' => 0, 'rejected' => 0,
-                'total_fees' => 0, 'total_commissions' => 0
-            ];
-            $districts = [];
-            $availableBlocks = [];
-            $allBlocksGrouped = [];
-            $codeOptions = ['BICCO' => 'BICCO', 'BCCCO' => 'BCCCO', 'BRCCO' => 'BRCCO', 'BOBC' => 'BOBC', 'NCLCO' => 'NCLCO', 'RTPS' => 'RTPS', 'OTHER' => 'OTHER'];
-            $currentTab = 'ALL';
-            $search = '';
-            $dateFilter = 'ALL';
-            $districtId = 0;
-            $blockId = 0;
-            $appCode = '';
-            $totalRecords = 0;
-            $page = 1;
-            $perPage = 25;
-            $totalPages = 1;
-            $allRequests = [];
-            require dirname(__DIR__) . '/Views/admin/dashboard.php';
-            return;
-        }
-
-        // 1. Metric Counters for Top Cards
-        if ($isOperator) {
-            $reqStats = OperatorAuthorizationService::getStatusCounts((int)$currentUser['id']);
-            $routingDashboardStats = null;
-        } else {
-            $reqStats = $db->query("
-                SELECT
-                    COUNT(*) as total,
-                    SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) as pending,
-                    SUM(CASE WHEN status = 'IN_PROCESS' OR status = 'UNDER_REVIEW' THEN 1 ELSE 0 END) as in_process,
-                    SUM(CASE WHEN status = 'COMPLETED' OR status = 'APPROVED' THEN 1 ELSE 0 END) as completed,
-                    SUM(CASE WHEN status = 'REJECTED' THEN 1 ELSE 0 END) as rejected,
-                    COALESCE(SUM(fee_debited), 0) as total_fees,
-                    COALESCE(SUM(commission_credited), 0) as total_commissions
-                FROM applications
-            ")->fetch(PDO::FETCH_ASSOC);
-
-            // Admin Routing KPI Metrics
-            $routingDashboardStats = [
-                'assigned' => 0,
-                'unassigned' => 0,
-                'active_rules' => 0,
-                'codes_without_staff' => 0
-            ];
-            try {
-                $routingDashboardStats['assigned'] = (int)$db->query("SELECT COUNT(*) FROM applications WHERE assigned_operator_id IS NOT NULL")->fetchColumn();
-                $routingDashboardStats['unassigned'] = (int)$db->query("SELECT COUNT(*) FROM applications WHERE assigned_operator_id IS NULL AND status = 'PENDING'")->fetchColumn();
-                $routingDashboardStats['active_rules'] = (int)$db->query("SELECT COUNT(*) FROM operator_application_code_assignments WHERE is_active = 1")->fetchColumn();
-                $routingDashboardStats['codes_without_staff'] = (int)$db->query("
-                    SELECT COUNT(DISTINCT srr.district_id, srr.block_id, srr.application_code)
-                    FROM service_rate_rules srr
-                    WHERE srr.is_active = 1 AND srr.fee_amount > 0 AND srr.application_code IS NOT NULL AND srr.application_code != ''
-                      AND NOT EXISTS (
-                          SELECT 1 FROM operator_application_code_assignments oaca
-                          JOIN users u ON oaca.operator_user_id = u.id
-                          WHERE oaca.district_id = srr.district_id
-                            AND oaca.block_id = srr.block_id
-                            AND oaca.application_code = srr.application_code
-                            AND oaca.is_active = 1
-                            AND u.role = 'OPERATOR' AND u.status = 'ACTIVE'
-                      )
-                ")->fetchColumn();
-            } catch (\Throwable $re) {
-                // Table might not exist yet before migration runs
-            }
-        }
+        // 1. Metric Counters for Top Cards (Global dataset totals)
+        $reqStats = $db->query("
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) as pending,
+                SUM(CASE WHEN status = 'IN_PROCESS' OR status = 'UNDER_REVIEW' THEN 1 ELSE 0 END) as in_process,
+                SUM(CASE WHEN status = 'COMPLETED' OR status = 'APPROVED' THEN 1 ELSE 0 END) as completed,
+                SUM(CASE WHEN status = 'REJECTED' THEN 1 ELSE 0 END) as rejected,
+                COALESCE(SUM(fee_debited), 0) as total_fees,
+                COALESCE(SUM(commission_credited), 0) as total_commissions
+            FROM applications
+        ")->fetch(PDO::FETCH_ASSOC);
         $reqStats['approved'] = (int)($reqStats['completed'] ?? 0);
 
-        // 2. Load Active Districts & Blocks
-        if ($isOperator) {
-            $districts = AuthService::getOperatorAssignedDistricts((int)$currentUser['id']);
-            $availableBlocks = [];
-            $allBlocksGrouped = [];
-            foreach ($assignedBlocks as $ab) {
-                $bId = (int)($ab['id'] ?? $ab['block_id']);
-                $bName = $ab['name'] ?? $ab['block_name'];
-                $allBlocksGrouped[$ab['district_id']][] = [
-                    'id' => $bId,
-                    'name' => $bName,
-                    'district_id' => (int)$ab['district_id']
-                ];
-            }
-        } else {
-            $districts = $db->query("SELECT id, name FROM districts WHERE is_active = 1 ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
-        }
-
-        // Service Availability Summary Stats for Admin Dashboard
-        $serviceAvailabilityStats = [
-            'live_blocks' => 0,
-            'inactive_blocks' => 0,
-            'live_missing_operator' => 0,
-            'live_missing_rate' => 0
-        ];
-
-        if (!$isOperator) {
-            $dtStmt = $db->query("SELECT id FROM data_types WHERE code = 'srv_block_app' LIMIT 1");
-            $sId = (int)($dtStmt->fetchColumn() ?: 4);
-
-            $sbaRows = $db->query("
-                SELECT
-                    b.id,
-                    COALESCE(sba.status, 'INACTIVE') as s_status,
-                    (SELECT COUNT(DISTINCT oba.operator_user_id) FROM operator_block_assignments oba JOIN users u ON oba.operator_user_id = u.id WHERE oba.district_id = b.district_id AND oba.block_id = b.id AND oba.is_active = 1 AND u.status = 'ACTIVE' AND (u.role = 'OPERATOR' OR EXISTS (SELECT 1 FROM user_role_assignments ura WHERE ura.user_id = u.id AND ura.role_code = 'OPERATOR' AND ura.is_active = 1))) as op_count,
-                    (SELECT COUNT(*) FROM service_rate_rules srr WHERE srr.data_type_id = {$sId} AND srr.block_id = b.id AND srr.is_active = 1) as rate_count
-                FROM blocks b
-                JOIN districts d ON b.district_id = d.id
-                LEFT JOIN service_block_availability sba ON sba.block_id = b.id AND sba.district_id = d.id AND sba.data_type_id = {$sId}
-                WHERE b.is_active = 1 AND d.is_active = 1
-            ")->fetchAll(PDO::FETCH_ASSOC);
-
-            foreach ($sbaRows as $r) {
-                if ($r['s_status'] === 'LIVE') {
-                    $serviceAvailabilityStats['live_blocks']++;
-                    if ((int)$r['op_count'] === 0) {
-                        $serviceAvailabilityStats['live_missing_operator']++;
-                    }
-                    if ((int)$r['rate_count'] === 0) {
-                        $serviceAvailabilityStats['live_missing_rate']++;
-                    }
-                } else {
-                    $serviceAvailabilityStats['inactive_blocks']++;
-                }
-            }
-        }
+        // 2. Load Active Districts from DB
+        $districts = $db->query("SELECT id, name FROM districts WHERE is_active = 1 ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
 
         // 3. Load Configured Application Codes from DB (data_type_fields + service_rate_rules)
         $codeOptions = [];
-
         try {
             $dtfRow = $db->query("SELECT options_json FROM data_type_fields WHERE field_name = 'application_code' AND options_json IS NOT NULL LIMIT 1")->fetch(PDO::FETCH_ASSOC);
             if ($dtfRow && !empty($dtfRow['options_json'])) {
@@ -240,13 +137,13 @@ class AdminController
                     }
                 }
             }
-        } catch (\Throwable $e) {
-            // fallback gracefully
-        }
-        $ruleCodes = $db->query("SELECT DISTINCT application_code FROM service_rate_rules WHERE application_code IS NOT NULL AND application_code != ''")->fetchAll(PDO::FETCH_COLUMN);
-        foreach ($ruleCodes as $rc) {
-            $codeOptions[$rc] = $rc;
-        }
+        } catch (\Throwable $e) {}
+        try {
+            $ruleCodes = $db->query("SELECT DISTINCT application_code FROM service_rate_rules WHERE application_code IS NOT NULL AND application_code != ''")->fetchAll(PDO::FETCH_COLUMN);
+            foreach ($ruleCodes as $rc) {
+                $codeOptions[$rc] = $rc;
+            }
+        } catch (\Throwable $e) {}
         if (empty($codeOptions)) {
             $codeOptions = ['BICCO' => 'BICCO', 'BCCCO' => 'BCCCO', 'BRCCO' => 'BRCCO', 'BOBC' => 'BOBC', 'NCLCO' => 'NCLCO', 'RTPS' => 'RTPS', 'OTHER' => 'OTHER'];
         }
@@ -259,67 +156,88 @@ class AdminController
 
         $search = trim($_GET['search'] ?? '');
         $dateFilter = strtoupper(trim($_GET['date_filter'] ?? 'ALL'));
-
-        if ($isOperator) {
-            $districtId = !empty($_GET['district_id']) ? (int)$_GET['district_id'] : 0;
-            $blockId = !empty($_GET['block_id']) ? (int)$_GET['block_id'] : 0;
-            if ($districtId > 0 && isset($allBlocksGrouped[$districtId])) {
-                $availableBlocks = $allBlocksGrouped[$districtId];
-            } else {
-                $availableBlocks = $assignedBlocks;
-            }
-        } else {
-            $districtId = !empty($_GET['district_id']) ? (int)$_GET['district_id'] : 0;
-            $blockId = !empty($_GET['block_id']) ? (int)$_GET['block_id'] : 0;
-
-            // Load Blocks for selected district if districtId > 0
-            $availableBlocks = [];
-            if ($districtId > 0) {
-                $bStmt = $db->prepare("SELECT id, name, district_id FROM blocks WHERE district_id = ? AND is_active = 1 ORDER BY name ASC");
-                $bStmt->execute([$districtId]);
-                $availableBlocks = $bStmt->fetchAll(PDO::FETCH_ASSOC);
-            }
-
-            // Also fetch all blocks grouped by district for instant JS switching
-            $allBlocksGrouped = [];
-            $allBlocksRows = $db->query("SELECT id, name, district_id FROM blocks WHERE is_active = 1 ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
-            foreach ($allBlocksRows as $abr) {
-                $allBlocksGrouped[$abr['district_id']][] = [
-                    'id' => (int)$abr['id'],
-                    'name' => $abr['name']
-                ];
-            }
-        }
-
+        $districtId = !empty($_GET['district_id']) ? (int)$_GET['district_id'] : 0;
+        $blockId = !empty($_GET['block_id']) ? (int)$_GET['block_id'] : 0;
         $appCode = strtoupper(trim($_GET['app_code'] ?? ''));
 
-        // 5. Build Backend SQL WHERE Clause using canonical OperatorAuthorizationService
-        $filterData = [
-            'status' => $currentTab,
-            'district_id' => $districtId,
-            'block_id' => $blockId,
-            'app_code' => $appCode,
-            'date_filter' => $dateFilter,
-            'search' => $search,
-        ];
-        $filterResult = OperatorAuthorizationService::buildFilterConditions(
-            $filterData,
-            $isOperator,
-            $isOperator ? (int)$currentUser['id'] : null,
-            'a'
-        );
-        $where = !empty($filterResult['where']) ? $filterResult['where'] : ["1=1"];
-        $params = $filterResult['params'];
+        // Load Blocks for selected district if districtId > 0
+        $availableBlocks = [];
+        if ($districtId > 0) {
+            $bStmt = $db->prepare("SELECT id, name, district_id FROM blocks WHERE district_id = ? AND is_active = 1 ORDER BY name ASC");
+            $bStmt->execute([$districtId]);
+            $availableBlocks = $bStmt->fetchAll(PDO::FETCH_ASSOC);
+        }
+
+        // Also fetch all blocks grouped by district for instant JS switching
+        $allBlocksGrouped = [];
+        $allBlocksRows = $db->query("SELECT id, name, district_id FROM blocks WHERE is_active = 1 ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($allBlocksRows as $abr) {
+            $allBlocksGrouped[$abr['district_id']][] = [
+                'id' => (int)$abr['id'],
+                'name' => $abr['name']
+            ];
+        }
+
+        // 5. Build Backend SQL WHERE Clause
+        $where = ["1=1"];
+        $params = [];
+
+        if ($currentTab === 'PENDING') {
+            $where[] = "a.status = 'PENDING'";
+        } elseif ($currentTab === 'IN_PROCESS') {
+            $where[] = "a.status IN ('IN_PROCESS', 'UNDER_REVIEW')";
+        } elseif ($currentTab === 'APPROVED') {
+            $where[] = "a.status IN ('APPROVED', 'COMPLETED')";
+        } elseif ($currentTab === 'REJECTED') {
+            $where[] = "a.status = 'REJECTED'";
+        }
+
+        if (!empty($search)) {
+            $where[] = "(a.applicant_identifier LIKE :search1 OR a.applicant_name LIKE :search2 OR a.applicant_mobile LIKE :search3 OR a.app_ref LIKE :search4 OR a.batch_ref LIKE :search5 OR u.name LIKE :search6 OR u.mobile LIKE :search7)";
+            $searchVal = "%{$search}%";
+            $params[':search1'] = $searchVal;
+            $params[':search2'] = $searchVal;
+            $params[':search3'] = $searchVal;
+            $params[':search4'] = $searchVal;
+            $params[':search5'] = $searchVal;
+            $params[':search6'] = $searchVal;
+            $params[':search7'] = $searchVal;
+        }
+
+        if ($dateFilter === 'TODAY') {
+            $where[] = "DATE(a.created_at) = CURDATE()";
+        } elseif ($dateFilter === 'WEEK') {
+            $where[] = "a.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
+        } elseif ($dateFilter === 'MONTH') {
+            $where[] = "a.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
+        }
+
+        if ($districtId > 0) {
+            $where[] = "a.district_id = :district_id";
+            $params[':district_id'] = $districtId;
+        }
+
+        if ($blockId > 0) {
+            $where[] = "a.block_id = :block_id";
+            $params[':block_id'] = $blockId;
+        }
+
+        if (!empty($appCode)) {
+            $where[] = "(a.applicant_identifier LIKE :app_code_like OR EXISTS (SELECT 1 FROM application_field_values afv WHERE afv.application_id = a.id AND afv.field_name = 'application_code' AND UPPER(afv.field_value) = :app_code))";
+            $params[':app_code_like'] = $appCode . '%';
+            $params[':app_code'] = $appCode;
+        }
+
         $whereSql = implode(' AND ', $where);
 
         // 6. Pagination on entire dataset
         $countSql = "
             SELECT COUNT(*)
             FROM applications a
-            LEFT JOIN users u ON a.user_id = u.id
+            JOIN users u ON a.user_id = u.id
             LEFT JOIN districts d ON a.district_id = d.id
             LEFT JOIN blocks b ON a.block_id = b.id
-            LEFT JOIN data_types dt ON a.data_type_id = dt.id
+            JOIN data_types dt ON a.data_type_id = dt.id
             WHERE {$whereSql}
         ";
         $countStmt = $db->prepare($countSql);
@@ -345,12 +263,12 @@ class AdminController
                    b.name as block_name,
                    dt.name_en as service_title
             FROM applications a
-            LEFT JOIN users u ON a.user_id = u.id
+            JOIN users u ON a.user_id = u.id
             LEFT JOIN districts d ON a.district_id = d.id
             LEFT JOIN blocks b ON a.block_id = b.id
-            LEFT JOIN data_types dt ON a.data_type_id = dt.id
+            JOIN data_types dt ON a.data_type_id = dt.id
             WHERE {$whereSql}
-            ORDER BY a.updated_at DESC, a.id DESC
+            ORDER BY a.id DESC
             LIMIT {$perPage} OFFSET {$offset}
         ";
         $dataStmt = $db->prepare($dataSql);
@@ -369,11 +287,7 @@ class AdminController
                 WHERE afv.application_id IN ({$inClause})
             ")->fetchAll(PDO::FETCH_ASSOC);
             foreach ($fvRows as $fv) {
-                $v = $fv['field_value'];
-                if (is_string($v) && str_starts_with($v, 'uploads/')) {
-                    $v = '/' . $v;
-                }
-                $fieldValuesByApp[$fv['application_id']][$fv['field_name']] = $v;
+                $fieldValuesByApp[$fv['application_id']][$fv['field_name']] = $fv['field_value'];
             }
         }
 
@@ -393,14 +307,59 @@ class AdminController
 
         require dirname(__DIR__) . '/Views/admin/dashboard.php';
     }
-    // users() and directory methods provided by UserDirectoryTrait
 
+public function addLocationPermission(): void
+    {
+        if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
+            $_SESSION['flash_error'] = 'Invalid CSRF token.';
+            header('Location: /admin/users');
+            exit;
+        }
 
-    /**
-     * Create dedicated Block Operator account
-     * Strictly validates District & Block, mobile/email uniqueness, secure password hash
-     */
-    public function createOperator(): void
+        $userId = (int)($_POST['user_id'] ?? 0);
+        $districtId = (int)($_POST['district_id'] ?? 0);
+        $blockId = !empty($_POST['block_id']) ? (int)$_POST['block_id'] : null;
+
+        if ($userId && $districtId) {
+            $db = Database::getConnection();
+            $stmt = $db->prepare("
+                INSERT IGNORE INTO location_permissions (user_id, district_id, block_id, created_at)
+                VALUES (?, ?, ?, NOW())
+            ");
+            $stmt->execute([$userId, $districtId, $blockId]);
+
+            AuditService::log('LOCATION_PERM_ADDED', 'USER', (string)$userId, ['district_id' => $districtId, 'block_id' => $blockId]);
+            $_SESSION['flash_success'] = 'Location assignment added.';
+        }
+
+        header('Location: /admin/users/detail?id=' . $userId);
+        exit;
+    }
+
+    public function removeLocationPermission(): void
+    {
+        if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
+            $_SESSION['flash_error'] = 'Invalid CSRF token.';
+            header('Location: /admin/users');
+            exit;
+        }
+
+        $permId = (int)($_POST['perm_id'] ?? 0);
+        $userId = (int)($_POST['user_id'] ?? 0);
+
+        if ($permId) {
+            $db = Database::getConnection();
+            $stmt = $db->prepare("DELETE FROM location_permissions WHERE id = ?");
+            $stmt->execute([$permId]);
+            AuditService::log('LOCATION_PERM_REMOVED', 'USER', (string)$userId, ['perm_id' => $permId]);
+            $_SESSION['flash_success'] = 'Location assignment removed.';
+        }
+
+        header('Location: /admin/users/detail?id=' . $userId);
+        exit;
+    }
+
+public function createOperator(): void
     {
         if (!AuthService::isAdmin()) {
             http_response_code(403);
@@ -499,9 +458,6 @@ class AdminController
             ]);
             $newOpId = (int)$db->lastInsertId();
 
-            // Save block assignment in operator_block_assignments
-            \App\Services\StaffRoutingService::saveOperatorBlockAssignment($newOpId, $districtId, $blockId, ($status === 'ACTIVE' ? 1 : 0), AuthService::id(), $db);
-
             // Initialize operator wallet
             WalletService::getOrCreateWallet($newOpId);
 
@@ -526,10 +482,7 @@ class AdminController
         exit;
     }
 
-    /**
-     * Super Admin resets operator password
-     */
-    public function resetOperatorPassword(): void
+public function resetOperatorPassword(): void
     {
         if (!AuthService::isAdmin()) {
             http_response_code(403);
@@ -576,10 +529,7 @@ class AdminController
         exit;
     }
 
-    /**
-     * Super Admin reassigns operator District and Block
-     */
-    public function reassignOperator(): void
+public function reassignOperator(): void
     {
         if (!AuthService::isAdmin()) {
             http_response_code(403);
@@ -627,9 +577,6 @@ class AdminController
         $upd = $db->prepare("UPDATE users SET assigned_district_id = ?, assigned_block_id = ?, assigned_all_districts = 0, updated_at = NOW() WHERE id = ?");
         $upd->execute([$districtId, $blockId, $userId]);
 
-        // Save block assignment in operator_block_assignments
-        \App\Services\StaffRoutingService::saveOperatorBlockAssignment($userId, $districtId, $blockId, 1, AuthService::id(), $db);
-
         AuditService::log('OPERATOR_REASSIGNED', 'USER', (string)$userId, [
             'district_id' => $districtId,
             'district_name' => $loc['district_name'],
@@ -642,11 +589,7 @@ class AdminController
         exit;
     }
 
-    /**
-     * Super Admin grants operator access to an existing USER (Retailer)
-     * Preserves USER role and adds OPERATOR capability via user_role_assignments
-     */
-    public function grantOperatorAccess(): void
+public function grantOperatorAccess(): void
     {
         if (!AuthService::isAdmin()) {
             http_response_code(403);
@@ -733,9 +676,6 @@ class AdminController
             ");
             $insOpRole->execute([$userId, $isActive, $adminId]);
 
-            // Save block assignment in operator_block_assignments
-            \App\Services\StaffRoutingService::saveOperatorBlockAssignment($userId, $districtId, $blockId, $isActive, $adminId, $db);
-
             // Sync Application Code assignments
             \App\Services\StaffRoutingService::saveOperatorCodeAssignments($userId, $districtId, $blockId, $codes, $adminId);
 
@@ -776,10 +716,7 @@ class AdminController
         exit;
     }
 
-    /**
-     * Super Admin edits existing operator assignment for dual-role user or operator
-     */
-    public function editOperatorAssignment(): void
+public function editOperatorAssignment(): void
     {
         if (!AuthService::isAdmin()) {
             http_response_code(403);
@@ -853,9 +790,6 @@ class AdminController
                 $updRole->execute([0, $adminId, $userId]);
             }
 
-            // Save block assignment in operator_block_assignments
-            \App\Services\StaffRoutingService::saveOperatorBlockAssignment($userId, $districtId, $blockId, $isActive, $adminId, $db);
-
             // Sync codes
             \App\Services\StaffRoutingService::saveOperatorCodeAssignments($userId, $districtId, $blockId, $codes, $adminId);
 
@@ -882,240 +816,7 @@ class AdminController
         exit;
     }
 
-    /**
-     * Super Admin suspends operator access for a dual-role user
-     */
-    public function suspendOperatorAccess(): void
-    {
-        if (!AuthService::isAdmin()) {
-            http_response_code(403);
-            exit;
-        }
-
-        if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
-            $_SESSION['flash_error'] = 'Invalid CSRF token.';
-            header('Location: /admin/users');
-            exit;
-        }
-
-        $userId = (int)($_POST['user_id'] ?? 0);
-        if ($userId <= 0) {
-            $_SESSION['flash_error'] = 'Invalid user ID.';
-            header('Location: /admin/users');
-            exit;
-        }
-
-        $db = Database::getConnection();
-        $adminId = AuthService::id();
-
-        $uStmt = $db->prepare("SELECT id, name, role, assigned_district_id, assigned_block_id FROM users WHERE id = ?");
-        $uStmt->execute([$userId]);
-        $targetUser = $uStmt->fetch(PDO::FETCH_ASSOC);
-        if (!$targetUser) {
-            $_SESSION['flash_error'] = 'User not found.';
-            header('Location: /admin/users');
-            exit;
-        }
-
-        $db->beginTransaction();
-        try {
-            // Update user_role_assignments
-            $stmt = $db->prepare("UPDATE user_role_assignments SET is_active = 0, revoked_by = ?, revoked_at = NOW(), updated_at = NOW() WHERE user_id = ? AND role_code = 'OPERATOR'");
-            $stmt->execute([$adminId, $userId]);
-
-            // Deactivate code assignments
-            $stmt2 = $db->prepare("UPDATE operator_application_code_assignments SET is_active = 0, updated_at = NOW() WHERE operator_user_id = ?");
-            $stmt2->execute([$userId]);
-
-            // Deactivate block assignments
-            $stmtBlocks = $db->prepare("UPDATE operator_block_assignments SET is_active = 0, updated_at = NOW() WHERE operator_user_id = ?");
-            $stmtBlocks->execute([$userId]);
-
-            // Audit
-            AuditService::log('OPERATOR_ACCESS_SUSPENDED', 'USER', (string)$userId, [
-                'user_id' => $userId,
-                'user_name' => $targetUser['name'],
-                'district_id' => (int)($targetUser['assigned_district_id'] ?? 0),
-                'block_id' => (int)($targetUser['assigned_block_id'] ?? 0),
-                'admin_id' => $adminId,
-                'previous_status' => 'ACTIVE',
-                'new_status' => 'SUSPENDED'
-            ], $adminId, 'ADMIN');
-
-            $db->commit();
-            $_SESSION['flash_success'] = "Operator access suspended for '{$targetUser['name']}'. Retailer features remain active.";
-        } catch (\Throwable $e) {
-            if ($db->inTransaction()) {
-                $db->rollBack();
-            }
-            $_SESSION['flash_error'] = 'Failed to suspend operator access: ' . $e->getMessage();
-        }
-
-        $referer = $_SERVER['HTTP_REFERER'] ?? ('/admin/users/detail?id=' . $userId);
-        header('Location: ' . $referer);
-        exit;
-    }
-
-    /**
-     * Super Admin restores operator access for a dual-role user or operator
-     */
-    public function restoreOperatorAccess(): void
-    {
-        if (!AuthService::isAdmin()) {
-            http_response_code(403);
-            exit;
-        }
-
-        if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
-            $_SESSION['flash_error'] = 'Invalid CSRF token.';
-            header('Location: ' . ($_SERVER['HTTP_REFERER'] ?? '/admin/users'));
-            exit;
-        }
-
-        $userId = (int)($_POST['user_id'] ?? 0);
-        if ($userId <= 0) {
-            $_SESSION['flash_error'] = 'Invalid user ID.';
-            header('Location: ' . ($_SERVER['HTTP_REFERER'] ?? '/admin/users'));
-            exit;
-        }
-
-        $db = Database::getConnection();
-        $adminId = AuthService::id();
-
-        $uStmt = $db->prepare("SELECT id, name, role, assigned_district_id, assigned_block_id FROM users WHERE id = ?");
-        $uStmt->execute([$userId]);
-        $targetUser = $uStmt->fetch(PDO::FETCH_ASSOC);
-        if (!$targetUser) {
-            $_SESSION['flash_error'] = 'User not found.';
-            header('Location: ' . ($_SERVER['HTTP_REFERER'] ?? '/admin/users'));
-            exit;
-        }
-
-        $db->beginTransaction();
-        try {
-            // Restore operator role assignment
-            $stmt = $db->prepare("
-                INSERT INTO user_role_assignments (user_id, role_code, is_active, granted_by, granted_at, created_at, updated_at)
-                VALUES (?, 'OPERATOR', 1, ?, NOW(), NOW(), NOW())
-                ON DUPLICATE KEY UPDATE is_active = 1, granted_by = VALUES(granted_by), granted_at = NOW(), revoked_by = NULL, revoked_at = NULL, updated_at = NOW()
-            ");
-            $stmt->execute([$userId, $adminId]);
-
-            // Reactivate block assignments
-            $stmtBlocks = $db->prepare("UPDATE operator_block_assignments SET is_active = 1, updated_at = NOW() WHERE operator_user_id = ?");
-            $stmtBlocks->execute([$userId]);
-
-            // Reactivate code assignments
-            $stmt2 = $db->prepare("UPDATE operator_application_code_assignments SET is_active = 1, updated_at = NOW() WHERE operator_user_id = ?");
-            $stmt2->execute([$userId]);
-
-            AuditService::log('OPERATOR_ACCESS_RESTORED', 'USER', (string)$userId, [
-                'user_id' => $userId,
-                'user_name' => $targetUser['name'],
-                'admin_id' => $adminId,
-                'status' => 'ACTIVE'
-            ], $adminId, 'ADMIN');
-
-            $db->commit();
-            $_SESSION['flash_success'] = "Operator access restored for '{$targetUser['name']}'.";
-        } catch (\Throwable $e) {
-            if ($db->inTransaction()) {
-                $db->rollBack();
-            }
-            $_SESSION['flash_error'] = 'Failed to restore operator access: ' . $e->getMessage();
-        }
-
-        $referer = $_SERVER['HTTP_REFERER'] ?? ('/admin/users/detail?id=' . $userId);
-        header('Location: ' . $referer);
-        exit;
-    }
-
-    /**
-     * Super Admin removes operator access completely from a dual-role user
-     * Does NOT delete the user, wallet, submitted applications, or passbook
-     */
-    public function removeOperatorAccess(): void
-    {
-        if (!AuthService::isAdmin()) {
-            http_response_code(403);
-            exit;
-        }
-
-        if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
-            $_SESSION['flash_error'] = 'Invalid CSRF token.';
-            header('Location: /admin/users');
-            exit;
-        }
-
-        $userId = (int)($_POST['user_id'] ?? 0);
-        if ($userId <= 0) {
-            $_SESSION['flash_error'] = 'Invalid user ID.';
-            header('Location: /admin/users');
-            exit;
-        }
-
-        $db = Database::getConnection();
-        $adminId = AuthService::id();
-
-        $uStmt = $db->prepare("SELECT id, name, role, assigned_district_id, assigned_block_id FROM users WHERE id = ?");
-        $uStmt->execute([$userId]);
-        $targetUser = $uStmt->fetch(PDO::FETCH_ASSOC);
-        if (!$targetUser) {
-            $_SESSION['flash_error'] = 'User not found.';
-            header('Location: /admin/users');
-            exit;
-        }
-
-        $db->beginTransaction();
-        try {
-            // Mark operator role assignment revoked
-            $stmt = $db->prepare("UPDATE user_role_assignments SET is_active = 0, revoked_by = ?, revoked_at = NOW(), updated_at = NOW() WHERE user_id = ? AND role_code = 'OPERATOR'");
-            $stmt->execute([$adminId, $userId]);
-
-            // Deactivate code assignments
-            $stmt2 = $db->prepare("UPDATE operator_application_code_assignments SET is_active = 0, updated_at = NOW() WHERE operator_user_id = ?");
-            $stmt2->execute([$userId]);
-
-            // Deactivate block assignments
-            $stmtBlocks = $db->prepare("UPDATE operator_block_assignments SET is_active = 0, updated_at = NOW() WHERE operator_user_id = ?");
-            $stmtBlocks->execute([$userId]);
-
-            // If user is a USER (retailer), clear operator district and block assignment
-            if ($targetUser['role'] === 'USER') {
-                $stmt3 = $db->prepare("UPDATE users SET assigned_district_id = NULL, assigned_block_id = NULL, updated_at = NOW() WHERE id = ?");
-                $stmt3->execute([$userId]);
-            }
-
-            // Audit
-            AuditService::log('OPERATOR_ACCESS_REVOKED', 'USER', (string)$userId, [
-                'user_id' => $userId,
-                'user_name' => $targetUser['name'],
-                'district_id' => (int)($targetUser['assigned_district_id'] ?? 0),
-                'block_id' => (int)($targetUser['assigned_block_id'] ?? 0),
-                'admin_id' => $adminId,
-                'previous_status' => 'ACTIVE',
-                'new_status' => 'REVOKED'
-            ], $adminId, 'ADMIN');
-
-            $db->commit();
-            $_SESSION['flash_success'] = "Operator access removed for '{$targetUser['name']}'. Retailer wallet, submissions, and passbook history remain intact.";
-        } catch (\Throwable $e) {
-            if ($db->inTransaction()) {
-                $db->rollBack();
-            }
-            $_SESSION['flash_error'] = 'Failed to remove operator access: ' . $e->getMessage();
-        }
-
-        $referer = $_SERVER['HTTP_REFERER'] ?? ('/admin/users/detail?id=' . $userId);
-        header('Location: ' . $referer);
-        exit;
-    }
-
-    /**
-     * AJAX endpoint: fetch operator assignments
-     * GET /admin/operators/api-assignments?user_id=123
-     */
-    public function apiOperatorAssignments(): void
+public function apiOperatorAssignments(): void
     {
         header('Content-Type: application/json; charset=utf-8');
         if (!AuthService::isAdmin()) {
@@ -1195,11 +896,7 @@ class AdminController
         exit;
     }
 
-    /**
-     * Add or update an individual block assignment with application codes for an operator
-     * POST /admin/operators/save-block-assignment
-     */
-    public function saveOperatorBlockAssignment(): void
+public function saveOperatorBlockAssignment(): void
     {
         if (!AuthService::isAdmin()) {
             http_response_code(403);
@@ -1362,16 +1059,11 @@ class AdminController
             $_SESSION['flash_error'] = $errMsg;
         }
 
-        $referer = $_SERVER['HTTP_REFERER'] ?? ('/admin/users/detail?id=' . $userId);
-        header('Location: ' . $referer);
+        header('Location: /admin/users');
         exit;
     }
 
-    /**
-     * Toggle active/inactive status of a specific block assignment
-     * POST /admin/operators/toggle-block-assignment
-     */
-    public function toggleOperatorBlockAssignment(): void
+public function toggleOperatorBlockAssignment(): void
     {
         if (!AuthService::isAdmin()) {
             http_response_code(403);
@@ -1421,11 +1113,7 @@ class AdminController
         }
     }
 
-    /**
-     * Remove / deactivate a specific block assignment without touching unrelated assignments
-     * POST /admin/operators/remove-block-assignment
-     */
-    public function removeOperatorBlockAssignment(): void
+public function removeOperatorBlockAssignment(): void
     {
         if (!AuthService::isAdmin()) {
             http_response_code(403);
@@ -1489,255 +1177,225 @@ class AdminController
         }
     }
 
-    private function isAjaxRequest(): bool
+public function suspendOperatorAccess(): void
     {
-        return (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest')
-            || (str_starts_with($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json'))
-            || (str_contains($_SERVER['CONTENT_TYPE'] ?? '', 'application/json'));
-    }
+        if (!AuthService::isAdmin()) {
+            http_response_code(403);
+            exit;
+        }
 
-    public function userDetail(): void
-    {
-        $userId = (int)($_GET['id'] ?? 0);
+        if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
+            $_SESSION['flash_error'] = 'Invalid CSRF token.';
+            header('Location: /admin/users');
+            exit;
+        }
+
+        $userId = (int)($_POST['user_id'] ?? 0);
+        if ($userId <= 0) {
+            $_SESSION['flash_error'] = 'Invalid user ID.';
+            header('Location: /admin/users');
+            exit;
+        }
+
         $db = Database::getConnection();
+        $adminId = AuthService::id();
 
-        $stmt = $db->prepare("
-            SELECT u.*, p.name as distributor_name, w.balance, w.total_credited, w.total_debited,
-                   pd.name as profile_district_name, pd.name_hi as profile_district_name_hi,
-                   pb.name as profile_block_name, pb.name_hi as profile_block_name_hi,
-                   pb.district_id as block_actual_district_id
-            FROM users u
-            LEFT JOIN districts pd ON u.profile_district_id = pd.id
-            LEFT JOIN blocks pb ON u.profile_block_id = pb.id
-            LEFT JOIN users p ON u.parent_distributor_id = p.id
-            LEFT JOIN wallets w ON u.id = w.user_id
-            WHERE u.id = ?
-        ");
-        $stmt->execute([$userId]);
-        $targetUser = $stmt->fetch();
-
+        $uStmt = $db->prepare("SELECT id, name, role, assigned_district_id, assigned_block_id FROM users WHERE id = ?");
+        $uStmt->execute([$userId]);
+        $targetUser = $uStmt->fetch(PDO::FETCH_ASSOC);
         if (!$targetUser) {
             $_SESSION['flash_error'] = 'User not found.';
             header('Location: /admin/users');
             exit;
         }
 
-        // Permitted locations (legacy location_permissions)
-        $permStmt = $db->prepare("
-            SELECT lp.id, d.name as district_name, d.id as district_id, b.name as block_name, b.id as block_id
-            FROM location_permissions lp
-            JOIN districts d ON lp.district_id = d.id
-            LEFT JOIN blocks b ON lp.block_id = b.id
-            WHERE lp.user_id = ?
-        ");
-        $permStmt->execute([$userId]);
-        $permissions = $permStmt->fetchAll();
+        $db->beginTransaction();
+        try {
+            // Update user_role_assignments
+            $stmt = $db->prepare("UPDATE user_role_assignments SET is_active = 0, revoked_by = ?, revoked_at = NOW(), updated_at = NOW() WHERE user_id = ? AND role_code = 'OPERATOR'");
+            $stmt->execute([$adminId, $userId]);
 
-        // Operator dual-role assignment info
-        $roleActiveStmt = $db->prepare("SELECT is_active FROM user_role_assignments WHERE user_id = ? AND role_code = 'OPERATOR' LIMIT 1");
-        $roleActiveStmt->execute([$userId]);
-        $hasRoleAssignment = $roleActiveStmt->fetch(PDO::FETCH_ASSOC);
-        $hasOperatorCapability = ($hasRoleAssignment !== false) || ($targetUser['role'] === 'OPERATOR');
-        $operatorAccessActive = $hasRoleAssignment ? ((int)$hasRoleAssignment['is_active'] === 1) : ($targetUser['role'] === 'OPERATOR' && $targetUser['status'] === 'ACTIVE');
+            // Deactivate code assignments
+            $stmt2 = $db->prepare("UPDATE operator_application_code_assignments SET is_active = 0, updated_at = NOW() WHERE operator_user_id = ?");
+            $stmt2->execute([$userId]);
 
-        // Fetch assigned blocks from operator_block_assignments
-        $bStmt = $db->prepare("
-            SELECT oba.id, oba.district_id, oba.block_id, oba.is_active,
-                   d.name as district_name, b.name as block_name
-            FROM operator_block_assignments oba
-            JOIN districts d ON oba.district_id = d.id
-            JOIN blocks b ON oba.block_id = b.id
-            WHERE oba.operator_user_id = ?
-            ORDER BY oba.is_active DESC, d.name ASC, b.name ASC
-        ");
-        $bStmt->execute([$userId]);
-        $assignedBlockRows = $bStmt->fetchAll(PDO::FETCH_ASSOC);
+            // Deactivate block assignments
+            $stmtBlocks = $db->prepare("UPDATE operator_block_assignments SET is_active = 0, updated_at = NOW() WHERE operator_user_id = ?");
+            $stmtBlocks->execute([$userId]);
 
-        // Fetch codes per block
-        $cStmt = $db->prepare("
-            SELECT district_id, block_id, application_code, is_active
-            FROM operator_application_code_assignments
-            WHERE operator_user_id = ? AND is_active = 1
-            ORDER BY application_code ASC
-        ");
-        $cStmt->execute([$userId]);
-        $codeRows = $cStmt->fetchAll(PDO::FETCH_ASSOC);
+            // Audit
+            AuditService::log('OPERATOR_ACCESS_SUSPENDED', 'USER', (string)$userId, [
+                'user_id' => $userId,
+                'user_name' => $targetUser['name'],
+                'district_id' => (int)($targetUser['assigned_district_id'] ?? 0),
+                'block_id' => (int)($targetUser['assigned_block_id'] ?? 0),
+                'admin_id' => $adminId,
+                'previous_status' => 'ACTIVE',
+                'new_status' => 'SUSPENDED'
+            ], $adminId, 'ADMIN');
 
-        $codesByBlock = [];
-        foreach ($codeRows as $c) {
-            $key = (int)$c['district_id'] . '_' . (int)$c['block_id'];
-            $codesByBlock[$key][] = $c['application_code'];
+            $db->commit();
+            $_SESSION['flash_success'] = "Operator access suspended for '{$targetUser['name']}'. Retailer features remain active.";
+        } catch (\Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            $_SESSION['flash_error'] = 'Failed to suspend operator access: ' . $e->getMessage();
         }
 
-        foreach ($assignedBlockRows as &$blk) {
-            $key = (int)$blk['district_id'] . '_' . (int)$blk['block_id'];
-            $blk['codes'] = $codesByBlock[$key] ?? [];
-        }
-        unset($blk);
-
-        // Fetch all application codes configured in service_rate_rules or fallback list
-        $allApplicationCodes = $db->query("
-            SELECT DISTINCT application_code
-            FROM service_rate_rules
-            WHERE application_code IS NOT NULL AND application_code != '' AND application_code != '*' AND is_active = 1
-            ORDER BY application_code ASC
-        ")->fetchAll(PDO::FETCH_COLUMN);
-        if (empty($allApplicationCodes)) {
-            $allApplicationCodes = ['BICCO', 'BCCCO', 'BRCCO', 'BOBC', 'NCLCO', 'RTPS', 'LABOURCARD', 'OTHER'];
-        }
-
-        // Recent user transactions
-        $passbook = WalletService::getPassbook($userId, 10, 0);
-
-        // District list for adding permission / operator block
-        $districts = $db->query("SELECT id, name, name_hi FROM districts WHERE is_active = 1 ORDER BY name ASC")->fetchAll();
-        $distributors = $db->query("SELECT id, name FROM users WHERE role = 'DISTRIBUTOR' AND status = 'ACTIVE' ORDER BY name ASC")->fetchAll();
-
-        $allBlocksGrouped = [];
-        $blocksRows = $db->query("SELECT id, name, name_hi, district_id FROM blocks WHERE is_active = 1 ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
-        foreach ($blocksRows as $br) {
-            $allBlocksGrouped[$br['district_id']][] = [
-                'id' => (int)$br['id'],
-                'name' => $br['name'],
-                'name_hi' => $br['name_hi'] ?? ''
-            ];
-        }
-
-        require dirname(__DIR__) . '/Views/admin/user_detail.php';
+        header('Location: /admin/users');
+        exit;
     }
 
-    public function updateUserStatus(): void
+public function restoreOperatorAccess(): void
     {
+        if (!AuthService::isAdmin()) {
+            http_response_code(403);
+            exit;
+        }
+
         if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
             $_SESSION['flash_error'] = 'Invalid CSRF token.';
-            header('Location: /admin/users');
+            header('Location: ' . ($_SERVER['HTTP_REFERER'] ?? '/admin/users'));
             exit;
         }
 
         $userId = (int)($_POST['user_id'] ?? 0);
-        $newStatus = trim($_POST['status'] ?? '');
-        $distributorId = !empty($_POST['parent_distributor_id']) ? (int)$_POST['parent_distributor_id'] : null;
-        $assignAll = isset($_POST['assigned_all_districts']) ? 1 : 0;
+        if ($userId <= 0) {
+            $_SESSION['flash_error'] = 'Invalid user ID.';
+            header('Location: ' . ($_SERVER['HTTP_REFERER'] ?? '/admin/users'));
+            exit;
+        }
 
         $db = Database::getConnection();
+        $adminId = AuthService::id();
 
-        // 1. Validate target user existence
-        $targetStmt = $db->prepare("SELECT id, role, status FROM users WHERE id = ?");
-        $targetStmt->execute([$userId]);
-        $targetUser = $targetStmt->fetch();
-
+        $uStmt = $db->prepare("SELECT id, name, role, assigned_district_id, assigned_block_id FROM users WHERE id = ?");
+        $uStmt->execute([$userId]);
+        $targetUser = $uStmt->fetch(PDO::FETCH_ASSOC);
         if (!$targetUser) {
-            $_SESSION['flash_error'] = 'Target user does not exist.';
-            header('Location: /admin/users');
+            $_SESSION['flash_error'] = 'User not found.';
+            header('Location: ' . ($_SERVER['HTTP_REFERER'] ?? '/admin/users'));
             exit;
         }
 
-        // 2. Validate allowed status
-        $allowedStatuses = ['ACTIVE', 'INACTIVE', 'BLOCKED', 'PENDING_APPROVAL'];
-        if (!in_array($newStatus, $allowedStatuses, true)) {
-            $_SESSION['flash_error'] = 'Invalid user account status requested.';
-            header('Location: /admin/users/detail?id=' . $userId);
-            exit;
-        }
-
-        // 3. Self-lockout prevention
-        $currentAdminId = AuthService::id();
-        if ($userId === $currentAdminId && $newStatus !== 'ACTIVE') {
-            $_SESSION['flash_error'] = 'Action prevented: You cannot deactivate, block, or lock out your own administrator account.';
-            header('Location: /admin/users/detail?id=' . $userId);
-            exit;
-        }
-
-        // 4. Validate parent distributor if provided
-        if ($distributorId !== null) {
-            if ($distributorId === $userId) {
-                $_SESSION['flash_error'] = 'A user cannot be assigned as their own parent distributor.';
-                header('Location: /admin/users/detail?id=' . $userId);
-                exit;
-            }
-            $dStmt = $db->prepare("SELECT id FROM users WHERE id = ? AND role = 'DISTRIBUTOR'");
-            $dStmt->execute([$distributorId]);
-            if (!$dStmt->fetch()) {
-                $_SESSION['flash_error'] = 'Selected parent distributor is not a valid active distributor.';
-                header('Location: /admin/users/detail?id=' . $userId);
-                exit;
-            }
-        }
-
-        if ($targetUser['role'] === 'OPERATOR') {
-            $assignAll = 0;
-        }
-
-        $stmt = $db->prepare("
-            UPDATE users
-            SET status = ?,
-                parent_distributor_id = ?,
-                assigned_all_districts = ?,
-                updated_at = NOW()
-            WHERE id = ?
-        ");
-        $stmt->execute([$newStatus, $distributorId, $assignAll, $userId]);
-
-        AuditService::log('USER_UPDATE', 'USER', (string)$userId, ['role' => $targetUser['role'], 'status' => $newStatus, 'distributor_id' => $distributorId]);
-
-        $_SESSION['flash_success'] = 'User account status updated successfully.';
-        $redirectUrl = (!empty($_POST['redirect']) && $_POST['redirect'] === 'users') ? '/admin/users' : '/admin/users/detail?id=' . $userId;
-        header('Location: ' . $redirectUrl);
-        exit;
-    }
-
-    public function addLocationPermission(): void
-    {
-        if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
-            $_SESSION['flash_error'] = 'Invalid CSRF token.';
-            header('Location: /admin/users');
-            exit;
-        }
-
-        $userId = (int)($_POST['user_id'] ?? 0);
-        $districtId = (int)($_POST['district_id'] ?? 0);
-        $blockId = !empty($_POST['block_id']) ? (int)$_POST['block_id'] : null;
-
-        if ($userId && $districtId) {
-            $db = Database::getConnection();
+        $db->beginTransaction();
+        try {
+            // Restore operator role assignment
             $stmt = $db->prepare("
-                INSERT IGNORE INTO location_permissions (user_id, district_id, block_id, created_at)
-                VALUES (?, ?, ?, NOW())
+                INSERT INTO user_role_assignments (user_id, role_code, is_active, granted_by, granted_at, created_at, updated_at)
+                VALUES (?, 'OPERATOR', 1, ?, NOW(), NOW(), NOW())
+                ON DUPLICATE KEY UPDATE is_active = 1, granted_by = VALUES(granted_by), granted_at = NOW(), revoked_by = NULL, revoked_at = NULL, updated_at = NOW()
             ");
-            $stmt->execute([$userId, $districtId, $blockId]);
+            $stmt->execute([$userId, $adminId]);
 
-            AuditService::log('LOCATION_PERM_ADDED', 'USER', (string)$userId, ['district_id' => $districtId, 'block_id' => $blockId]);
-            $_SESSION['flash_success'] = 'Location assignment added.';
+            // Reactivate block assignments
+            $stmtBlocks = $db->prepare("UPDATE operator_block_assignments SET is_active = 1, updated_at = NOW() WHERE operator_user_id = ?");
+            $stmtBlocks->execute([$userId]);
+
+            // Reactivate code assignments
+            $stmt2 = $db->prepare("UPDATE operator_application_code_assignments SET is_active = 1, updated_at = NOW() WHERE operator_user_id = ?");
+            $stmt2->execute([$userId]);
+
+            AuditService::log('OPERATOR_ACCESS_RESTORED', 'USER', (string)$userId, [
+                'user_id' => $userId,
+                'user_name' => $targetUser['name'],
+                'admin_id' => $adminId,
+                'status' => 'ACTIVE'
+            ], $adminId, 'ADMIN');
+
+            $db->commit();
+            $_SESSION['flash_success'] = "Operator access restored for '{$targetUser['name']}'.";
+        } catch (\Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            $_SESSION['flash_error'] = 'Failed to restore operator access: ' . $e->getMessage();
         }
 
-        header('Location: /admin/users/detail?id=' . $userId);
+        $referer = $_SERVER['HTTP_REFERER'] ?? ('/admin/users/detail?id=' . $userId);
+        header('Location: ' . $referer);
         exit;
     }
 
-    public function removeLocationPermission(): void
+public function removeOperatorAccess(): void
     {
+        if (!AuthService::isAdmin()) {
+            http_response_code(403);
+            exit;
+        }
+
         if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
             $_SESSION['flash_error'] = 'Invalid CSRF token.';
             header('Location: /admin/users');
             exit;
         }
 
-        $permId = (int)($_POST['perm_id'] ?? 0);
         $userId = (int)($_POST['user_id'] ?? 0);
-
-        if ($permId) {
-            $db = Database::getConnection();
-            $stmt = $db->prepare("DELETE FROM location_permissions WHERE id = ?");
-            $stmt->execute([$permId]);
-            AuditService::log('LOCATION_PERM_REMOVED', 'USER', (string)$userId, ['perm_id' => $permId]);
-            $_SESSION['flash_success'] = 'Location assignment removed.';
+        if ($userId <= 0) {
+            $_SESSION['flash_error'] = 'Invalid user ID.';
+            header('Location: /admin/users');
+            exit;
         }
 
-        header('Location: /admin/users/detail?id=' . $userId);
+        $db = Database::getConnection();
+        $adminId = AuthService::id();
+
+        $uStmt = $db->prepare("SELECT id, name, role, assigned_district_id, assigned_block_id FROM users WHERE id = ?");
+        $uStmt->execute([$userId]);
+        $targetUser = $uStmt->fetch(PDO::FETCH_ASSOC);
+        if (!$targetUser) {
+            $_SESSION['flash_error'] = 'User not found.';
+            header('Location: /admin/users');
+            exit;
+        }
+
+        $db->beginTransaction();
+        try {
+            // Mark operator role assignment revoked
+            $stmt = $db->prepare("UPDATE user_role_assignments SET is_active = 0, revoked_by = ?, revoked_at = NOW(), updated_at = NOW() WHERE user_id = ? AND role_code = 'OPERATOR'");
+            $stmt->execute([$adminId, $userId]);
+
+            // Deactivate code assignments
+            $stmt2 = $db->prepare("UPDATE operator_application_code_assignments SET is_active = 0, updated_at = NOW() WHERE operator_user_id = ?");
+            $stmt2->execute([$userId]);
+
+            // Deactivate block assignments
+            $stmtBlocks = $db->prepare("UPDATE operator_block_assignments SET is_active = 0, updated_at = NOW() WHERE operator_user_id = ?");
+            $stmtBlocks->execute([$userId]);
+
+            // If user is a USER (retailer), clear operator district and block assignment
+            if ($targetUser['role'] === 'USER') {
+                $stmt3 = $db->prepare("UPDATE users SET assigned_district_id = NULL, assigned_block_id = NULL, updated_at = NOW() WHERE id = ?");
+                $stmt3->execute([$userId]);
+            }
+
+            // Audit
+            AuditService::log('OPERATOR_ACCESS_REVOKED', 'USER', (string)$userId, [
+                'user_id' => $userId,
+                'user_name' => $targetUser['name'],
+                'district_id' => (int)($targetUser['assigned_district_id'] ?? 0),
+                'block_id' => (int)($targetUser['assigned_block_id'] ?? 0),
+                'admin_id' => $adminId,
+                'previous_status' => 'ACTIVE',
+                'new_status' => 'REVOKED'
+            ], $adminId, 'ADMIN');
+
+            $db->commit();
+            $_SESSION['flash_success'] = "Operator access removed for '{$targetUser['name']}'. Retailer wallet, submissions, and passbook history remain intact.";
+        } catch (\Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            $_SESSION['flash_error'] = 'Failed to remove operator access: ' . $e->getMessage();
+        }
+
+        $referer = $_SERVER['HTTP_REFERER'] ?? ('/admin/users/detail?id=' . $userId);
+        header('Location: ' . $referer);
         exit;
     }
 
-    public function manualWalletAdjustment(): void
+public function manualWalletAdjustment(): void
     {
         if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
             $_SESSION['flash_error'] = 'Invalid CSRF token.';
@@ -1795,7 +1453,7 @@ class AdminController
         exit;
     }
 
-    public function auditLogs(): void
+public function auditLogs(): void
     {
         $db = Database::getConnection();
 
@@ -1842,7 +1500,7 @@ class AdminController
         require dirname(__DIR__) . '/Views/admin/audit_logs.php';
     }
 
-    public function whatsappLogs(): void
+public function whatsappLogs(): void
     {
         $db = Database::getConnection();
 
@@ -1929,7 +1587,7 @@ class AdminController
         require dirname(__DIR__) . '/Views/admin/whatsapp_logs.php';
     }
 
-    public function whatsappRetry(): void
+public function whatsappRetry(): void
     {
         if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
             $_SESSION['flash_error'] = 'Invalid CSRF token.';
@@ -1955,10 +1613,184 @@ class AdminController
         exit;
     }
 
-    /**
-     * Admin Staff Routing Management Page
-     */
-    public function staffRouting(): void
+public function userDetail(): void
+    {
+        $userId = (int)($_GET['id'] ?? 0);
+        $db = Database::getConnection();
+
+        $stmt = $db->prepare("
+            SELECT u.*, p.name as distributor_name, w.balance, w.total_credited, w.total_debited
+            FROM users u
+            LEFT JOIN users p ON u.parent_distributor_id = p.id
+            LEFT JOIN wallets w ON u.id = w.user_id
+            WHERE u.id = ?
+        ");
+        $stmt->execute([$userId]);
+        $targetUser = $stmt->fetch();
+
+        if (!$targetUser) {
+            $_SESSION['flash_error'] = 'User not found.';
+            header('Location: /admin/users');
+            exit;
+        }
+
+        // Permitted locations (legacy location_permissions)
+        $permStmt = $db->prepare("
+            SELECT lp.id, d.name as district_name, d.id as district_id, b.name as block_name, b.id as block_id
+            FROM location_permissions lp
+            JOIN districts d ON lp.district_id = d.id
+            LEFT JOIN blocks b ON lp.block_id = b.id
+            WHERE lp.user_id = ?
+        ");
+        $permStmt->execute([$userId]);
+        $permissions = $permStmt->fetchAll();
+
+        // Operator dual-role assignment info
+        $roleActiveStmt = $db->prepare("SELECT is_active FROM user_role_assignments WHERE user_id = ? AND role_code = 'OPERATOR' LIMIT 1");
+        $roleActiveStmt->execute([$userId]);
+        $hasRoleAssignment = $roleActiveStmt->fetch(PDO::FETCH_ASSOC);
+        $hasOperatorCapability = ($hasRoleAssignment !== false) || ($targetUser['role'] === 'OPERATOR');
+        $operatorAccessActive = $hasRoleAssignment ? ((int)$hasRoleAssignment['is_active'] === 1) : ($targetUser['role'] === 'OPERATOR' && $targetUser['status'] === 'ACTIVE');
+
+        // Fetch assigned blocks from operator_block_assignments
+        $bStmt = $db->prepare("
+            SELECT oba.id, oba.district_id, oba.block_id, oba.is_active,
+                   d.name as district_name, b.name as block_name
+            FROM operator_block_assignments oba
+            JOIN districts d ON oba.district_id = d.id
+            JOIN blocks b ON oba.block_id = b.id
+            WHERE oba.operator_user_id = ?
+            ORDER BY oba.is_active DESC, d.name ASC, b.name ASC
+        ");
+        $bStmt->execute([$userId]);
+        $assignedBlockRows = $bStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Fetch codes per block
+        $cStmt = $db->prepare("
+            SELECT district_id, block_id, application_code, is_active
+            FROM operator_application_code_assignments
+            WHERE operator_user_id = ? AND is_active = 1
+            ORDER BY application_code ASC
+        ");
+        $cStmt->execute([$userId]);
+        $codeRows = $cStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $codesByBlock = [];
+        foreach ($codeRows as $c) {
+            $key = (int)$c['district_id'] . '_' . (int)$c['block_id'];
+            $codesByBlock[$key][] = $c['application_code'];
+        }
+
+        foreach ($assignedBlockRows as &$blk) {
+            $key = (int)$blk['district_id'] . '_' . (int)$blk['block_id'];
+            $blk['codes'] = $codesByBlock[$key] ?? [];
+        }
+        unset($blk);
+
+        // Fetch all application codes configured in service_rate_rules or fallback list
+        $allApplicationCodes = $db->query("
+            SELECT DISTINCT application_code
+            FROM service_rate_rules
+            WHERE application_code IS NOT NULL AND application_code != '' AND application_code != '*' AND is_active = 1
+            ORDER BY application_code ASC
+        ")->fetchAll(PDO::FETCH_COLUMN);
+        if (empty($allApplicationCodes)) {
+            $allApplicationCodes = ['BICCO', 'BCCCO', 'BRCCO', 'BOBC', 'NCLCO', 'RTPS', 'LABOURCARD', 'OTHER'];
+        }
+
+        // Recent user transactions
+        $passbook = WalletService::getPassbook($userId, 10, 0);
+
+        // District list for adding permission / operator block
+        $districts = $db->query("SELECT id, name, name_hi FROM districts WHERE is_active = 1 ORDER BY name ASC")->fetchAll();
+        $distributors = $db->query("SELECT id, name FROM users WHERE role = 'DISTRIBUTOR' AND status = 'ACTIVE' ORDER BY name ASC")->fetchAll();
+
+        require dirname(__DIR__) . '/Views/admin/user_detail.php';
+    }
+
+public function updateUserStatus(): void
+    {
+        if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
+            $_SESSION['flash_error'] = 'Invalid CSRF token.';
+            header('Location: /admin/users');
+            exit;
+        }
+
+        $userId = (int)($_POST['user_id'] ?? 0);
+        $newStatus = trim($_POST['status'] ?? '');
+        $distributorId = !empty($_POST['parent_distributor_id']) ? (int)$_POST['parent_distributor_id'] : null;
+        $assignAll = isset($_POST['assigned_all_districts']) ? 1 : 0;
+
+        $db = Database::getConnection();
+
+        // 1. Validate target user existence
+        $targetStmt = $db->prepare("SELECT id, role, status FROM users WHERE id = ?");
+        $targetStmt->execute([$userId]);
+        $targetUser = $targetStmt->fetch();
+
+        if (!$targetUser) {
+            $_SESSION['flash_error'] = 'Target user does not exist.';
+            header('Location: /admin/users');
+            exit;
+        }
+
+        // 2. Validate allowed status
+        $allowedStatuses = ['ACTIVE', 'INACTIVE', 'BLOCKED', 'PENDING_APPROVAL'];
+        if (!in_array($newStatus, $allowedStatuses, true)) {
+            $_SESSION['flash_error'] = 'Invalid user account status requested.';
+            header('Location: /admin/users/detail?id=' . $userId);
+            exit;
+        }
+
+        // 3. Self-lockout prevention
+        $currentAdminId = AuthService::id();
+        if ($userId === $currentAdminId && $newStatus !== 'ACTIVE') {
+            $_SESSION['flash_error'] = 'Action prevented: You cannot deactivate, block, or lock out your own administrator account.';
+            header('Location: /admin/users/detail?id=' . $userId);
+            exit;
+        }
+
+        // 4. Validate parent distributor if provided
+        if ($distributorId !== null) {
+            if ($distributorId === $userId) {
+                $_SESSION['flash_error'] = 'A user cannot be assigned as their own parent distributor.';
+                header('Location: /admin/users/detail?id=' . $userId);
+                exit;
+            }
+            $dStmt = $db->prepare("SELECT id FROM users WHERE id = ? AND role = 'DISTRIBUTOR'");
+            $dStmt->execute([$distributorId]);
+            if (!$dStmt->fetch()) {
+                $_SESSION['flash_error'] = 'Selected parent distributor is not a valid active distributor.';
+                header('Location: /admin/users/detail?id=' . $userId);
+                exit;
+            }
+        }
+
+        $stmt = $db->prepare("
+            UPDATE users
+            SET status = ?,
+                parent_distributor_id = ?,
+                assigned_all_districts = ?,
+                updated_at = NOW()
+            WHERE id = ?
+        ");
+        $stmt->execute([$newStatus, $distributorId, $assignAll, $userId]);
+
+        AuditService::log('USER_UPDATE', 'USER', (string)$userId, ['status' => $newStatus, 'distributor_id' => $distributorId]);
+
+        $_SESSION['flash_success'] = 'User account updated successfully.';
+        header('Location: /admin/users/detail?id=' . $userId);
+        exit;
+    }
+
+private function isAjaxRequest(): bool
+    {
+        return (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest')
+            || (str_starts_with($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json'))
+            || (str_contains($_SERVER['CONTENT_TYPE'] ?? '', 'application/json'));
+    }
+
+public function staffRouting(): void
     {
         AuthService::requireRole(['ADMIN']);
         $db = Database::getConnection();
@@ -1966,10 +1798,7 @@ class AdminController
         $districtId = !empty($_GET['district_id']) ? (int)$_GET['district_id'] : 0;
         $blockId = !empty($_GET['block_id']) ? (int)$_GET['block_id'] : 0;
         $appCode = strtoupper(trim($_GET['app_code'] ?? ''));
-        $staffStatus = strtoupper(trim($_GET['status'] ?? $_GET['staff_status'] ?? 'ALL'));
-        if (!in_array($staffStatus, ['ALL', 'ACTIVE', 'INACTIVE'], true)) {
-            $staffStatus = 'ALL';
-        }
+        $staffStatus = strtoupper(trim($_GET['staff_status'] ?? 'ALL'));
         $search = trim($_GET['search'] ?? '');
 
         // Fetch active districts for filter
@@ -1983,9 +1812,18 @@ class AdminController
         }
 
         // Query operators
-        // Query operators (both dedicated and dual-role)
-        $where = ["(u.role = 'OPERATOR' OR EXISTS (SELECT 1 FROM user_role_assignments ura WHERE ura.user_id = u.id AND ura.role_code = 'OPERATOR' AND ura.is_active = 1))"];
+        $where = ["u.role = 'OPERATOR'"];
         $params = [];
+
+        if ($districtId > 0) {
+            $where[] = "u.assigned_district_id = :district_id";
+            $params[':district_id'] = $districtId;
+        }
+
+        if ($blockId > 0) {
+            $where[] = "u.assigned_block_id = :block_id";
+            $params[':block_id'] = $blockId;
+        }
 
         if ($staffStatus === 'ACTIVE') {
             $where[] = "u.status = 'ACTIVE'";
@@ -2000,11 +1838,13 @@ class AdminController
 
         $whereClause = implode(' AND ', $where);
         $sql = "
-            SELECT u.id, u.name, u.mobile, u.email, u.status, u.role,
-                   u.assigned_district_id, u.assigned_block_id
+            SELECT u.id, u.name, u.mobile, u.email, u.status, u.assigned_district_id, u.assigned_block_id,
+                   d.name as district_name, b.name as block_name
             FROM users u
+            LEFT JOIN districts d ON u.assigned_district_id = d.id
+            LEFT JOIN blocks b ON u.assigned_block_id = b.id
             WHERE {$whereClause}
-            ORDER BY u.status = 'ACTIVE' DESC, u.name ASC
+            ORDER BY u.status = 'ACTIVE' DESC, d.name ASC, b.name ASC, u.name ASC
         ";
 
         $stmt = $db->prepare($sql);
@@ -2029,92 +1869,38 @@ class AdminController
 
         $staffList = [];
         foreach ($allOperators as $op) {
-            $opId = (int)$op['id'];
-            $blocksAssigned = AuthService::getOperatorAssignedBlocks($opId);
+            $opDist = (int)($op['assigned_district_id'] ?? 0);
+            $opBlk = (int)($op['assigned_block_id'] ?? 0);
 
-            if ($districtId > 0) {
-                $blocksAssigned = array_values(array_filter($blocksAssigned, fn($b) => (int)$b['district_id'] === $districtId));
-            }
-            if ($blockId > 0) {
-                $blocksAssigned = array_values(array_filter($blocksAssigned, fn($b) => (int)$b['block_id'] === $blockId));
+            $assignedCodes = [];
+            if ($opDist > 0 && $opBlk > 0) {
+                $codeStmt->execute([(int)$op['id'], $opDist, $opBlk]);
+                $assignedCodes = $codeStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
             }
 
-            if (($districtId > 0 || $blockId > 0) && empty($blocksAssigned)) {
+            // Filter by appCode if specified
+            if (!empty($appCode) && !in_array($appCode, $assignedCodes, true)) {
                 continue;
             }
 
-            $countStmt->execute([$opId]);
+            $countStmt->execute([(int)$op['id']]);
             $counts = $countStmt->fetch(PDO::FETCH_ASSOC) ?: ['pending_count' => 0, 'in_process_count' => 0];
 
-            if (!empty($blocksAssigned)) {
-                foreach ($blocksAssigned as $bIdx => $ba) {
-                    $bDist = (int)$ba['district_id'];
-                    $bBlk = (int)$ba['block_id'];
-                    $codeStmt->execute([$opId, $bDist, $bBlk]);
-                    $assignedCodes = $codeStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+            $op['assigned_codes'] = $assignedCodes;
+            $op['pending_count'] = (int)($counts['pending_count'] ?? 0);
+            $op['in_process_count'] = (int)($counts['in_process_count'] ?? 0);
 
-                    if (!empty($appCode) && !in_array($appCode, $assignedCodes, true)) {
-                        continue;
-                    }
-
-                    $opRow = $op;
-                    $opRow['district_id'] = $bDist;
-                    $opRow['block_id'] = $bBlk;
-                    $opRow['district_name'] = $ba['district_name'];
-                    $opRow['block_name'] = $ba['block_name'];
-                    $opRow['assigned_codes'] = $assignedCodes;
-                    $opRow['pending_count'] = (int)($counts['pending_count'] ?? 0);
-                    $opRow['in_process_count'] = (int)($counts['in_process_count'] ?? 0);
-                    $staffList[] = $opRow;
-                }
-            } else {
-                if (!empty($appCode)) {
-                    continue;
-                }
-                $opRow = $op;
-                $opRow['district_id'] = 0;
-                $opRow['block_id'] = 0;
-                $opRow['district_name'] = 'Unassigned';
-                $opRow['block_name'] = 'Unassigned';
-                $opRow['assigned_codes'] = [];
-                $opRow['pending_count'] = (int)($counts['pending_count'] ?? 0);
-                $opRow['in_process_count'] = (int)($counts['in_process_count'] ?? 0);
-                $staffList[] = $opRow;
-            }
+            $staffList[] = $op;
         }
 
         // Summary metrics
-        $totalRules = 0;
-        try {
-            $totalRules = (int)$db->query("SELECT COUNT(*) FROM operator_application_code_assignments WHERE is_active = 1")->fetchColumn();
-        } catch (\Throwable $e) {}
+        $totalRules = (int)$db->query("SELECT COUNT(*) FROM operator_application_code_assignments WHERE is_active = 1")->fetchColumn();
         $unassignedAppsCount = (int)$db->query("SELECT COUNT(*) FROM applications WHERE assigned_operator_id IS NULL AND status = 'PENDING'")->fetchColumn();
-
-        // Populate variables expected by staff_routing.php view
-        $operators = $staffList;
-        $blocks = $availableBlocks;
-        $filterDistrictId = $districtId;
-        $filterBlockId = $blockId;
-        $filterAppCode = $appCode;
-        $filterStatus = $staffStatus;
-
-        $allActiveCodes = $db->query("
-            SELECT DISTINCT UPPER(TRIM(application_code))
-            FROM service_rate_rules
-            WHERE is_active = 1 AND application_code IS NOT NULL AND application_code != '' AND application_code != '*'
-            ORDER BY application_code ASC
-        ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
-        if (empty($allActiveCodes)) {
-            $allActiveCodes = ['BCCCO', 'BICCO', 'BOBC', 'BRCCO', 'LABOURCARD', 'NCLCO', 'OTHER'];
-        }
 
         require dirname(__DIR__) . '/Views/admin/staff_routing.php';
     }
 
-    /**
-     * POST /admin/staff-routing/save
-     */
-    public function saveStaffRouting(): void
+public function saveStaffRouting(): void
     {
         AuthService::requireRole(['ADMIN']);
 
@@ -2146,11 +1932,7 @@ class AdminController
         exit;
     }
 
-    /**
-     * GET /admin/staff-routing/api-block-data?district_id=X&block_id=Y
-     * Returns JSON with active block operators and active application codes
-     */
-    public function apiGetBlockStaffRouting(): void
+public function apiGetBlockStaffRouting(): void
     {
         header('Content-Type: application/json; charset=utf-8');
         AuthService::requireRole(['ADMIN']);
@@ -2200,4 +1982,3 @@ class AdminController
         exit;
     }
 }
-

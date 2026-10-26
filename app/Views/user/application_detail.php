@@ -13,16 +13,20 @@
             Submitted on <?= date('d M Y, h:i A', strtotime($app['created_at'])) ?> &bull; Service: <strong><?= e($app['dt_name_en']) ?></strong>
         </div>
     </div>
-    <div class="d-flex align-items-center gap-2">
+    <div class="d-flex align-items-center gap-2 flex-wrap">
         <span class="badge-status badge-<?= strtolower($app['status']) ?> fs-6 py-2 px-3">
             <i class="bi bi-circle-fill fs-7 me-1"></i>
             <?= e(__('status_' . strtolower($app['status']))) ?>
         </span>
+        <?= render_status_stepper_dots($app, true, 'fs-6 ms-1') ?>
         <button class="btn btn-outline-dark btn-sm btn-copy-clipboard" data-copy="<?= e($app['app_ref']) ?>" title="Copy Reference">
             <i class="bi bi-copy"></i>
         </button>
     </div>
 </div>
+
+<!-- 4-Step RTPS Tracking Stepper Card -->
+<?= render_status_stepper_bar($app) ?>
 
 <!-- Completed / Result File Banner for User -->
 <?php if (in_array($app['status'], ['COMPLETED', 'APPROVED'], true) || !empty($app['result_file'])): ?>

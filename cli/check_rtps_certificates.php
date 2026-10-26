@@ -29,7 +29,18 @@ require_once dirname(__DIR__) . '/app/helpers.php';
 
 use App\Services\RtpsCertificateService;
 
-$options = getopt('', ['limit:', 'force', 'daemon', 'interval:', 'set-7am']);
+$options = getopt('', ['limit:', 'force', 'daemon', 'interval:', 'set-7am', 'app-id:']);
+$appIdParam = isset($options['app-id']) ? (int)$options['app-id'] : 0;
+if ($appIdParam > 0) {
+    echo "[" . date('Y-m-d H:i:s') . "] Background worker triggered for Single App ID: {$appIdParam}\n";
+    try {
+        $res = RtpsCertificateService::checkAndProcessApplication($appIdParam);
+        echo json_encode($res, JSON_PRETTY_PRINT) . "\n";
+    } catch (\Throwable $e) {
+        echo "[-] Error in single application check: " . $e->getMessage() . "\n";
+    }
+    exit(0);
+}
 $limit = isset($options['limit']) ? max(1, (int)$options['limit']) : 50;
 $force = isset($options['force']);
 $daemon = isset($options['daemon']);

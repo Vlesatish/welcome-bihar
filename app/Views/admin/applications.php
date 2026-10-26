@@ -415,27 +415,32 @@
 
                                     <!-- 6. Status (Pending amber, In Process blue, Approved green, Rejected red) -->
                                     <td>
-                                        <?php if ($status === 'COMPLETED' || $status === 'APPROVED'): ?>
-                                            <span class="badge bg-success text-white px-2 py-1 small fw-bold" style="font-size: 0.72rem;">
-                                                <i class="bi bi-check-circle-fill me-1"></i>Approved
-                                            </span>
-                                        <?php elseif ($status === 'PENDING'): ?>
-                                            <span class="badge bg-warning text-dark px-2 py-1 small fw-bold" style="font-size: 0.72rem; background-color: #f59e0b !important; color: #ffffff !important;">
-                                                <span class="spinner-grow spinner-grow-sm me-1" style="width: 6px; height: 6px;"></span>Pending
-                                            </span>
-                                        <?php elseif ($status === 'IN_PROCESS' || $status === 'UNDER_REVIEW'): ?>
-                                            <span class="badge bg-primary text-white px-2 py-1 small fw-bold" style="font-size: 0.72rem;">
-                                                <i class="bi bi-gear-wide-connected me-1"></i>In Process
-                                            </span>
-                                        <?php elseif ($status === 'REJECTED'): ?>
-                                            <span class="badge bg-danger text-white px-2 py-1 small fw-bold" style="font-size: 0.72rem;">
-                                                <i class="bi bi-x-circle-fill me-1"></i>Rejected
-                                            </span>
-                                        <?php else: ?>
-                                            <span class="badge bg-secondary text-white px-2 py-1 small fw-bold" style="font-size: 0.72rem;">
-                                                <?= e($status) ?>
-                                            </span>
-                                        <?php endif; ?>
+                                        <div>
+                                            <?php if ($status === 'COMPLETED' || $status === 'APPROVED'): ?>
+                                                <span class="badge bg-success text-white px-2 py-1 small fw-bold" style="font-size: 0.72rem;">
+                                                    <i class="bi bi-check-circle-fill me-1"></i>Approved
+                                                </span>
+                                            <?php elseif ($status === 'PENDING'): ?>
+                                                <span class="badge bg-warning text-dark px-2 py-1 small fw-bold" style="font-size: 0.72rem; background-color: #f59e0b !important; color: #ffffff !important;">
+                                                    <span class="spinner-grow spinner-grow-sm me-1" style="width: 6px; height: 6px;"></span>Pending
+                                                </span>
+                                            <?php elseif ($status === 'IN_PROCESS' || $status === 'UNDER_REVIEW'): ?>
+                                                <span class="badge bg-primary text-white px-2 py-1 small fw-bold" style="font-size: 0.72rem;">
+                                                    <i class="bi bi-gear-wide-connected me-1"></i>In Process
+                                                </span>
+                                            <?php elseif ($status === 'REJECTED'): ?>
+                                                <span class="badge bg-danger text-white px-2 py-1 small fw-bold" style="font-size: 0.72rem;">
+                                                    <i class="bi bi-x-circle-fill me-1"></i>Rejected
+                                                </span>
+                                            <?php else: ?>
+                                                <span class="badge bg-secondary text-white px-2 py-1 small fw-bold" style="font-size: 0.72rem;">
+                                                    <?= e($status) ?>
+                                                </span>
+                                            <?php endif; ?>
+                                        </div>
+                                        <div class="mt-1">
+                                            <?= render_status_stepper_dots($app) ?>
+                                        </div>
                                     </td>
 
                                     <!-- 7. Actions -->

@@ -378,6 +378,9 @@ window.filterByStatus = function (st) {
                                     <?php endif; ?>
                                     <?= $statusLabel ?>
                                 </span>
+                                <div class="mt-1">
+                                    <?= render_status_stepper_dots($app) ?>
+                                </div>
                             </td>
 
                             <!-- 6. Date -->
@@ -464,11 +467,17 @@ window.filterByStatus = function (st) {
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body p-4">
-                <div class="bg-light p-2.5 rounded-3 mb-3 d-flex flex-wrap justify-content-between gap-2 small">
+                <div class="bg-light p-2.5 rounded-3 mb-3 d-flex flex-wrap justify-content-between align-items-center gap-2 small">
                     <div><strong>Service:</strong> <span id="modalDetailsService">Block & District Application Pass Service</span></div>
                     <div><strong>Fee Charged:</strong> <span id="modalDetailsFee" class="fw-bold text-primary">₹0.00</span></div>
-                    <div><strong>Status:</strong> <span id="modalDetailsStatus" class="badge">PENDING</span></div>
+                    <div class="d-flex align-items-center gap-1.5 flex-wrap">
+                        <strong>Status:</strong>
+                        <span id="modalDetailsStatus" class="badge">PENDING</span>
+                        <span id="modalDetailsStepperDots"></span>
+                    </div>
                 </div>
+                <!-- 4-Step Stepper Progress Bar -->
+                <div id="modalDetailsStepperContainer" class="mb-3"></div>
                 <div class="table-responsive border rounded-3">
                     <table class="table table-sm table-striped mb-0 small">
                         <tbody id="modalDetailsTableBody"></tbody>
@@ -671,6 +680,15 @@ document.addEventListener('DOMContentLoaded', function () {
         if (statusEl) {
             statusEl.className = 'badge px-2.5 py-1 ' + (statusBadgeMap[app.status] || 'bg-secondary text-white');
             statusEl.textContent = app.status === 'IN_PROCESS' ? 'IN PROCESS' : app.status;
+        }
+
+        // Render 4-step progress dots & stepper inside modal
+        if (typeof window.renderStepperHtml === 'function') {
+            const stepper = window.renderStepperHtml(app);
+            const dotsEl = document.getElementById('modalDetailsStepperDots');
+            if (dotsEl) dotsEl.innerHTML = stepper.dotsHtml;
+            const contEl = document.getElementById('modalDetailsStepperContainer');
+            if (contEl) contEl.innerHTML = stepper.cardHtml;
         }
 
         const tbody = document.getElementById('modalDetailsTableBody');

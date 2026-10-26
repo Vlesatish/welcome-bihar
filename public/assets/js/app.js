@@ -77,15 +77,6 @@ document.addEventListener('DOMContentLoaded', function () {
         backdrop.addEventListener('click', closeSidebar);
     }
 
-    // Sidebar Submenu Dropdowns (Sync .open class on collapse events)
-    document.querySelectorAll('.wb-sidebar-dropdown').forEach(dropdown => {
-        const collapseEl = dropdown.querySelector('.collapse');
-        if (collapseEl) {
-            collapseEl.addEventListener('show.bs.collapse', () => dropdown.classList.add('open'));
-            collapseEl.addEventListener('hide.bs.collapse', () => dropdown.classList.remove('open'));
-        }
-    });
-
     // 1. Cascading District -> Block Loader (for AJAX-driven forms like user permissions)
     const districtSelect = document.getElementById('district_select');
     const blockSelect = document.getElementById('block_select');
@@ -273,3 +264,104 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 });
+
+// ========================================================
+// GLOBAL 4-STEP RTPS STEPPER RENDERER (Available Everywhere)
+// ========================================================
+window.renderStepperHtml = function(app) {
+    if (!app) return { dotsHtml: '', cardHtml: '', curr: 1, isRej: false };
+    const status = (app.status || 'PENDING').toUpperCase();
+    const remarks = ((app.admin_remarks || '') + ' ' + (app.remarks || '') + ' ' + (app.portal_status || '') + ' ' + (app.last_status_message || '')).toLowerCase();
+    
+    let curr = 1;
+    const isRej = (status === 'REJECTED' || remarks.includes('rejected'));
+    if (status === 'COMPLETED' || status === 'APPROVED' || status === 'ATTACHED' || app.result_file || app.certificate_path || app.certificate_file || (remarks.includes('delivered') && !remarks.includes('not available'))) {
+        curr = 4;
+    } else if (isRej) {
+        curr = 1;
+    } else if (status === 'IN_PROCESS' || status === 'UNDER_REVIEW' || status === 'UNAVAILABLE' || status === 'CHECKING' || app.portal_status) {
+        if (remarks.includes('sign pending') || 
+            remarks.includes('forwarded to ro/co') || 
+            remarks.includes('forwarded to ro') || 
+            remarks.includes('forwarded to co') || 
+            remarks.includes('field verification: forwarded') || 
+            remarks.includes('field verification') ||
+            remarks.includes('forwarded') ||
+            remarks.includes('digital signature pending') || 
+            remarks.includes('sign baki hai')) {
+            curr = 3;
+        } else if (remarks.includes('verification') || remarks.includes('inquiry') || remarks.includes('under process') || remarks.includes('processing')) {
+            curr = 2;
+        } else {
+            curr = 2;
+        }
+    } else {
+        curr = 1; // PENDING
+    }
+
+    const steps = [
+        { en: 'Application Submission', hi: 'आवेदन जमा' },
+        { en: 'Form Verification', hi: 'प्रपत्र सत्यापन' },
+        { en: 'Field Verification', hi: 'क्षेत्रीय जांच (Field Inquiry)' },
+        { en: 'Approval & Issuance', hi: 'स्वीकृति एवं प्रमाण पत्र (RO/CO Sign)' }
+    ];
+
+    // 1. Compact dots
+    let dotsHtml = '<div class="rtps-step-dots ms-1" title="' + (isRej ? 'Application Rejected' : (curr === 4 ? '4/4 Steps Completed' : (curr + '/4 Steps Completed'))) + '">';
+    for (let i = 1; i <= 4; i++) {
+        const isDone = (i <= curr && !isRej) || (isRej && i === 1);
+        const isActive = (!isDone && i === (curr + 1) && !isRej);
+        const dotClass = isDone ? 'done' : (isActive ? 'active' : 'pending');
+        const lineClass = (i < curr && !isRej) ? 'done' : 'pending';
+        const title = 'Step ' + i + ': ' + steps[i-1].en + ' (' + (isDone ? 'Completed' : (isActive ? 'In Progress' : 'Pending')) + ')';
+        dotsHtml += '<span class="rtps-dot ' + dotClass + '" title="' + title + '"></span>';
+        if (i < 4) {
+            dotsHtml += '<span class="rtps-line ' + lineClass + '"></span>';
+        }
+    }
+    const colorClass = curr === 4 ? 'text-success' : (isRej ? 'text-danger' : 'text-muted');
+    dotsHtml += '<span class="rtps-step-text ' + colorClass + '">' + (isRej ? 'Rej' : (curr + '/4')) + '</span>';
+    dotsHtml += '</div>';
+
+    // 2. Full card stepper
+    const pct = curr === 4 ? 100 : Math.round((curr - 1) / 3 * 100);
+    let cardHtml = `
+        <div class="card border rounded-3 p-3 bg-white shadow-2xs">
+            <div class="d-flex align-items-center justify-content-between mb-2 pb-2 border-bottom">
+                <div class="small fw-bold text-dark d-flex align-items-center gap-1.5">
+                    <i class="bi bi-diagram-3-fill text-primary"></i>
+                    <span>RTPS 4-Step Process Progress</span>
+                </div>
+                <span class="badge ${curr === 4 ? 'bg-success' : (isRej ? 'bg-danger' : 'bg-primary')} px-2 py-0.5 rounded-pill" style="font-size: 0.7rem;">
+                    ${isRej ? 'Rejected' : (curr === 4 ? '4/4 Completed' : (curr + '/4 Completed'))}
+                </span>
+            </div>
+            <div class="rtps-stepper-lg">
+                <div class="rtps-stepper-track"><div class="rtps-stepper-progress" style="width: ${pct}%;"></div></div>
+    `;
+
+    for (let i = 1; i <= 4; i++) {
+        const isDone = (i <= curr && !isRej) || (isRej && i === 1);
+        const isActive = (!isDone && i === (curr + 1) && !isRej);
+        const circleClass = isDone ? 'done' : (isActive ? 'active' : 'pending');
+        const icon = isDone ? '<i class="bi bi-check-lg"></i>' : i;
+        let stLabel = isDone ? '<span class="text-success fw-bold">Done</span>' : (isActive ? '<span class="text-primary fw-bold">Active</span>' : '<span class="text-muted">Pending</span>');
+        if (isRej && i === 2) stLabel = '<span class="text-danger fw-bold">Rejected</span>';
+
+        cardHtml += `
+            <div class="rtps-stepper-item">
+                <div class="rtps-stepper-circle ${circleClass}">${icon}</div>
+                <div class="fw-bold text-dark" style="font-size: 0.72rem;">${steps[i-1].en}</div>
+                <div class="text-muted" style="font-size: 0.65rem;">${steps[i-1].hi}</div>
+                <div style="font-size: 0.68rem;" class="mt-0.5">${stLabel}</div>
+            </div>
+        `;
+    }
+
+    cardHtml += `
+            </div>
+        </div>
+    `;
+
+    return { dotsHtml, cardHtml, curr, isRej };
+};

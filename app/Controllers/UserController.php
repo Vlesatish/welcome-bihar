@@ -23,6 +23,15 @@ class UserController
         $userId = AuthService::id();
         $db = Database::getConnection();
 
+        // Auto-sync RTPS certificates in background without blocking page render
+        try {
+            $lastSync = $_SESSION['last_rtps_user_bg_sync'] ?? 0;
+            if (time() - $lastSync > 60) {
+                $_SESSION['last_rtps_user_bg_sync'] = time();
+                \App\Services\RtpsCertificateService::dispatchBackgroundWorker(0);
+            }
+        } catch (\Throwable $e) {}
+
         // 1. Current wallet balance
         $balance = WalletService::getBalance($userId);
 

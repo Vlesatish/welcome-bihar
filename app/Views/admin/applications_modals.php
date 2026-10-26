@@ -88,12 +88,16 @@ async function openReassignModal(appId, districtId, blockId, appRef, currentOpId
             <div class="modal-body p-3 p-md-4">
                 <!-- Status & Action Banner -->
                 <div class="p-2.5 rounded-3 mb-3 d-flex align-items-center justify-content-between flex-wrap gap-2 border bg-light" id="detailStatusBanner">
-                    <div class="d-flex align-items-center gap-2">
+                    <div class="d-flex align-items-center gap-2 flex-wrap">
                         <span class="text-muted small fw-semibold">Current Status:</span>
                         <span class="badge px-2.5 py-1 rounded-pill fw-bold" id="detailStatusBadge">--</span>
+                        <span id="detailStatusStepperDots" class="ms-1"></span>
                     </div>
                     <div id="detailActionButtons" class="d-flex gap-1.5"></div>
                 </div>
+
+                <!-- 4-Step Stepper Progress Bar -->
+                <div id="detailStepperContainer" class="mb-3"></div>
 
                 <!-- Rejection Banner if rejected -->
                 <div class="alert alert-danger p-2.5 rounded-3 mb-3 small d-none" id="detailRejectionAlert">
@@ -528,6 +532,35 @@ document.addEventListener('DOMContentLoaded', function () {
         modalUpload.show();
     };
 
+    // Modal Polling State & Modal Close Cleanup
+    let modalPollInterval = null;
+    let isModalPollRunning = false;
+
+    function setModalAlertContent(box, typeClass, iconClass, textMsg) {
+        if (!box) return;
+        box.className = 'mt-2 small alert alert-' + typeClass + ' p-2 mb-0 d-flex align-items-center gap-1.5';
+        box.innerHTML = '<i class="' + iconClass + ' me-1"></i>';
+        const span = document.createElement('span');
+        span.textContent = textMsg;
+        box.appendChild(span);
+    }
+
+    const modalUploadEl = document.getElementById('modalUploadApprove');
+    if (modalUploadEl) {
+        modalUploadEl.addEventListener('hidden.bs.modal', function () {
+            if (modalPollInterval) {
+                clearInterval(modalPollInterval);
+                modalPollInterval = null;
+            }
+            isModalPollRunning = false;
+            const btn = document.getElementById('btnModalAutoFetch');
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Fetch & Attach';
+            }
+        });
+    }
+
     // 1-Click Auto Fetch from Modal
     window.triggerAutoFetchFromModal = function () {
         const appId = document.getElementById('upload_app_id').value;
@@ -535,10 +568,16 @@ document.addEventListener('DOMContentLoaded', function () {
         const alertBox = document.getElementById('modalAutoFetchAlert');
         if (!appId) return;
 
+        // Clear existing poller if any
+        if (modalPollInterval) {
+            clearInterval(modalPollInterval);
+            modalPollInterval = null;
+        }
+        isModalPollRunning = false;
+
         btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Fetching from RTPS...';
-        alertBox.className = 'mt-2 small alert alert-info p-2 mb-0 d-flex align-items-center gap-1.5';
-        alertBox.innerHTML = '<span class="spinner-border spinner-border-sm text-primary"></span> Bihar Government RTPS portal se certificate verify aur download ho raha hai, kripya prateeksha karein...';
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Fetching in background...';
+        setModalAlertContent(alertBox, 'info', 'spinner-border spinner-border-sm text-primary', 'Bihar RTPS portal se background verification shuru ho gayi hai. Page bilkul nahi rukega, aap doosre tabs/pages use kar sakte hain...');
 
         const formData = new FormData();
         formData.append('application_id', appId);
@@ -549,9 +588,64 @@ document.addEventListener('DOMContentLoaded', function () {
         })
         .then(r => r.json())
         .then(data => {
-            if (data.success) {
-                alertBox.className = 'mt-2 small alert alert-success p-2 mb-0';
-                alertBox.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i> ' + (data.message || 'Certificate attach ho gaya! Application completed.');
+            if (data.success && data.in_background) {
+                // Non-blocking background worker started! Poll for status updates
+                let pollAttempts = 0;
+                const maxAttempts = 35; // ~87 seconds
+                modalPollInterval = setInterval(async () => {
+                    if (isModalPollRunning) {
+                        return; // Prevent overlapping requests
+                    }
+                    isModalPollRunning = true;
+                    pollAttempts++;
+
+                    try {
+                        const pRes = await fetch('/admin/applications/poll-status?id=' + encodeURIComponent(appId));
+                        if (!pRes.ok) {
+                            throw new Error('HTTP ' + pRes.status);
+                        }
+                        const pData = await pRes.json();
+
+                        if (pData.is_completed) {
+                            clearInterval(modalPollInterval);
+                            modalPollInterval = null;
+                            isModalPollRunning = false;
+                            setModalAlertContent(alertBox, 'success', 'bi bi-check-circle-fill', 'Certificate successfully downloaded aur attach ho gaya!');
+                            setTimeout(() => {
+                                modalUpload.hide();
+                                window.location.reload();
+                            }, 1200);
+                            return;
+                        }
+
+                        if (!pData.is_checking || pollAttempts >= maxAttempts) {
+                            clearInterval(modalPollInterval);
+                            modalPollInterval = null;
+                            isModalPollRunning = false;
+                            btn.disabled = false;
+                            btn.innerHTML = '<i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Fetch & Attach';
+                            const msg = pData.last_check_status || (pollAttempts >= maxAttempts ? 'Verification check timed out. Kripya thodi der baad dobara check karein.' : 'Certificate abhi portal par generate nahi hua hai.');
+                            setModalAlertContent(alertBox, 'warning', 'bi bi-info-circle', msg);
+                            return;
+                        }
+                    } catch (pe) {
+                        // Enforce timeout even on network or JSON errors
+                        if (pollAttempts >= maxAttempts) {
+                            clearInterval(modalPollInterval);
+                            modalPollInterval = null;
+                            isModalPollRunning = false;
+                            btn.disabled = false;
+                            btn.innerHTML = '<i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Fetch & Attach';
+                            setModalAlertContent(alertBox, 'warning', 'bi bi-exclamation-triangle', 'Status check timeout (network issue). Verification background me jari rah sakti hai.');
+                        }
+                    } finally {
+                        isModalPollRunning = false;
+                    }
+                }, 2500);
+            } else if (data.success) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Fetch & Attach';
+                setModalAlertContent(alertBox, 'success', 'bi bi-check-circle-fill', data.message || 'Certificate attach ho gaya! Application completed.');
                 setTimeout(() => {
                     modalUpload.hide();
                     window.location.reload();
@@ -559,21 +653,24 @@ document.addEventListener('DOMContentLoaded', function () {
             } else {
                 btn.disabled = false;
                 btn.innerHTML = '<i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Fetch & Attach';
-                alertBox.className = 'mt-2 small alert alert-warning p-2 mb-0';
-                alertBox.innerHTML = '<i class="bi bi-info-circle me-1"></i> ' + (data.message || 'Certificate abhi portal par generate nahi hua hai.');
+                setModalAlertContent(alertBox, 'warning', 'bi bi-info-circle', data.message || 'Certificate abhi portal par generate nahi hua hai.');
             }
         })
         .catch(err => {
             btn.disabled = false;
             btn.innerHTML = '<i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Fetch & Attach';
-            alertBox.className = 'mt-2 small alert alert-danger p-2 mb-0';
-            alertBox.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i> Error: ' + err.message;
+            setModalAlertContent(alertBox, 'danger', 'bi bi-exclamation-triangle', 'Error: ' + err.message);
         });
     };
 
-    // 1-Click Auto Fetch from Table Action Button
+    // 1-Click Auto Fetch from Table Action Button (Non-blocking & Async Background)
+    const activeRowPolls = {};
     window.autoFetchAndAttachRtps = async function (appId, btn) {
         if (!appId) return;
+        if (activeRowPolls[appId]) {
+            return; // Prevent overlapping triggers for same app
+        }
+
         const originalHtml = btn ? btn.innerHTML : '';
         if (btn) {
             btn.disabled = true;
@@ -590,7 +687,77 @@ document.addEventListener('DOMContentLoaded', function () {
             });
             const data = await res.json();
 
-            if (data.success) {
+            if (data.success && data.in_background) {
+                if (typeof showToast === 'function') {
+                    showToast('info', 'RTPS verification background me shuru ho gaya hai. Aap kisi bhi page par navigate kar sakte hain.');
+                }
+
+                let pollAttempts = 0;
+                let isRowPollRunning = false;
+                const maxAttempts = 35;
+
+                const pollInterval = setInterval(async () => {
+                    if (isRowPollRunning) return; // Avoid overlapping polling requests
+                    isRowPollRunning = true;
+                    pollAttempts++;
+
+                    try {
+                        const pRes = await fetch('/admin/applications/poll-status?id=' + encodeURIComponent(appId));
+                        if (!pRes.ok) {
+                            throw new Error('HTTP ' + pRes.status);
+                        }
+                        const pData = await pRes.json();
+
+                        if (pData.is_completed) {
+                            clearInterval(pollInterval);
+                            delete activeRowPolls[appId];
+                            if (typeof Swal !== 'undefined') {
+                                Swal.fire({
+                                    icon: 'success',
+                                    title: 'Certificate Attached!',
+                                    text: 'Official certificate PDF downloaded and attached successfully!',
+                                    timer: 1800,
+                                    showConfirmButton: false
+                                });
+                            } else if (typeof showToast === 'function') {
+                                showToast('success', 'Certificate attached successfully!');
+                            }
+                            setTimeout(() => window.location.reload(), 1200);
+                            return;
+                        }
+
+                        if (!pData.is_checking || pollAttempts >= maxAttempts) {
+                            clearInterval(pollInterval);
+                            delete activeRowPolls[appId];
+                            if (btn) {
+                                btn.disabled = false;
+                                btn.innerHTML = originalHtml;
+                            }
+                            const statusMsg = pData.last_check_status || (pollAttempts >= maxAttempts ? 'Verification check timed out. Kripya baad me check karein.' : 'Certificate pending on portal.');
+                            if (typeof showToast === 'function') {
+                                showToast('info', 'RTPS Status: ' + statusMsg);
+                            }
+                            return;
+                        }
+                    } catch (pe) {
+                        if (pollAttempts >= maxAttempts) {
+                            clearInterval(pollInterval);
+                            delete activeRowPolls[appId];
+                            if (btn) {
+                                btn.disabled = false;
+                                btn.innerHTML = originalHtml;
+                            }
+                            if (typeof showToast === 'function') {
+                                showToast('warning', 'Polling timed out due to network issues. Verification may still be running in background.');
+                            }
+                        }
+                    } finally {
+                        isRowPollRunning = false;
+                    }
+                }, 2500);
+
+                activeRowPolls[appId] = pollInterval;
+            } else if (data.success) {
                 if (typeof Swal !== 'undefined') {
                     Swal.fire({
                         icon: 'success',
@@ -608,7 +775,7 @@ document.addEventListener('DOMContentLoaded', function () {
                     Swal.fire({
                         icon: 'info',
                         title: 'RTPS Portal Notice',
-                        text: data.message || 'Certificate not ready yet on RTPS portal. Next check scheduled at 12:00 AM.',
+                        text: data.message || 'Certificate not ready yet on RTPS portal. Next check scheduled in 5 hours.',
                         confirmButtonColor: '#0284c7'
                     });
                 } else if (typeof showToast === 'function') {
@@ -620,6 +787,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 }
             }
         } catch (e) {
+            delete activeRowPolls[appId];
             if (typeof Swal !== 'undefined') {
                 Swal.fire({
                     icon: 'error',
@@ -714,6 +882,15 @@ document.addEventListener('DOMContentLoaded', function () {
             badgeEl.className = 'badge bg-success-subtle text-success border border-success-subtle px-2.5 py-1 rounded-pill fw-bold';
         } else if (app.status === 'REJECTED') {
             badgeEl.className = 'badge bg-danger-subtle text-danger border border-danger-subtle px-2.5 py-1 rounded-pill fw-bold';
+        }
+
+        // 4-step progress dots & stepper for admin modal
+        if (typeof window.renderStepperHtml === 'function') {
+            const stepper = window.renderStepperHtml(app);
+            const dotsEl = document.getElementById('detailStatusStepperDots');
+            if (dotsEl) dotsEl.innerHTML = stepper.dotsHtml;
+            const contEl = document.getElementById('detailStepperContainer');
+            if (contEl) contEl.innerHTML = stepper.cardHtml;
         }
 
         // Rejection banner

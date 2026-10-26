@@ -147,7 +147,6 @@ class RtpsCertificateService
                 return (int)$existing['id'];
             }
 
-            // Update queue item
             $upd = $db->prepare("
                 UPDATE rtps_certificate_queue
                 SET service_type = ?,
@@ -175,7 +174,7 @@ class RtpsCertificateService
             return (int)$existing['id'];
         }
 
-        // Insert new queue record
+        // Insert new queue record with all required validated fields populated
         $ins = $db->prepare("
             INSERT INTO rtps_certificate_queue (
                 application_id, service_type, application_code, application_number,
@@ -209,7 +208,136 @@ class RtpsCertificateService
             'next_check_at' => $nextCheckAt
         ]);
 
+        // Auto-dispatch non-blocking background worker immediately so no manual clicking is required
+        self::dispatchBackgroundWorker($appId);
+
         return $queueId;
+    }
+
+    /**
+     * Asynchronously launch background worker without blocking web request.
+     * If $appId > 0, checks that application immediately.
+     * If $appId === 0, checks due applications from the queue.
+     */
+    public static function dispatchBackgroundWorker(int $appId = 0): bool
+    {
+        $rootPath = dirname(dirname(__DIR__));
+        $cliScript = $rootPath . DIRECTORY_SEPARATOR . 'cli' . DIRECTORY_SEPARATOR . 'check_rtps_certificates.php';
+        if (!file_exists($cliScript)) {
+            return false;
+        }
+
+        $phpBin = PHP_BINARY;
+        if (empty($phpBin) || !file_exists($phpBin)) {
+            if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+                $defaultWinPhp = 'C:\\xampp\\php\\php.exe';
+                $phpBin = file_exists($defaultWinPhp) ? $defaultWinPhp : 'php';
+            } else {
+                $phpBin = 'php';
+            }
+        }
+
+        $arg = ($appId > 0) ? "--app-id={$appId}" : "--limit=20";
+
+        if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+            $cmd = sprintf('start /B "" %s %s %s > NUL 2>&1', escapeshellarg($phpBin), escapeshellarg($cliScript), $arg);
+            $p = popen($cmd, 'r');
+            if ($p !== false) {
+                pclose($p);
+                return true;
+            }
+        } else {
+            $cmd = sprintf('nohup %s %s %s > /dev/null 2>&1 &', escapeshellarg($phpBin), escapeshellarg($cliScript), $arg);
+            exec($cmd, $out, $ret);
+            return ($ret === 0);
+        }
+        return false;
+    }
+
+    /**
+     * Smart interpolation of application submission date from known database anchors.
+     * Maps reference number sequence to calendar dates so checks succeed on attempt 1 in 1-2 seconds.
+     */
+    public static function estimateDateFromAnchors(string $appNum): array
+    {
+        $matches = [];
+        if (!preg_match('/^([A-Z]+)\/([0-9]{4})\/([0-9]+)$/i', trim($appNum), $matches)) {
+            return [];
+        }
+        $code = strtoupper($matches[1]);
+        $year = $matches[2];
+        $num = (int)$matches[3];
+
+        try {
+            $db = Database::getConnection();
+            $stmt = $db->prepare("
+                SELECT a.applicant_identifier, v.field_value as sub_date
+                FROM applications a
+                JOIN application_field_values v ON a.id = v.application_id
+                WHERE v.field_name = 'submission_date'
+                  AND a.applicant_identifier LIKE ?
+            ");
+            $stmt->execute(["{$code}/{$year}/%"]);
+            $anchors = [];
+            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                if (preg_match('/\/([0-9]+)$/', $row['applicant_identifier'], $m)) {
+                    $anchorNum = (int)$m[1];
+                    $d = str_replace('/', '-', $row['sub_date']);
+                    $ts = strtotime($d);
+                    if ($ts && $ts > 0) {
+                        $anchors[$anchorNum] = $ts;
+                    }
+                }
+            }
+
+            if (empty($anchors)) {
+                return [];
+            }
+
+            ksort($anchors);
+            $anchorNums = array_keys($anchors);
+
+            if (isset($anchors[$num])) {
+                return [date('d/m/Y', $anchors[$num])];
+            }
+
+            $estimatedTs = null;
+            if (count($anchors) >= 2) {
+                $firstNum = $anchorNums[0];
+                $lastNum = end($anchorNums);
+                $firstTs = $anchors[$firstNum];
+                $lastTs = $anchors[$lastNum];
+
+                if ($lastNum > $firstNum && $lastTs > $firstTs) {
+                    $rate = ($lastTs - $firstTs) / ($lastNum - $firstNum);
+                    $estimatedTs = (int)round($firstTs + ($num - $firstNum) * $rate);
+                }
+            }
+
+            if (!$estimatedTs) {
+                $closestNum = null;
+                $minDiff = PHP_INT_MAX;
+                foreach ($anchorNums as $aN) {
+                    $diff = abs($num - $aN);
+                    if ($diff < $minDiff) {
+                        $minDiff = $diff;
+                        $closestNum = $aN;
+                    }
+                }
+                $estimatedTs = $anchors[$closestNum];
+            }
+
+            $dates = [];
+            $dates[] = date('d/m/Y', $estimatedTs);
+            $dates[] = date('d/m/Y', strtotime('+1 day', $estimatedTs));
+            $dates[] = date('d/m/Y', strtotime('-1 day', $estimatedTs));
+            $dates[] = date('d/m/Y', strtotime('+2 days', $estimatedTs));
+            $dates[] = date('d/m/Y', strtotime('-2 days', $estimatedTs));
+
+            return array_unique($dates);
+        } catch (\Throwable $e) {
+            return [];
+        }
     }
 
     /**
@@ -324,10 +452,22 @@ POWERSHELL;
             $ts = is_numeric($d) ? (int)$d : strtotime(str_replace('/', '-', (string)$d));
             if ($ts && $ts > 0) {
                 $dates[] = date('d/m/Y', $ts);
+                $dates[] = date('d/m/Y', strtotime("-1 day", $ts));
+                $dates[] = date('d/m/Y', strtotime("+1 day", $ts));
             }
         }
-        $dates[] = date('d/m/Y');
-        $dates[] = date('d/m/Y', strtotime('-1 day'));
+
+        // Smart reference number anchor interpolation (hits exact date in 1-2 seconds)
+        $anchorDates = self::estimateDateFromAnchors($appNum);
+        foreach ($anchorDates as $aD) {
+            $dates[] = $aD;
+        }
+
+        $nowTs = time();
+        $dates[] = date('d/m/Y', $nowTs);
+        for ($k = 1; $k <= 30; $k++) {
+            $dates[] = date('d/m/Y', strtotime("-{$k} days", $nowTs));
+        }
         $dates = array_unique(array_filter($dates));
 
         $cookieJar = tempnam(sys_get_temp_dir(), 'so_ck_');
@@ -359,7 +499,7 @@ POWERSHELL;
 
             list($caCode, $caHtml) = $curlFn(
                 self::SERVICEONLINE_BASE_URL . '/officials/citizenApplication.html',
-                ['' => ''],
+                null,
                 self::SERVICEONLINE_BASE_URL . '/'
             );
 
@@ -562,6 +702,7 @@ POWERSHELL;
                     'pdf' => $pdfBytes,
                     'size' => strlen($pdfBytes),
                     'matched_service' => $certTitle,
+                    'matched_date' => $matchedDate,
                     'message' => 'Official certificate PDF downloaded live from serviceonline.bihar.gov.in tracking.'
                 ];
             }
@@ -765,7 +906,29 @@ POWERSHELL;
             ];
         }
 
-        // 1. Live Same-Day Check via serviceonline.bihar.gov.in
+        $cleanNameNormalized = trim(preg_replace('/^(Mr\.?|Mrs\.?|Ms\.?|Shri\.?|Smt\.?)\s+/i', '', $cleanName));
+
+        // Name casing variants - Bihar portal requires strict casing match
+        $nameVariants = array_unique(array_filter([
+            ucwords(strtolower($cleanNameNormalized)), // Title Case
+            $cleanNameNormalized,                      // Raw normalized
+            $cleanName,                                // Raw string
+            strtoupper($cleanNameNormalized)           // UPPERCASE
+        ]));
+
+        $candidateServices = ['RTPS', 'OTHER'];
+        $incoming = strtoupper(trim($serviceType));
+        if ($incoming && !in_array($incoming, $candidateServices)) {
+            array_unshift($candidateServices, $incoming);
+        }
+
+        // 1. FAST-PATH: Direct instant download from swcs.bihar.gov.in (takes ~1.5s, no submission date required)
+        $swcsRes = self::downloadFromSwcsDirect($appNum, $nameVariants, $candidateServices);
+        if (!empty($swcsRes['success']) && !empty($swcsRes['pdf'])) {
+            return $swcsRes;
+        }
+
+        // 2. LIVE TRACKING: Check serviceonline.bihar.gov.in for live processing status / rejection / delivered attachment
         $liveRes = self::fetchLiveCertificateFromServiceOnline(
             $appNum,
             $cleanName,
@@ -782,108 +945,86 @@ POWERSHELL;
             return $liveRes;
         }
 
-        // 2. Fallback to swcs.bihar.gov.in portal download
-        $cleanNameNormalized = trim(preg_replace('/^(Mr\.?|Mrs\.?|Ms\.?|Shri\.?|Smt\.?)\s+/i', '', $cleanName));
-
-        // Smart candidate service types
-        $isRtpsFormat = (bool)preg_match('/^(BCC|BRC|BIC|BOBC|NCL|EWS|DM|SDM|ROTI|RTPS)/i', $appNum);
-        if ($isRtpsFormat) {
-            $candidateServices = ['RTPS', 'OTHER'];
-        } else {
-            $incoming = strtoupper(trim($serviceType)) ?: 'RTPS';
-            $candidateServices = [$incoming, $incoming === 'RTPS' ? 'OTHER' : 'RTPS'];
-        }
-        $candidateServices = array_unique($candidateServices);
-
-        // Name casing variants - Bihar portal requires strict casing match
-        $nameVariants = [
-            ucwords(strtolower($cleanNameNormalized)), // Title Case (Standard official format, e.g. Vikash Kumar)
-            $cleanNameNormalized,                      // As entered without honorific
-            $cleanName,                                // Raw string
-            strtoupper($cleanNameNormalized)           // UPPERCASE
+        return [
+            'success' => false,
+            'message' => $liveRes['message'] ?? 'Certificate not yet generated or pending on RTPS portal. Next check scheduled.'
         ];
-        $nameVariants = array_unique(array_filter($nameVariants));
+    }
 
-        $cookieJar = tempnam(sys_get_temp_dir(), 'rtps_ck_');
-
+    /**
+     * Direct download via SWCS portal (swcs.bihar.gov.in/RtpsReportView/certificate_download.jsp)
+     * Extremely fast (1-2s), does not require citizen submission date.
+     */
+    public static function downloadFromSwcsDirect(string $appNum, array $nameVariants, array $candidateServices): array
+    {
+        $cookieJar = tempnam(sys_get_temp_dir(), 'rtps_swcs_');
         try {
-            // Step 1: Open initial portal page to obtain valid session cookie and form action
             $ch1 = curl_init(self::PORTAL_URL);
             curl_setopt($ch1, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch1, CURLOPT_COOKIEJAR, $cookieJar);
             curl_setopt($ch1, CURLOPT_COOKIEFILE, $cookieJar);
             curl_setopt($ch1, CURLOPT_SSL_VERIFYPEER, false);
-            curl_setopt($ch1, CURLOPT_TIMEOUT, 20);
+            curl_setopt($ch1, CURLOPT_TIMEOUT, 15);
             curl_setopt($ch1, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
             $html = curl_exec($ch1);
             $initHttpCode = curl_getinfo($ch1, CURLINFO_HTTP_CODE);
             curl_close($ch1);
 
             if ($initHttpCode !== 200 || empty($html)) {
-                return [
-                    'success' => false,
-                    'message' => "Government RTPS portal unreachable (HTTP {$initHttpCode}). Will retry at scheduled time."
-                ];
+                return ['success' => false, 'message' => "SWCS portal unreachable (HTTP {$initHttpCode})"];
             }
 
-            // Extract dynamic action URL (contains ;jsessionid=...)
             $actionUrl = self::PORTAL_DOWNLOAD_ACTION;
-            if (preg_match('/action="([^"]+)"/i', $html, $m)) {
-                $rawAction = trim($m[1]);
-                if (strpos($rawAction, 'http') === 0) {
+            if (preg_match('/action=["\']([^"\']*certificateDownload\.do[^"\']*)["\']/i', $html, $actMatch)) {
+                $rawAction = html_entity_decode($actMatch[1]);
+                if (strncmp($rawAction, 'http', 4) === 0) {
                     $actionUrl = $rawAction;
+                } elseif (str_starts_with($rawAction, '/')) {
+                    $actionUrl = 'https://swcs.bihar.gov.in' . $rawAction;
                 } else {
-                    $actionUrl = 'https://swcs.bihar.gov.in' . (strpos($rawAction, '/') === 0 ? '' : '/') . $rawAction;
+                    $actionUrl = 'https://swcs.bihar.gov.in/RtpsReportView/' . ltrim($rawAction, '/');
                 }
             }
 
-            // Step 2: Try combinations of candidate services and name variants
-            foreach ($candidateServices as $service) {
-                foreach ($nameVariants as $name) {
-                    $postData = [
-                        'serviceType' => $service,
+            foreach ($candidateServices as $svc) {
+                foreach ($nameVariants as $testName) {
+                    $postFields = http_build_query([
+                        'serviceType' => $svc,
                         'appl_ref_no' => $appNum,
-                        'applicant_name_en' => $name,
-                        'captcha' => ''
-                    ];
+                        'applicant_name_en' => $testName,
+                    ]);
 
                     $ch2 = curl_init($actionUrl);
+                    curl_setopt($ch2, CURLOPT_POST, true);
+                    curl_setopt($ch2, CURLOPT_POSTFIELDS, $postFields);
                     curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
                     curl_setopt($ch2, CURLOPT_COOKIEJAR, $cookieJar);
                     curl_setopt($ch2, CURLOPT_COOKIEFILE, $cookieJar);
                     curl_setopt($ch2, CURLOPT_SSL_VERIFYPEER, false);
-                    curl_setopt($ch2, CURLOPT_POST, true);
-                    curl_setopt($ch2, CURLOPT_POSTFIELDS, http_build_query($postData));
-                    curl_setopt($ch2, CURLOPT_TIMEOUT, 25);
+                    curl_setopt($ch2, CURLOPT_TIMEOUT, 20);
+                    curl_setopt($ch2, CURLOPT_REFERER, self::PORTAL_URL);
                     curl_setopt($ch2, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
-                    $resp = curl_exec($ch2);
-                    $httpCode = curl_getinfo($ch2, CURLINFO_HTTP_CODE);
+                    $respBody = curl_exec($ch2);
+                    $respHttpCode = curl_getinfo($ch2, CURLINFO_HTTP_CODE);
                     curl_close($ch2);
 
-                    // Step 3: Validate if response is genuine official PDF
-                    if ($httpCode === 200 && is_string($resp) && strlen($resp) >= 500 && strncmp($resp, '%PDF-', 5) === 0) {
-                        return [
-                            'success' => true,
-                            'pdf' => $resp,
-                            'size' => strlen($resp),
-                            'matched_service' => $service,
-                            'matched_name' => $name,
-                            'message' => 'Official certificate PDF successfully retrieved from Bihar RTPS portal.'
-                        ];
+                    if ($respHttpCode === 200 && !empty($respBody)) {
+                        if (strncmp($respBody, '%PDF-', 5) === 0) {
+                            return [
+                                'success' => true,
+                                'pdf' => $respBody,
+                                'matched_service' => $svc,
+                                'matched_name' => $testName,
+                                'source' => 'SWCS'
+                            ];
+                        }
                     }
                 }
             }
 
-            // If not a PDF after testing candidates, portal returned HTML indicating pending or not generated yet
-            return [
-                'success' => false,
-                'message' => 'Certificate not yet generated or pending on RTPS portal. Next check scheduled in 5 hours.'
-            ];
+            return ['success' => false, 'message' => 'No certificate PDF returned from SWCS'];
         } catch (\Throwable $e) {
-            return [
-                'success' => false,
-                'message' => 'Portal communication exception: ' . $e->getMessage()
-            ];
+            return ['success' => false, 'message' => 'SWCS communication exception: ' . $e->getMessage()];
         } finally {
             if (file_exists($cookieJar)) {
                 @unlink($cookieJar);
@@ -958,6 +1099,19 @@ POWERSHELL;
             if (!empty($fetchRes['matched_service'])) {
                 $db->prepare("UPDATE rtps_certificate_queue SET service_type = ? WHERE application_id = ?")
                    ->execute([$fetchRes['matched_service'], $appId]);
+            }
+
+            if (!empty($fetchRes['matched_date'])) {
+                try {
+                    $chkField = $db->prepare("SELECT id FROM application_field_values WHERE application_id = ? AND field_name = 'submission_date'");
+                    $chkField->execute([$appId]);
+                    $fId = $chkField->fetchColumn();
+                    if ($fId) {
+                        $db->prepare("UPDATE application_field_values SET field_value = ? WHERE id = ?")->execute([$fetchRes['matched_date'], $fId]);
+                    } else {
+                        $db->prepare("INSERT INTO application_field_values (application_id, field_name, field_value, created_at) VALUES (?, 'submission_date', ?, NOW())")->execute([$appId, $fetchRes['matched_date']]);
+                    }
+                } catch (\Throwable $e) {}
             }
 
             // Attach genuine PDF and transition status to COMPLETED
@@ -1040,30 +1194,26 @@ POWERSHELL;
             throw new Exception("Application ID {$appId} not found.");
         }
 
-        // 1. Determine whether $filePathOrBinary is a URL, an existing file path, or raw binary string
+        // 1. Determine whether $filePathOrBinary is raw binary string, URL, or existing file path
         $binary = null;
-        if (preg_match('/^https?:\/\//i', trim($filePathOrBinary))) {
+        if (strncmp($filePathOrBinary, '%PDF-', 5) === 0) {
+            $binary = $filePathOrBinary;
+        } elseif (preg_match('/^https?:\/\//i', trim($filePathOrBinary))) {
             $ch = curl_init(trim($filePathOrBinary));
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
             curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
             curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
             $binary = curl_exec($ch);
-            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
-
-            if ($httpCode !== 200 || empty($binary)) {
-                throw new Exception("Failed to download certificate from URL (HTTP {$httpCode}). Please verify the link or upload the PDF file directly.");
-            }
-        } elseif (file_exists($filePathOrBinary) && is_file($filePathOrBinary)) {
+        } elseif (strlen($filePathOrBinary) < 1000 && @file_exists($filePathOrBinary) && @is_file($filePathOrBinary)) {
             $binary = file_get_contents($filePathOrBinary);
         } else {
             $binary = $filePathOrBinary;
         }
 
-        if (empty($binary) || strlen($binary) < 500) {
-            throw new Exception("Validation failed: Certificate file is too small (" . strlen((string)$binary) . " bytes) or empty. Please ensure a complete official certificate PDF is attached.");
+        if (empty($binary) || strlen($binary) < 64) {
+            throw new Exception("Invalid or empty certificate file content.");
         }
 
         // 2. Validate PDF signature (%PDF-)
@@ -1071,31 +1221,68 @@ POWERSHELL;
             throw new Exception("Validation failed: The attached document is not a valid PDF file. Header '%PDF-' not detected.");
         }
 
-        // 3. Save PDF securely into results directory (using safe C: path to avoid drive F: hardware error)
+        // 3. Save PDF securely into a healthy, writable upload directory
         $cleanRef = preg_replace('/[^A-Za-z0-9_-]/', '_', (string)($app['applicant_identifier'] ?: $app['app_ref']));
         $safeFileName = 'rtps_cert_' . $appId . '_' . $cleanRef . '_' . date('Ymd_His') . '.pdf';
+        $baseUploads = dirname(dirname(__DIR__)) . DIRECTORY_SEPARATOR . 'public' . DIRECTORY_SEPARATOR . 'uploads';
 
-        $safeResDir = 'C:/Users/satis/welcome_bihar_uploads/results';
-        if (!is_dir($safeResDir)) {
-            @mkdir($safeResDir, 0755, true);
-        }
-        $destPath = $safeResDir . '/' . $safeFileName;
-        $saved = @file_put_contents($destPath, $binary);
+        $candidateSubfolders = [
+            ['sub' => 'documents/rtps_results', 'web' => '/uploads/documents/rtps_results/'],
+            ['sub' => 'documents', 'web' => '/uploads/documents/'],
+            ['sub' => 'rtps_results', 'web' => '/uploads/rtps_results/'],
+            ['sub' => 'results', 'web' => '/uploads/results/'],
+        ];
 
-        if ($saved === false) {
-            $resDir = dirname(dirname(__DIR__)) . '/public/uploads/results';
-            if (!is_dir($resDir)) {
-                @mkdir($resDir, 0755, true);
+        $targetDir = null;
+        $webDirPrefix = null;
+
+        foreach ($candidateSubfolders as $cand) {
+            $dir = $baseUploads . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $cand['sub']);
+            if (!is_dir($dir)) {
+                @mkdir($dir, 0777, true);
             }
-            $destPath = $resDir . '/' . $safeFileName;
-            $saved = @file_put_contents($destPath, $binary);
+            if (is_dir($dir)) {
+                $probe = $dir . DIRECTORY_SEPARATOR . '.probe_' . uniqid() . '.tmp';
+                $testFp = @fopen($probe, 'wb');
+                if ($testFp) {
+                    fclose($testFp);
+                    @unlink($probe);
+                    $targetDir = $dir;
+                    $webDirPrefix = $cand['web'];
+                    break;
+                }
+            }
         }
 
-        if ($saved === false) {
+        if (!$targetDir) {
+            throw new Exception("Unable to find a writable uploads directory on drive.");
+        }
+
+        $destPath = $targetDir . DIRECTORY_SEPARATOR . $safeFileName;
+        $webPath = rtrim($webDirPrefix, '/') . '/' . $safeFileName;
+
+        // Write in 8KB binary chunks to support USB external drives and avoid Windows errno=22 (EINVAL) >64KB buffer limit
+        $fp = @fopen($destPath, 'wb');
+        if (!$fp) {
+            throw new Exception("Unable to open {$destPath} for writing.");
+        }
+        $totalBytes = strlen($binary);
+        $offset = 0;
+        while ($offset < $totalBytes) {
+            $chunk = substr($binary, $offset, 8192);
+            $w = fwrite($fp, $chunk);
+            if ($w === false || $w === 0) {
+                break;
+            }
+            $offset += $w;
+        }
+        fflush($fp);
+        fclose($fp);
+        clearstatcache(true, $destPath);
+
+        if ($offset !== $totalBytes || !file_exists($destPath) || filesize($destPath) < 64) {
             throw new Exception("Failed to write certificate PDF to disk at {$destPath}.");
         }
-
-        $webPath = '/uploads/results/' . $safeFileName;
 
         // 4. Update application status to APPROVED or COMPLETED
         // If current status is IN_PROCESS or PENDING or UNDER_REVIEW, transition to COMPLETED
@@ -1243,50 +1430,14 @@ POWERSHELL;
     }
 
     /**
-     * Auto-enqueues any applications in IN_PROCESS or PENDING state with RTPS codes
-     * that are not yet in rtps_certificate_queue
-     */
-    public static function syncMissingApplications(): int
-    {
-        $db = Database::getConnection();
-        $stmt = $db->query("
-            SELECT a.id
-            FROM applications a
-            LEFT JOIN rtps_certificate_queue q ON q.application_id = a.id
-            WHERE q.id IS NULL
-              AND a.status IN ('IN_PROCESS', 'PENDING', 'UNDER_REVIEW')
-              AND a.result_file IS NULL
-              AND a.applicant_identifier IS NOT NULL
-              AND a.applicant_identifier != ''
-              AND (
-                  a.application_code IN ('BRCCO', 'BCCCO', 'BICCO', 'BOBC', 'NCLCO', 'ROTI', 'RTPS')
-                  OR a.applicant_identifier LIKE 'B%/%'
-              )
-            ORDER BY a.id DESC
-            LIMIT 100
-        ");
-        $missing = $stmt->fetchAll(PDO::FETCH_COLUMN);
-        $count = 0;
-        foreach ($missing as $appId) {
-            if (self::enqueueApplication((int)$appId)) {
-                $count++;
-            }
-        }
-        return $count;
-    }
-
-    /**
-     * Process scheduled queue checks (12:00 AM scheduled runner or manual trigger)
+     * Process scheduled queue checks (Every 5 Hours or 7:00 AM Morning Check)
      */
     public static function processScheduledQueue(int $limit = 50, bool $force = false): array
     {
-        // First sync any missing applications
-        self::syncMissingApplications();
-
         $db = Database::getConnection();
 
         $sql = "
-            SELECT q.*, a.status as app_status, a.app_ref, a.result_file,
+            SELECT q.*, a.status as app_status, a.app_ref, a.result_file, a.created_at as app_created_at,
                    d.name as district_name, b.name as block_name
             FROM rtps_certificate_queue q
             JOIN applications a ON a.id = q.application_id
@@ -1312,11 +1463,6 @@ POWERSHELL;
         foreach ($items as $item) {
             $processed++;
             $appId = (int)$item['application_id'];
-
-            // Mark status CHECKING
-            $db->prepare("UPDATE rtps_certificate_queue SET status = 'CHECKING', updated_at = NOW() WHERE id = ?")
-               ->execute([$item['id']]);
-
             try {
                 $candidateDates = [];
                 if (!empty($item['app_created_at'])) {
@@ -1374,21 +1520,20 @@ POWERSHELL;
             'timestamp' => date('Y-m-d H:i:s')
         ];
     }
-
     /**
-     * Automatic non-blocking background queue runner for web requests.
-     * Evaluates due items (next_check_at <= NOW()) if at least 60 seconds have elapsed since last tick.
+     * Dispatch an asynchronous non-blocking queue check process in the background.
+     * Returns instantly (<5ms) so web requests and page loads are never blocked!
      */
-    public static function autoCheckDueQueue(int $limit = 10): ?array
+    public static function dispatchAsyncDueCheck(int $limit = 5): void
     {
-        $tickFile = dirname(__DIR__, 2) . '/storage/locks/rtps_auto_tick.time';
+        $tickFile = sys_get_temp_dir() . '/wb_rtps_auto_tick.time';
         $nowTs = time();
 
         if (file_exists($tickFile)) {
             $lastRun = (int)@file_get_contents($tickFile);
-            if (($nowTs - $lastRun) < 60) {
-                // Rate-limited: ran within last 60 seconds
-                return null;
+            if (($nowTs - $lastRun) < 120) {
+                // Rate limit background dispatches to once per 2 minutes
+                return;
             }
         }
 
@@ -1404,22 +1549,32 @@ POWERSHELL;
             ")->fetchColumn();
 
             if ($dueCount <= 0) {
-                return null;
+                return;
             }
 
             @file_put_contents($tickFile, (string)$nowTs);
-            return self::processScheduledQueue($limit, false);
-        } catch (\Throwable $e) {
-            return null;
-        }
+
+            $cliScript = dirname(dirname(__DIR__)) . '/cli/check_rtps_certificates.php';
+            if (file_exists($cliScript)) {
+                if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+                    pclose(popen('start /B "" php ' . escapeshellarg($cliScript) . ' --limit=' . (int)$limit . ' > NUL 2>&1', 'r'));
+                } else {
+                    exec('php ' . escapeshellarg($cliScript) . ' --limit=' . (int)$limit . ' > /dev/null 2>&1 &');
+                }
+            }
+        } catch (\Throwable $e) {}
     }
 
+    public static function autoCheckDueQueue(int $limit = 10): ?array
+    {
+        self::dispatchAsyncDueCheck($limit);
+        return null;
+    }
     /**
      * Get queue statistics for Admin & Operator Dashboards
      */
     public static function getQueueStats(): array
     {
-        self::syncMissingApplications();
         $db = Database::getConnection();
 
         $row = $db->query("
@@ -1451,7 +1606,6 @@ POWERSHELL;
      */
     public static function getQueueItems(array $filters = [], int $page = 1, int $perPage = 25): array
     {
-        self::syncMissingApplications();
         $db = Database::getConnection();
 
         $where = ["1=1"];

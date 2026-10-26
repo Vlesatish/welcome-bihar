@@ -159,89 +159,6 @@ body {
     color: #ffffff;
 }
 
-/* Sidebar Submenu & Dropdown styles */
-.wb-sidebar-dropdown {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-}
-
-.wb-sidebar-dropdown-toggle {
-    cursor: pointer;
-    user-select: none;
-    position: relative;
-}
-
-.wb-sidebar-dropdown-toggle .wb-dropdown-arrow {
-    font-size: 0.72rem;
-    width: auto !important;
-    margin-left: auto;
-    transition: transform 0.2s ease;
-    color: #94a3b8;
-}
-
-.wb-sidebar-dropdown-toggle[aria-expanded="true"] .wb-dropdown-arrow,
-.wb-sidebar-dropdown.open .wb-dropdown-arrow {
-    transform: rotate(180deg);
-}
-
-.wb-sidebar-dropdown-toggle.active {
-    background: rgba(37, 99, 235, 0.15);
-    color: #ffffff;
-    box-shadow: none;
-}
-.wb-sidebar-dropdown-toggle.active i {
-    color: #60a5fa;
-}
-
-.wb-sidebar-submenu {
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-    padding: 0.35rem 0 0.35rem 1.1rem;
-    margin: 0.2rem 0 0.3rem 0.85rem;
-    border-left: 2px solid rgba(255, 255, 255, 0.12);
-}
-
-.wb-submenu-link {
-    display: flex;
-    align-items: center;
-    gap: 0.65rem;
-    padding: 0.5rem 0.75rem;
-    border-radius: 6px;
-    color: #94a3b8;
-    text-decoration: none;
-    font-size: 0.86rem;
-    font-weight: 500;
-    transition: all 0.18s ease;
-}
-
-.wb-submenu-link i {
-    font-size: 0.95rem;
-    width: 18px;
-    text-align: center;
-    color: #64748b;
-    transition: color 0.18s ease;
-}
-
-.wb-submenu-link:hover {
-    background: rgba(255, 255, 255, 0.07);
-    color: #ffffff;
-}
-.wb-submenu-link:hover i {
-    color: #60a5fa;
-}
-
-.wb-submenu-link.active {
-    background: #2563eb;
-    color: #ffffff;
-    font-weight: 600;
-    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35);
-}
-.wb-submenu-link.active i {
-    color: #ffffff;
-}
-
 .wb-sidebar-footer {
     padding: 0.9rem 1rem;
     border-top: 1px solid rgba(255, 255, 255, 0.08);
@@ -755,3 +672,128 @@ footer a:hover {
     }
 }
 
+/* ========================================================
+   4-STEP RTPS WORKFLOW PROGRESS DOTS & STEPPER
+   ======================================================== */
+.rtps-step-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    vertical-align: middle;
+}
+.rtps-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    display: inline-block;
+    transition: all 0.2s ease-in-out;
+    flex-shrink: 0;
+}
+.rtps-dot.done {
+    background-color: #16a34a !important; /* Vibrant Emerald Green */
+    border: 1.5px solid #15803d !important;
+    box-shadow: 0 0 3px rgba(22, 163, 74, 0.45);
+}
+.rtps-dot.pending {
+    background-color: #e2e8f0 !important; /* Clean Light Slate Gray */
+    border: 1.5px solid #cbd5e1 !important;
+}
+.rtps-dot.active {
+    background-color: #eff6ff !important;
+    border: 1.5px solid #3b82f6 !important;
+    box-shadow: 0 0 4px rgba(59, 130, 246, 0.4);
+    animation: rtpsDotPulse 1.6s infinite ease-in-out;
+}
+.rtps-line {
+    width: 7px;
+    height: 2px;
+    display: inline-block;
+    flex-shrink: 0;
+}
+.rtps-line.done {
+    background-color: #16a34a !important;
+}
+.rtps-line.pending {
+    background-color: #cbd5e1 !important;
+}
+.rtps-step-text {
+    font-size: 0.68rem;
+    font-weight: 700;
+    margin-left: 3px;
+    letter-spacing: 0.2px;
+}
+
+@keyframes rtpsDotPulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.25); opacity: 0.7; }
+}
+
+/* Modal and Detail Page 4-Step Stepper */
+.rtps-stepper-lg {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    width: 100%;
+    position: relative;
+    padding: 0.5rem 0 0.25rem 0;
+}
+.rtps-stepper-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    position: relative;
+    z-index: 2;
+    flex: 1;
+}
+.rtps-stepper-circle {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.8rem;
+    margin-bottom: 0.4rem;
+    transition: all 0.25s ease-in-out;
+}
+.rtps-stepper-circle.done {
+    background-color: #16a34a !important;
+    color: #ffffff !important;
+    border: 2px solid #15803d !important;
+    box-shadow: 0 2px 6px rgba(22, 163, 74, 0.35);
+}
+.rtps-stepper-circle.pending {
+    background-color: #f8fafc !important;
+    color: #94a3b8 !important;
+    border: 2px solid #cbd5e1 !important;
+}
+.rtps-stepper-circle.active {
+    background-color: #eff6ff !important;
+    color: #2563eb !important;
+    border: 2px solid #3b82f6 !important;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
+    animation: rtpsCirclePulse 1.6s infinite ease-in-out;
+}
+.rtps-stepper-track {
+    position: absolute;
+    top: 22px;
+    left: 12%;
+    right: 12%;
+    height: 3px;
+    background-color: #cbd5e1;
+    z-index: 1;
+    border-radius: 2px;
+}
+.rtps-stepper-progress {
+    height: 100%;
+    background-color: #16a34a;
+    transition: width 0.3s ease;
+    border-radius: 2px;
+}
+
+@keyframes rtpsCirclePulse {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25); }
+    50% { box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.4); }
+}

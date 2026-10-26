@@ -263,6 +263,10 @@ require dirname(__DIR__) . '/layouts/header.php';
                                         </span>
                                     <?php endif; ?>
 
+                                    <div class="mt-1">
+                                        <?= render_status_stepper_dots($row) ?>
+                                    </div>
+
                                     <?php if (!empty($row['last_status_message'])): ?>
                                         <div class="text-muted text-truncate mt-1" style="max-width: 170px; font-size: 0.68rem;" title="<?= e($row['last_status_message']) ?>">
                                             <?= e($row['last_status_message']) ?>
@@ -531,6 +535,36 @@ function toTitleCase(str) {
     });
 }
 
+let queueModalPollInterval = null;
+let isQueueModalPollRunning = false;
+
+function setQueueAlertContent(box, typeClass, iconClass, textMsg) {
+    if (!box) return;
+    box.className = 'mt-2 small alert alert-' + typeClass + ' p-2 mb-0 d-flex align-items-center gap-1.5';
+    box.innerHTML = '<i class="' + iconClass + ' me-1"></i>';
+    const span = document.createElement('span');
+    span.textContent = textMsg;
+    box.appendChild(span);
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    const attachModalEl = document.getElementById('attachCertModal');
+    if (attachModalEl) {
+        attachModalEl.addEventListener('hidden.bs.modal', function () {
+            if (queueModalPollInterval) {
+                clearInterval(queueModalPollInterval);
+                queueModalPollInterval = null;
+            }
+            isQueueModalPollRunning = false;
+            const btn = document.getElementById('btnQueueModalAutoFetch');
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Attach';
+            }
+        });
+    }
+});
+
 function openAttachModal(appId, appNumber, applicantName) {
     document.getElementById('attachAppId').value = appId;
     document.getElementById('attachAppNumberText').textContent = appNumber;
@@ -556,10 +590,15 @@ function triggerQueueModalAutoFetch() {
     const alertBox = document.getElementById('queueModalAutoFetchAlert');
     if (!appId) return;
 
+    if (queueModalPollInterval) {
+        clearInterval(queueModalPollInterval);
+        queueModalPollInterval = null;
+    }
+    isQueueModalPollRunning = false;
+
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Fetching...';
-    alertBox.className = 'mt-2 small alert alert-info p-2 mb-0';
-    alertBox.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Bihar Government RTPS portal se certificate verify aur download ho raha hai...';
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Fetching in background...';
+    setQueueAlertContent(alertBox, 'info', 'spinner-border spinner-border-sm text-primary', 'Background me RTPS verification shuru ho gaya hai. Page freeze nahi hoga, aap dusra kaam kar sakte hain...');
 
     const formData = new FormData();
     formData.append('application_id', appId);
@@ -570,27 +609,79 @@ function triggerQueueModalAutoFetch() {
     })
     .then(r => r.json())
     .then(data => {
-        if (data.success) {
-            alertBox.className = 'mt-2 small alert alert-success p-2 mb-0';
-            alertBox.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i> ' + (data.message || 'Certificate attach ho gaya!');
+        if (data.success && data.in_background) {
+            let pollAttempts = 0;
+            const maxAttempts = 35;
+            queueModalPollInterval = setInterval(async () => {
+                if (isQueueModalPollRunning) return; // Prevent overlapping requests
+                isQueueModalPollRunning = true;
+                pollAttempts++;
+
+                try {
+                    const pRes = await fetch('/admin/applications/poll-status?id=' + encodeURIComponent(appId));
+                    if (!pRes.ok) {
+                        throw new Error('HTTP ' + pRes.status);
+                    }
+                    const pData = await pRes.json();
+
+                    if (pData.is_completed) {
+                        clearInterval(queueModalPollInterval);
+                        queueModalPollInterval = null;
+                        isQueueModalPollRunning = false;
+                        setQueueAlertContent(alertBox, 'success', 'bi bi-check-circle-fill', 'Certificate successfully attach ho gaya!');
+                        setTimeout(() => window.location.reload(), 1200);
+                        return;
+                    }
+
+                    if (!pData.is_checking || pollAttempts >= maxAttempts) {
+                        clearInterval(queueModalPollInterval);
+                        queueModalPollInterval = null;
+                        isQueueModalPollRunning = false;
+                        btn.disabled = false;
+                        btn.innerHTML = '<i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Attach';
+                        const msg = pData.last_check_status || (pollAttempts >= maxAttempts ? 'Verification check timed out. Kripya baad me dobara check karein.' : 'Certificate abhi portal par uplabdh nahi hai.');
+                        setQueueAlertContent(alertBox, 'warning', 'bi bi-info-circle', msg);
+                        return;
+                    }
+                } catch (pe) {
+                    // Enforce timeout even on network or JSON errors
+                    if (pollAttempts >= maxAttempts) {
+                        clearInterval(queueModalPollInterval);
+                        queueModalPollInterval = null;
+                        isQueueModalPollRunning = false;
+                        btn.disabled = false;
+                        btn.innerHTML = '<i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Attach';
+                        setQueueAlertContent(alertBox, 'warning', 'bi bi-exclamation-triangle', 'Status check timeout (network issue). Background verification continue ho sakti hai.');
+                    }
+                } finally {
+                    isQueueModalPollRunning = false;
+                }
+            }, 2500);
+        } else if (data.success) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Attach';
+            setQueueAlertContent(alertBox, 'success', 'bi bi-check-circle-fill', data.message || 'Certificate attach ho gaya!');
             setTimeout(() => window.location.reload(), 1200);
         } else {
             btn.disabled = false;
             btn.innerHTML = '<i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Attach';
-            alertBox.className = 'mt-2 small alert alert-warning p-2 mb-0';
-            alertBox.innerHTML = '<i class="bi bi-info-circle me-1"></i> ' + (data.message || 'Certificate abhi portal par uplabdh nahi hai.');
+            setQueueAlertContent(alertBox, 'warning', 'bi bi-info-circle', data.message || 'Certificate abhi portal par uplabdh nahi hai.');
         }
     })
     .catch(e => {
         btn.disabled = false;
         btn.innerHTML = '<i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Attach';
-        alertBox.className = 'mt-2 small alert alert-danger p-2 mb-0';
-        alertBox.innerHTML = '<i class="bi bi-exclamation-triangle me-1"></i> Error: ' + e.message;
+        setQueueAlertContent(alertBox, 'danger', 'bi bi-exclamation-triangle', 'Error: ' + e.message);
     });
 }
 
+const activeQueueRowPolls = {};
 async function autoFetchFromQueue(appId, btn) {
     if (!appId) return;
+    if (activeQueueRowPolls[appId]) {
+        return; // Prevent overlapping triggers
+    }
+
     const originalHtml = btn ? btn.innerHTML : '';
     if (btn) {
         btn.disabled = true;
@@ -607,7 +698,94 @@ async function autoFetchFromQueue(appId, btn) {
         });
         const data = await res.json();
 
-        if (data.success) {
+        if (data.success && data.in_background) {
+            if (typeof Swal !== 'undefined') {
+                Swal.fire({
+                    toast: true,
+                    position: 'top-end',
+                    icon: 'info',
+                    title: 'Background Verification',
+                    text: 'RTPS check running in background. You can navigate freely.',
+                    timer: 3500,
+                    showConfirmButton: false
+                });
+            }
+
+            let pollAttempts = 0;
+            let isQueueRowPollRunning = false;
+            const maxAttempts = 35;
+
+            const pollInterval = setInterval(async () => {
+                if (isQueueRowPollRunning) return; // Prevent overlapping requests
+                isQueueRowPollRunning = true;
+                pollAttempts++;
+
+                try {
+                    const pRes = await fetch('/admin/applications/poll-status?id=' + encodeURIComponent(appId));
+                    if (!pRes.ok) {
+                        throw new Error('HTTP ' + pRes.status);
+                    }
+                    const pData = await pRes.json();
+
+                    if (pData.is_completed) {
+                        clearInterval(pollInterval);
+                        delete activeQueueRowPolls[appId];
+                        if (typeof Swal !== 'undefined') {
+                            Swal.fire({
+                                icon: 'success',
+                                title: 'Certificate Attached!',
+                                text: 'Official certificate PDF downloaded and attached successfully!',
+                                timer: 1800,
+                                showConfirmButton: false
+                            });
+                        }
+                        setTimeout(() => window.location.reload(), 1200);
+                        return;
+                    }
+
+                    if (!pData.is_checking || pollAttempts >= maxAttempts) {
+                        clearInterval(pollInterval);
+                        delete activeQueueRowPolls[appId];
+                        if (btn) {
+                            btn.disabled = false;
+                            btn.innerHTML = originalHtml;
+                        }
+                        if (pData.last_check_status && typeof Swal !== 'undefined') {
+                            Swal.fire({
+                                icon: 'info',
+                                title: 'RTPS Status',
+                                text: pData.last_check_status,
+                                timer: 3000,
+                                showConfirmButton: false
+                            });
+                        }
+                        return;
+                    }
+                } catch (pe) {
+                    if (pollAttempts >= maxAttempts) {
+                        clearInterval(pollInterval);
+                        delete activeQueueRowPolls[appId];
+                        if (btn) {
+                            btn.disabled = false;
+                            btn.innerHTML = originalHtml;
+                        }
+                        if (typeof Swal !== 'undefined') {
+                            Swal.fire({
+                                icon: 'warning',
+                                title: 'Check Timeout',
+                                text: 'Polling timed out due to network issues. Verification is continuing in background.',
+                                timer: 3500,
+                                showConfirmButton: false
+                            });
+                        }
+                    }
+                } finally {
+                    isQueueRowPollRunning = false;
+                }
+            }, 2500);
+
+            activeQueueRowPolls[appId] = pollInterval;
+        } else if (data.success) {
             if (typeof Swal !== 'undefined') {
                 Swal.fire({
                     icon: 'success',
@@ -637,7 +815,16 @@ async function autoFetchFromQueue(appId, btn) {
             }
         }
     } catch (e) {
-        alert('Communication error: ' + e.message);
+        delete activeQueueRowPolls[appId];
+        if (typeof Swal !== 'undefined') {
+            Swal.fire({
+                icon: 'error',
+                title: 'Communication Error',
+                text: e.message || 'Failed to connect to server.'
+            });
+        } else {
+            alert('Communication error: ' + e.message);
+        }
         if (btn) {
             btn.disabled = false;
             btn.innerHTML = originalHtml;
