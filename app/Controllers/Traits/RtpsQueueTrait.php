@@ -279,9 +279,15 @@ trait RtpsQueueTrait
             exit;
         }
 
+        @set_time_limit(180);
+        ob_start();
+
         try {
             $res = RtpsCertificateService::checkAndProcessApplication($appId);
 
+            if (ob_get_length()) {
+                ob_clean();
+            }
             header('Content-Type: application/json');
             if (!empty($res['success'])) {
                 echo json_encode([
@@ -300,6 +306,9 @@ trait RtpsQueueTrait
                 ]);
             }
         } catch (\Throwable $e) {
+            if (ob_get_length()) {
+                ob_clean();
+            }
             http_response_code(500);
             header('Content-Type: application/json');
             echo json_encode([

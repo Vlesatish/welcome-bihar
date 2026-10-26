@@ -865,17 +865,27 @@ POWERSHELL;
             throw new Exception("Validation failed: The attached document is not a valid PDF file. Header '%PDF-' not detected.");
         }
 
-        // 3. Save PDF securely into public/uploads/results/
-        $resDir = dirname(dirname(__DIR__)) . '/public/uploads/results';
-        if (!is_dir($resDir)) {
-            @mkdir($resDir, 0755, true);
-        }
-
+        // 3. Save PDF securely into results directory (using safe C: path to avoid drive F: hardware error)
         $cleanRef = preg_replace('/[^A-Za-z0-9_-]/', '_', (string)($app['applicant_identifier'] ?: $app['app_ref']));
         $safeFileName = 'rtps_cert_' . $appId . '_' . $cleanRef . '_' . date('Ymd_His') . '.pdf';
-        $destPath = $resDir . '/' . $safeFileName;
 
-        if (file_put_contents($destPath, $binary) === false) {
+        $safeResDir = 'C:/Users/satis/welcome_bihar_uploads/results';
+        if (!is_dir($safeResDir)) {
+            @mkdir($safeResDir, 0755, true);
+        }
+        $destPath = $safeResDir . '/' . $safeFileName;
+        $saved = @file_put_contents($destPath, $binary);
+
+        if ($saved === false) {
+            $resDir = dirname(dirname(__DIR__)) . '/public/uploads/results';
+            if (!is_dir($resDir)) {
+                @mkdir($resDir, 0755, true);
+            }
+            $destPath = $resDir . '/' . $safeFileName;
+            $saved = @file_put_contents($destPath, $binary);
+        }
+
+        if ($saved === false) {
             throw new Exception("Failed to write certificate PDF to disk at {$destPath}.");
         }
 
