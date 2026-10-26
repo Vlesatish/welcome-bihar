@@ -254,41 +254,47 @@ POWERSHELL;
         $rawPath = sys_get_temp_dir() . '/so_cap_' . uniqid() . '.jpg';
         file_put_contents($rawPath, $rawImgBytes);
 
-        $img = @imagecreatefromjpeg($rawPath);
-        if (!$img) {
-            @unlink($rawPath);
-            return null;
-        }
+        $ocrTarget = $rawPath;
+        $tempFiles = [$rawPath];
 
-        $w = imagesx($img);
-        $h = imagesy($img);
-        $out = imagecreatetruecolor($w, $h);
-        $white = imagecolorallocate($out, 255, 255, 255);
-        $black = imagecolorallocate($out, 0, 0, 0);
-        imagefill($out, 0, 0, $white);
+        if (function_exists('imagecreatefromjpeg') && function_exists('imagepng')) {
+            $img = @imagecreatefromjpeg($rawPath);
+            if ($img) {
+                $w = imagesx($img);
+                $h = imagesy($img);
+                $out = imagecreatetruecolor($w, $h);
+                $white = imagecolorallocate($out, 255, 255, 255);
+                $black = imagecolorallocate($out, 0, 0, 0);
+                imagefill($out, 0, 0, $white);
 
-        for ($y = 0; $y < $h; $y++) {
-            for ($x = 0; $x < $w; $x++) {
-                $rgb = imagecolorat($img, $x, $y);
-                $r = ($rgb >> 16) & 0xFF;
-                $g = ($rgb >> 8) & 0xFF;
-                $b = $rgb & 0xFF;
-                if ($g > 100 && $g > ($r + 30) && $g > ($b + 30)) {
-                    imagesetpixel($out, $x, $y, $black);
+                for ($y = 0; $y < $h; $y++) {
+                    for ($x = 0; $x < $w; $x++) {
+                        $rgb = imagecolorat($img, $x, $y);
+                        $r = ($rgb >> 16) & 0xFF;
+                        $g = ($rgb >> 8) & 0xFF;
+                        $b = $rgb & 0xFF;
+                        if ($g > 100 && $g > ($r + 30) && $g > ($b + 30)) {
+                            imagesetpixel($out, $x, $y, $black);
+                        }
+                    }
                 }
+
+                $cleanPath = sys_get_temp_dir() . '/so_clean_' . uniqid() . '.png';
+                imagepng($out, $cleanPath);
+                imagedestroy($img);
+                imagedestroy($out);
+                $ocrTarget = $cleanPath;
+                $tempFiles[] = $cleanPath;
             }
         }
 
-        $cleanPath = sys_get_temp_dir() . '/so_clean_' . uniqid() . '.png';
-        imagepng($out, $cleanPath);
-        imagedestroy($img);
-        imagedestroy($out);
-        @unlink($rawPath);
-
         $psScript = self::ensureOcrScript();
-        $cmd = 'powershell -ExecutionPolicy Bypass -File ' . escapeshellarg($psScript) . ' ' . escapeshellarg($cleanPath);
+        $cmd = 'powershell -ExecutionPolicy Bypass -File ' . escapeshellarg($psScript) . ' ' . escapeshellarg($ocrTarget);
         $res = shell_exec($cmd);
-        @unlink($cleanPath);
+
+        foreach ($tempFiles as $tf) {
+            @unlink($tf);
+        }
 
         $digits = preg_replace('/[^0-9]/', '', trim((string)$res));
         return (strlen($digits) === 6) ? $digits : null;
