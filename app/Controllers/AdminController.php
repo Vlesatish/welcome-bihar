@@ -21,7 +21,7 @@ public function __construct()
         $uri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '';
 
         if (!AuthService::check()) {
-            if ($uri === '/admin/applications/poll-status' || $uri === '/admin/rtps-queue/auto-fetch') {
+            if ($uri === '/admin/applications/poll-status' || $uri === '/admin/applications/auto-fetch' || $uri === '/admin/rtps-queue/auto-fetch') {
                 http_response_code(401);
                 header('Content-Type: application/json');
                 echo json_encode(['success' => false, 'error' => 'Unauthenticated']);
@@ -34,7 +34,7 @@ public function __construct()
         $user = AuthService::user();
         if (!$user) {
             AuthService::logout();
-            if ($uri === '/admin/applications/poll-status' || $uri === '/admin/rtps-queue/auto-fetch') {
+            if ($uri === '/admin/applications/poll-status' || $uri === '/admin/applications/auto-fetch' || $uri === '/admin/rtps-queue/auto-fetch') {
                 http_response_code(401);
                 header('Content-Type: application/json');
                 echo json_encode(['success' => false, 'error' => 'Unauthenticated']);
@@ -59,9 +59,10 @@ public function __construct()
                 '/admin/dashboard',
                 '/admin/applications',
                 '/admin/applications/poll-status',
+                '/admin/applications/auto-fetch',
+                '/admin/applications/trigger-rtps',
                 '/admin/rtps-queue/auto-fetch',
-                '/admin/rtps-queue/attach',
-                '/admin/rtps-queue/unavailable'
+                '/admin/rtps-queue/trigger'
             ];
             if (!in_array($uri, $allowedUris, true) && !str_starts_with($uri, '/admin/applications/')) {
                 http_response_code(403);

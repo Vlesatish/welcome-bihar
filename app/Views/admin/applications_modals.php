@@ -582,7 +582,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const formData = new FormData();
         formData.append('application_id', appId);
 
-        fetch('/admin/rtps-queue/auto-fetch', {
+        fetch('/admin/applications/auto-fetch', {
             method: 'POST',
             body: formData
         })
@@ -681,7 +681,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const formData = new FormData();
             formData.append('application_id', appId);
 
-            const res = await fetch('/admin/rtps-queue/auto-fetch', {
+            const res = await fetch('/admin/applications/auto-fetch', {
                 method: 'POST',
                 body: formData
             });
@@ -1097,7 +1097,7 @@ document.addEventListener('DOMContentLoaded', function () {
             formData.append('force', '1');
             formData.append('limit', '25');
 
-            const res = await fetch('/admin/rtps-queue/trigger', {
+            const res = await fetch('/admin/applications/trigger-rtps', {
                 method: 'POST',
                 body: formData,
                 headers: {

@@ -93,10 +93,6 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                     <i class="bi bi-geo-alt-fill text-warning"></i>
                     <span>Location Directory</span>
                 </a>
-                <a class="wb-sidebar-link <?= strpos($currentUri, '/admin/rtps') === 0 ? 'active' : '' ?>" href="/admin/rtps-queue">
-                    <i class="bi bi-file-earmark-check-fill text-success"></i>
-                    <span>RTPS Queue</span>
-                </a>
                 <a class="wb-sidebar-link <?= strpos($currentUri, '/admin/staff-routing') === 0 ? 'active' : '' ?>" href="/admin/staff-routing">
                     <i class="bi bi-diagram-3 text-info"></i>
                     <span>Staff Routing</span>
@@ -199,10 +195,6 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                 <a class="wb-sidebar-link <?= ($currentUri === '/admin/applications' && ($_GET['status'] ?? '') === 'IN_PROCESS') ? 'active' : '' ?>" href="/admin/applications?status=IN_PROCESS">
                     <i class="bi bi-gear-wide-connected text-info"></i>
                     <span>In Process</span>
-                </a>
-                <a class="wb-sidebar-link <?= strpos($currentUri, '/admin/rtps') === 0 ? 'active' : '' ?>" href="/admin/rtps-queue">
-                    <i class="bi bi-file-earmark-check-fill text-success"></i>
-                    <span>RTPS Queue</span>
                 </a>
                 <a class="wb-sidebar-link <?= ($currentUri === '/admin/applications' && ($_GET['status'] ?? '') === 'APPROVED') ? 'active' : '' ?>" href="/admin/applications?status=APPROVED">
                     <i class="bi bi-check-circle-fill text-success"></i>

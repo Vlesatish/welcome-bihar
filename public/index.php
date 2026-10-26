@@ -306,25 +306,25 @@ try {
 
         case '/admin/rtps-queue':
         case '/admin/rtps':
-            $ctrl = new \App\Controllers\AdminController();
-            $ctrl->rtpsQueue();
-            break;
+            $redirectUrl = '/admin/applications';
+            if (!empty($_SERVER['QUERY_STRING'])) {
+                $redirectUrl .= '?' . $_SERVER['QUERY_STRING'];
+            }
+            header('Location: ' . $redirectUrl, true, 301);
+            exit;
 
         case '/admin/rtps-queue/attach':
-            $ctrl = new \App\Controllers\AdminController();
-            $ctrl->attachRtpsCertificate();
-            break;
-
         case '/admin/rtps-queue/unavailable':
-            $ctrl = new \App\Controllers\AdminController();
-            $ctrl->markRtpsUnavailable();
-            break;
+            header('Location: /admin/applications', true, 301);
+            exit;
 
+        case '/admin/applications/trigger-rtps':
         case '/admin/rtps-queue/trigger':
             $ctrl = new \App\Controllers\AdminController();
             $ctrl->triggerRtpsQueueCheck();
             break;
 
+        case '/admin/applications/auto-fetch':
         case '/admin/rtps-queue/auto-fetch':
             $ctrl = new \App\Controllers\AdminController();
             $ctrl->autoFetchRtpsCertificate();
