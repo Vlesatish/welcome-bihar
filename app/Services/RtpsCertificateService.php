@@ -479,8 +479,9 @@ POWERSHELL;
             curl_setopt($ch, CURLOPT_COOKIEJAR, $cookieJar);
             curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieJar);
             curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 25);
-            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+            curl_setopt($ch, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
             if ($referer) {
                 curl_setopt($ch, CURLOPT_REFERER, $referer);
             }
@@ -497,20 +498,29 @@ POWERSHELL;
         try {
             $curlFn(self::SERVICEONLINE_BASE_URL . '/');
 
-            list($caCode, $caHtml) = $curlFn(
-                self::SERVICEONLINE_BASE_URL . '/officials/citizenApplication.html',
-                null,
-                self::SERVICEONLINE_BASE_URL . '/'
-            );
+            $caCode = 0;
+            $caHtml = '';
+            for ($caAtt = 1; $caAtt <= 3; $caAtt++) {
+                list($caCode, $caHtml) = $curlFn(
+                    self::SERVICEONLINE_BASE_URL . '/officials/citizenApplication.html',
+                    null,
+                    self::SERVICEONLINE_BASE_URL . '/'
+                );
+                if ($caCode === 200 && !empty($caHtml)) {
+                    break;
+                }
+                usleep(400000);
+            }
 
             if ($caCode !== 200 || empty($caHtml)) {
                 return ['success' => false, 'message' => "Live portal citizenApplication.html unreachable (HTTP $caCode)"];
             }
 
-            preg_match('/name="OWASP_CSRFTOKEN"\s+value="([^"]+)"/i', $caHtml, $csrfM);
+            // Extract OWASP_CSRFTOKEN from input tag or JavaScript setAttribute
+            preg_match('/(?:name="OWASP_CSRFTOKEN"\s+value="|setAttribute\(\s*"value",\s*")([A-Z0-9\-]{20,})/i', $caHtml, $csrfM);
             $csrfToken = $csrfM[1] ?? '';
 
-            $trackOptions = [2, 1]; // 2 = Delivery Date, 1 = Submission Date
+            $trackOptions = [1, 2]; // 1 = Submission Date (primary), 2 = Delivery Date
             $step1Success = false;
             $s1Html = '';
             $matchedDate = '';
@@ -928,18 +938,8 @@ POWERSHELL;
             return $swcsRes;
         }
 
-        // If SWCS portal confirmed the application is genuine and pending at RO/CO office, return immediately!
-        // This avoids 30-60 second date-guessing loops and prevents false "date not matched" errors.
-        if (!empty($swcsRes['is_pending'])) {
-            return [
-                'success' => false,
-                'status' => 'IN_PROCESS',
-                'portal_status' => 'Under Process (Govt Office)',
-                'message' => 'Application verified on RTPS portal — Certificate is currently under process at RO/CO office (आवेदन ब्लॉक स्तर पर प्रक्रियाधीन है).'
-            ];
-        }
-
-        // 2. LIVE TRACKING: Check serviceonline.bihar.gov.in for live processing status / rejection / delivered attachment
+        // 2. LIVE TRACKING: Check serviceonline.bihar.gov.in for live processing status / delivered certificate
+        // Overcomes the 24-hour sync delay between ServicePlus and swcs.bihar.gov.in
         $liveRes = self::fetchLiveCertificateFromServiceOnline(
             $appNum,
             $cleanName,
@@ -954,6 +954,16 @@ POWERSHELL;
 
         if (!empty($liveRes['status']) && in_array($liveRes['status'], ['IN_PROCESS', 'REJECTED'])) {
             return $liveRes;
+        }
+
+        // 3. Fallback: If SWCS portal confirmed the application is genuine and pending at RO/CO office
+        if (!empty($swcsRes['is_pending'])) {
+            return [
+                'success' => false,
+                'status' => 'IN_PROCESS',
+                'portal_status' => 'Under Process (Govt Office)',
+                'message' => 'Application verified on RTPS portal — Certificate is currently under process at RO/CO office (आवेदन ब्लॉक स्तर पर प्रक्रियाधीन है).'
+            ];
         }
 
         return [
