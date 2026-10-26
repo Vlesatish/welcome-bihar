@@ -928,6 +928,17 @@ POWERSHELL;
             return $swcsRes;
         }
 
+        // If SWCS portal confirmed the application is genuine and pending at RO/CO office, return immediately!
+        // This avoids 30-60 second date-guessing loops and prevents false "date not matched" errors.
+        if (!empty($swcsRes['is_pending'])) {
+            return [
+                'success' => false,
+                'status' => 'IN_PROCESS',
+                'portal_status' => 'Under Process (Govt Office)',
+                'message' => 'Application verified on RTPS portal — Certificate is currently under process at RO/CO office (आवेदन ब्लॉक स्तर पर प्रक्रियाधीन है).'
+            ];
+        }
+
         // 2. LIVE TRACKING: Check serviceonline.bihar.gov.in for live processing status / rejection / delivered attachment
         $liveRes = self::fetchLiveCertificateFromServiceOnline(
             $appNum,
@@ -986,6 +997,7 @@ POWERSHELL;
                 }
             }
 
+            $isPendingOnPortal = false;
             foreach ($candidateServices as $svc) {
                 foreach ($nameVariants as $testName) {
                     $postFields = http_build_query([
@@ -1018,8 +1030,21 @@ POWERSHELL;
                                 'source' => 'SWCS'
                             ];
                         }
+                        if (stripos($respBody, 'Certificate not available due to pending') !== false) {
+                            $isPendingOnPortal = true;
+                        }
                     }
                 }
+            }
+
+            if ($isPendingOnPortal) {
+                return [
+                    'success' => false,
+                    'is_pending' => true,
+                    'status' => 'IN_PROCESS',
+                    'portal_status' => 'Under Process (Govt Office)',
+                    'message' => 'Application verified on RTPS portal — Certificate is currently under process at RO/CO office (आवेदन ब्लॉक स्तर पर प्रक्रियाधीन है).'
+                ];
             }
 
             return ['success' => false, 'message' => 'No certificate PDF returned from SWCS'];
