@@ -298,7 +298,11 @@ window.filterByStatus = function (st) {
                 <?php else: ?>
                     <?php foreach ($applications as $app): ?>
                         <?php
+                            $prog = get_application_progress($app);
                             $st = strtoupper($app['status'] ?? 'PENDING');
+                            if ($prog['is_rejected']) {
+                                $st = 'REJECTED';
+                            }
                             $badgeClass = 'bg-warning-subtle text-warning-emphasis border border-warning-subtle';
                             $statusLabel = 'PENDING';
                             if ($st === 'IN_PROCESS' || $st === 'UNDER_REVIEW') {
@@ -398,6 +402,10 @@ window.filterByStatus = function (st) {
                                            title="Download RTPS Certificate">
                                             <i class="bi bi-file-earmark-pdf-fill me-1"></i>Download Certificate
                                         </a>
+                                    <?php elseif ($st === 'REJECTED' || $prog['is_rejected']): ?>
+                                        <span class="badge bg-danger-subtle text-danger border border-danger-subtle py-1 px-1.5 text-nowrap" style="font-size: 0.68rem;" title="<?= e('Rejected: ' . ($prog['rejection_reason'] ?: 'Application rejected on portal')) ?>">
+                                            <i class="bi bi-x-circle me-1"></i>Rejected on Portal
+                                        </span>
                                     <?php elseif ($app['status'] === 'IN_PROCESS'): ?>
                                         <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle py-1 px-1.5 text-nowrap" style="font-size: 0.68rem;" title="Automatic RTPS Check Scheduled (Every 5 Hours / 7 AM)">
                                             <i class="bi bi-clock-history me-1"></i>RTPS Check (5-Hr)

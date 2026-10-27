@@ -268,17 +268,43 @@ document.addEventListener('DOMContentLoaded', function () {
 // ========================================================
 // GLOBAL 4-STEP RTPS STEPPER RENDERER (Available Everywhere)
 // ========================================================
+// GLOBAL 4-STEP RTPS STEPPER RENDERER (Available Everywhere)
+// ========================================================
 window.renderStepperHtml = function(app) {
     if (!app) return { dotsHtml: '', cardHtml: '', curr: 1, isRej: false };
     const status = (app.status || 'PENDING').toUpperCase();
+    const rawRejReason = (app.rejection_reason || '').trim();
     const remarks = ((app.admin_remarks || '') + ' ' + (app.remarks || '') + ' ' + (app.portal_status || '') + ' ' + (app.last_status_message || '')).toLowerCase();
     
+    const isRej = (status === 'REJECTED' || rawRejReason.length > 0 || remarks.includes('reject') || remarks.includes('अस्वीकृत'));
+    
+    // Extract clean rejection reason
+    let rejReason = '';
+    if (isRej) {
+        const candidates = [
+            rawRejReason,
+            app.remarks || '',
+            app.admin_remarks || '',
+            app.last_status_message || ''
+        ];
+        for (let c of candidates) {
+            if (!c) continue;
+            let clean = String(c).replace(/^(?:rejected on portal:\s*|rejected on official portal:\s*|rejected:\s*)/i, '').trim();
+            if (clean && !['view', 'na', 'application has been rejected on official portal.'].includes(clean.toLowerCase())) {
+                rejReason = clean;
+                break;
+            }
+        }
+        if (!rejReason) {
+            rejReason = 'आवेदक/आवेदिका द्वारा संलग्न प्रपत्र/दस्तावेज सत्यापन में अस्वीकृत (Verification criteria not fulfilled)';
+        }
+    }
+
     let curr = 1;
-    const isRej = (status === 'REJECTED' || remarks.includes('rejected'));
     if (status === 'COMPLETED' || status === 'APPROVED' || status === 'ATTACHED' || app.result_file || app.certificate_path || app.certificate_file || (remarks.includes('delivered') && !remarks.includes('not available'))) {
         curr = 4;
     } else if (isRej) {
-        curr = 1;
+        curr = 3; // Bihar RTPS: Rejected at Step 3 (Field Verification)
     } else if (status === 'IN_PROCESS' || status === 'UNDER_REVIEW' || status === 'UNAVAILABLE' || status === 'CHECKING' || app.portal_status) {
         if (remarks.includes('sign pending') || 
             remarks.includes('forwarded to ro/co') || 
@@ -301,30 +327,75 @@ window.renderStepperHtml = function(app) {
 
     const steps = [
         { en: 'Application Submission', hi: 'आवेदन जमा' },
-        { en: 'Form Verification', hi: 'प्रपत्र सत्यापन' },
+        { en: 'Form Details Verification', hi: 'प्रपत्र सत्यापन' },
         { en: 'Field Verification', hi: 'क्षेत्रीय जांच (Field Inquiry)' },
-        { en: 'Approval & Issuance', hi: 'स्वीकृति एवं प्रमाण पत्र (RO/CO Sign)' }
+        { en: 'Approval & Certificate', hi: 'स्वीकृति एवं प्रमाण पत्र (RO/CO Sign)' }
     ];
 
+    const escapeStr = function(str) {
+        return String(str || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    };
+
     // 1. Compact dots
-    let dotsHtml = '<div class="rtps-step-dots ms-1" title="' + (isRej ? 'Application Rejected' : (curr === 4 ? '4/4 Steps Completed' : (curr + '/4 Steps Completed'))) + '">';
+    const summaryTitle = isRej 
+        ? ('Application Rejected: ' + rejReason)
+        : (curr === 4 ? '4/4 Steps Completed' : (curr + '/4 Steps Completed'));
+
+    let dotsHtml = '<div class="rtps-step-dots ms-1" title="' + escapeStr(summaryTitle) + '">';
     for (let i = 1; i <= 4; i++) {
-        const isDone = (i <= curr && !isRej) || (isRej && i === 1);
-        const isActive = (!isDone && i === (curr + 1) && !isRej);
-        const dotClass = isDone ? 'done' : (isActive ? 'active' : 'pending');
-        const lineClass = (i < curr && !isRej) ? 'done' : 'pending';
-        const title = 'Step ' + i + ': ' + steps[i-1].en + ' (' + (isDone ? 'Completed' : (isActive ? 'In Progress' : 'Pending')) + ')';
-        dotsHtml += '<span class="rtps-dot ' + dotClass + '" title="' + title + '"></span>';
+        let dotClass = 'pending';
+        let lineClass = 'pending';
+        let title = '';
+
+        if (isRej) {
+            if (i === 1) {
+                dotClass = 'done';
+                lineClass = 'done';
+                title = 'Step 1: Application Submission (Completed)';
+            } else if (i === 2) {
+                dotClass = 'done';
+                lineClass = 'rejected';
+                title = 'Step 2: Form Details Verification (Completed)';
+            } else if (i === 3) {
+                dotClass = 'rejected';
+                lineClass = 'rejected';
+                title = 'Step 3: Field Verification (REJECTED: ' + rejReason + ')';
+            } else {
+                dotClass = 'rejected';
+                lineClass = 'rejected';
+                title = 'Step 4: Approval & Certificate (Rejected - Certificate Not Generated)';
+            }
+        } else {
+            const isDone = (i <= curr);
+            const isActive = (!isDone && i === (curr + 1));
+            dotClass = isDone ? 'done' : (isActive ? 'active' : 'pending');
+            lineClass = (i < curr) ? 'done' : 'pending';
+            title = 'Step ' + i + ': ' + steps[i-1].en + ' (' + (isDone ? 'Completed' : (isActive ? 'In Progress' : 'Pending')) + ')';
+        }
+
+        dotsHtml += '<span class="rtps-dot ' + dotClass + '" title="' + escapeStr(title) + '"></span>';
         if (i < 4) {
             dotsHtml += '<span class="rtps-line ' + lineClass + '"></span>';
         }
     }
-    const colorClass = curr === 4 ? 'text-success' : (isRej ? 'text-danger' : 'text-muted');
-    dotsHtml += '<span class="rtps-step-text ' + colorClass + '">' + (isRej ? 'Rej' : (curr + '/4')) + '</span>';
+
+    if (isRej) {
+        dotsHtml += '<span class="rtps-step-text text-danger" title="' + escapeStr('Rejected: ' + rejReason) + '">3/4 Rej</span>';
+    } else {
+        const colorClass = curr === 4 ? 'text-success' : 'text-muted';
+        dotsHtml += '<span class="rtps-step-text ' + colorClass + '">' + (curr + '/4') + '</span>';
+    }
     dotsHtml += '</div>';
 
     // 2. Full card stepper
-    const pct = curr === 4 ? 100 : Math.round((curr - 1) / 3 * 100);
+    const pct = isRej ? 66 : (curr === 4 ? 100 : Math.round((curr - 1) / 3 * 100));
+    const badgeText = isRej ? 'Rejected (3/4 Rej)' : (curr === 4 ? '4/4 Completed' : (curr + '/4 In Progress'));
+    const badgeClass = isRej ? 'bg-danger' : (curr === 4 ? 'bg-success' : 'bg-primary');
+
     let cardHtml = `
         <div class="card border rounded-3 p-3 bg-white shadow-2xs">
             <div class="d-flex align-items-center justify-content-between mb-2 pb-2 border-bottom">
@@ -332,21 +403,44 @@ window.renderStepperHtml = function(app) {
                     <i class="bi bi-diagram-3-fill text-primary"></i>
                     <span>RTPS 4-Step Process Progress</span>
                 </div>
-                <span class="badge ${curr === 4 ? 'bg-success' : (isRej ? 'bg-danger' : 'bg-primary')} px-2 py-0.5 rounded-pill" style="font-size: 0.7rem;">
-                    ${isRej ? 'Rejected' : (curr === 4 ? '4/4 Completed' : (curr + '/4 Completed'))}
+                <span class="badge ${badgeClass} px-2.5 py-1 rounded-pill" style="font-size: 0.72rem;">
+                    ${badgeText}
                 </span>
             </div>
             <div class="rtps-stepper-lg">
-                <div class="rtps-stepper-track"><div class="rtps-stepper-progress" style="width: ${pct}%;"></div></div>
+                <div class="rtps-stepper-track"><div class="rtps-stepper-progress ${isRej ? 'bg-danger' : ''}" style="width: ${pct}%;"></div></div>
     `;
 
     for (let i = 1; i <= 4; i++) {
-        const isDone = (i <= curr && !isRej) || (isRej && i === 1);
-        const isActive = (!isDone && i === (curr + 1) && !isRej);
-        const circleClass = isDone ? 'done' : (isActive ? 'active' : 'pending');
-        const icon = isDone ? '<i class="bi bi-check-lg"></i>' : i;
-        let stLabel = isDone ? '<span class="text-success fw-bold">Done</span>' : (isActive ? '<span class="text-primary fw-bold">Active</span>' : '<span class="text-muted">Pending</span>');
-        if (isRej && i === 2) stLabel = '<span class="text-danger fw-bold">Rejected</span>';
+        let circleClass = 'pending';
+        let icon = i;
+        let stLabel = '<span class="text-muted">Pending</span>';
+
+        if (isRej) {
+            if (i === 1) {
+                circleClass = 'done';
+                icon = '<i class="bi bi-check-lg"></i>';
+                stLabel = '<span class="text-success fw-bold">Completed</span>';
+            } else if (i === 2) {
+                circleClass = 'done';
+                icon = '<i class="bi bi-check-lg"></i>';
+                stLabel = '<span class="text-success fw-bold">Completed</span>';
+            } else if (i === 3) {
+                circleClass = 'rejected';
+                icon = '<i class="bi bi-x-lg"></i>';
+                stLabel = '<span class="text-danger fw-bold">Rejected</span>';
+            } else {
+                circleClass = 'rejected';
+                icon = '<i class="bi bi-x-lg"></i>';
+                stLabel = '<span class="text-danger fw-bold">Not Issued</span>';
+            }
+        } else {
+            const isDone = (i <= curr);
+            const isActive = (!isDone && i === (curr + 1));
+            circleClass = isDone ? 'done' : (isActive ? 'active' : 'pending');
+            icon = isDone ? '<i class="bi bi-check-lg"></i>' : i;
+            stLabel = isDone ? '<span class="text-success fw-bold">Completed</span>' : (isActive ? '<span class="text-primary fw-bold">In Progress</span>' : '<span class="text-muted">Pending</span>');
+        }
 
         cardHtml += `
             <div class="rtps-stepper-item">
@@ -360,8 +454,23 @@ window.renderStepperHtml = function(app) {
 
     cardHtml += `
             </div>
+    `;
+
+    if (isRej && rejReason) {
+        cardHtml += `
+            <div class="alert alert-danger border border-danger-subtle d-flex align-items-start gap-2 py-2 px-3 mt-3 mb-0 rounded-3" style="font-size: 0.8rem;">
+                <i class="bi bi-exclamation-octagon-fill text-danger fs-5 mt-0.5 flex-shrink-0"></i>
+                <div>
+                    <div class="fw-bold text-danger">Rejection Reason (अस्वीकृति का कारण):</div>
+                    <div class="text-dark mt-0.5">${escapeStr(rejReason)}</div>
+                </div>
+            </div>
+        `;
+    }
+
+    cardHtml += `
         </div>
     `;
 
-    return { dotsHtml, cardHtml, curr, isRej };
+    return { dotsHtml, cardHtml, curr, isRej, rejReason };
 };

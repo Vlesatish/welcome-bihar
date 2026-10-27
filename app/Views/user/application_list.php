@@ -358,7 +358,11 @@ document.addEventListener('DOMContentLoaded', function () {
                     <tbody>
                         <?php foreach ($applications as $app): ?>
                             <?php
+                                $prog = get_application_progress($app);
                                 $status = strtoupper($app['status'] ?? 'PENDING');
+                                if ($prog['is_rejected']) {
+                                    $status = 'REJECTED';
+                                }
                                 $jsonEscaped = htmlspecialchars(json_encode($app), ENT_QUOTES, 'UTF-8');
                             ?>
                             <tr id="app-row-<?= $app['id'] ?>" data-app='<?= $jsonEscaped ?>'>
@@ -419,6 +423,10 @@ document.addEventListener('DOMContentLoaded', function () {
                                                style="font-size: 0.75rem;" title="Download RTPS Certificate">
                                                 <i class="bi bi-file-earmark-pdf-fill me-1"></i>Download Certificate
                                             </a>
+                                        <?php elseif ($status === 'REJECTED' || $prog['is_rejected']): ?>
+                                            <span class="badge bg-danger-subtle text-danger border border-danger-subtle py-1 px-1.5 text-nowrap" style="font-size: 0.68rem;" title="<?= e('Rejected: ' . ($prog['rejection_reason'] ?: 'Application rejected on portal')) ?>">
+                                                <i class="bi bi-x-circle me-1"></i>Rejected on Portal
+                                            </span>
                                         <?php elseif ($status === 'IN_PROCESS'): ?>
                                             <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle py-1 px-1.5 text-nowrap" style="font-size: 0.68rem;" title="Automatic RTPS Check Scheduled (Every 5 Hours / 7 AM)">
                                                 <i class="bi bi-clock-history me-1"></i>RTPS Check (5-Hr)

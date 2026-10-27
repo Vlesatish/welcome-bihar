@@ -666,6 +666,9 @@ POWERSHELL;
                     'success' => false,
                     'status' => 'REJECTED',
                     'portal_status' => 'Rejected',
+                    'rejected_step' => $evaluation['rejected_step'] ?? 3,
+                    'rejection_reason' => $evaluation['rejection_reason'] ?? $evaluation['message'],
+                    'rejected_task' => $evaluation['rejected_task'] ?? 'Field Verification',
                     'message' => $evaluation['message']
                 ];
             }
@@ -756,7 +759,16 @@ POWERSHELL;
                 $issuedDocRaw = $tdMatches[1][3];
                 $issuedDocText = trim(strip_tags($issuedDocRaw));
                 $status = trim(strip_tags($tdMatches[1][4]));
-                $remarks = isset($tdMatches[1][5]) ? trim(strip_tags($tdMatches[1][5])) : '';
+                $remarksRaw = $tdMatches[1][5] ?? '';
+                $remarks = trim(strip_tags($remarksRaw));
+                if (preg_match('/<input[^>]*value=["\']([^"\']+)["\']/i', $remarksRaw, $valM)) {
+                    $remarks = trim(html_entity_decode($valM[1], ENT_QUOTES, 'UTF-8'));
+                } elseif (preg_match('/(?:title|onclick|data-original-title|data-content)=["\']([^"\']+)["\']/i', $remarksRaw, $remM)) {
+                    $remarksAttr = trim(strip_tags(html_entity_decode($remM[1], ENT_QUOTES, 'UTF-8')));
+                    if (!empty($remarksAttr) && !in_array(strtolower($remarksAttr), ['view', 'click here', 'javascript:;'])) {
+                        $remarks = $remarksAttr;
+                    }
+                }
 
                 $docLink = null;
                 if (preg_match("/showDocument\('([^']+)','([^']+)','([^']+)','([^']+)','([0-9]+)','([^']+)'\)/i", $issuedDocRaw, $m)) {
@@ -794,13 +806,38 @@ POWERSHELL;
      */
     public static function evaluateRtpsStatus(array $parsedRows): array
     {
-        foreach ($parsedRows as $r) {
-            if (stripos($r['status'], 'Rejected') !== false) {
+        foreach ($parsedRows as $k => $r) {
+            if (stripos($r['status'] ?? '', 'Rejected') !== false || stripos($r['task_name'] ?? '', 'Rejection') !== false) {
+                $rejStep = is_numeric($r['s_no'] ?? '') ? (int)$r['s_no'] : (is_numeric($k) ? (int)$k : 3);
+                $rejReason = !empty($r['remarks']) && strtolower($r['remarks']) !== 'view' && strtolower($r['remarks']) !== 'na'
+                    ? trim($r['remarks'])
+                    : '';
+
+                // If this row's remarks is empty or 'View', check if row 3 or any other row has remarks
+                if (empty($rejReason)) {
+                    foreach ($parsedRows as $otherR) {
+                        $otherRem = trim($otherR['remarks'] ?? '');
+                        if (!empty($otherRem) && strtolower($otherRem) !== 'view' && strtolower($otherRem) !== 'na') {
+                            $rejReason = $otherRem;
+                            break;
+                        }
+                    }
+                }
+
+                if (empty($rejReason)) {
+                    $rejReason = 'Application has been Rejected on official portal.';
+                }
+
+                $rejTask = !empty($r['task_name']) ? trim($r['task_name']) : 'Field Verification';
+
                 return [
                     'action' => 'REJECT',
                     'status' => 'REJECTED',
                     'portal_status' => 'Rejected',
-                    'message' => 'Application has been Rejected on official portal.',
+                    'rejected_step' => $rejStep,
+                    'rejection_reason' => $rejReason,
+                    'rejected_task' => $rejTask,
+                    'message' => $rejReason,
                     'cert_doc' => null,
                 ];
             }
@@ -1165,15 +1202,16 @@ POWERSHELL;
         $reason = $fetchRes['message'] ?? 'Certificate not yet generated on portal';
 
         if (!empty($fetchRes['status']) && $fetchRes['status'] === 'REJECTED') {
+            $rejReason = !empty($fetchRes['rejection_reason']) ? $fetchRes['rejection_reason'] : ($fetchRes['message'] ?? 'Application rejected on official portal');
             $db->prepare("
                 UPDATE applications
                 SET status = 'REJECTED',
                     rejection_reason = ?,
-                    admin_remarks = 'Rejected on official portal',
+                    admin_remarks = ?,
                     remarks = ?,
                     updated_at = NOW()
                 WHERE id = ?
-            ")->execute([$reason, $reason, $appId]);
+            ")->execute([$rejReason, 'Rejected on official portal: ' . $rejReason, $rejReason, $appId]);
 
             $db->prepare("
                 UPDATE rtps_certificate_queue
@@ -1182,14 +1220,16 @@ POWERSHELL;
                     last_status_message = ?,
                     updated_at = NOW()
                 WHERE application_id = ?
-            ")->execute([$reason, $appId]);
+            ")->execute(['Rejected on portal: ' . $rejReason, $appId]);
 
             return [
                 'success' => false,
                 'status' => 'REJECTED',
                 'portal_status' => 'Rejected',
+                'rejected_step' => $fetchRes['rejected_step'] ?? 3,
+                'rejection_reason' => $rejReason,
                 'app_id' => $appId,
-                'message' => $reason
+                'message' => $rejReason
             ];
         }
 

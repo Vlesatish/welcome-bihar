@@ -329,7 +329,11 @@
                         <tbody>
                             <?php foreach ($applications as $app): ?>
                                 <?php
+                                    $prog = get_application_progress($app);
                                     $status = strtoupper($app['status'] ?? 'PENDING');
+                                    if ($prog['is_rejected']) {
+                                        $status = 'REJECTED';
+                                    }
                                     $appNum = $app['applicant_identifier'] ?: '#' . $app['app_ref'];
                                     $safeApp = $app;
                                     if (!empty($safeApp['fields']) && is_array($safeApp['fields'])) {
