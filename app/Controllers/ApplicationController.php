@@ -7,6 +7,7 @@ use App\Services\ApplicationService;
 use App\Services\PricingService;
 use App\Services\CsvService;
 use App\Services\OperatorAuthorizationService;
+use App\Services\RtpsCertificateService;
 use Exception;
 use PDO;
 

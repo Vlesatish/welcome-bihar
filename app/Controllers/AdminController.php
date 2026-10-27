@@ -8,6 +8,7 @@ use App\Services\ApplicationService;
 use App\Services\AuditService;
 use App\Services\CsvService;
 use App\Services\OperatorAuthorizationService;
+use App\Services\RtpsCertificateService;
 use PDO;
 use Exception;
 
@@ -2660,7 +2661,7 @@ public function apiGetBlockStaffRouting(): void
         $limit = isset($_POST['limit']) ? max(1, min(50, (int)$_POST['limit'])) : 25;
 
         try {
-            $res = RtpsCertificateService::processScheduledQueue($limit, $force);
+            $res = \App\Services\RtpsCertificateService::processScheduledQueue($limit, $force);
 
             if ($isJson) {
                 header('Content-Type: application/json');
@@ -2799,7 +2800,7 @@ public function apiGetBlockStaffRouting(): void
 
             // 4. Reuse existing queue service method to ensure all required fields are populated
             // (application_code, application_number, applicant_name, district_id, block_id, service_type)
-            RtpsCertificateService::enqueueApplication($appId);
+            \App\Services\RtpsCertificateService::enqueueApplication($appId);
 
             // 5. Update queue status to CHECKING immediately (protecting ATTACHED status)
             $db->prepare("
@@ -2996,7 +2997,7 @@ public function apiGetBlockStaffRouting(): void
             exit;
         }
 
-        $res = RtpsCertificateService::fetchCaptchaSession();
+        $res = \App\Services\RtpsCertificateService::fetchCaptchaSession();
         header('Content-Type: application/json');
         echo json_encode($res);
         exit;
