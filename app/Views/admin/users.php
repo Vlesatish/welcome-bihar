@@ -202,6 +202,17 @@
             </div>
 
             <!-- Registration Date Filter -->
+            <div class="col-6 col-md-1">
+                <label class="form-label small fw-semibold text-secondary mb-1">Per Page</label>
+                <select name="limit" class="form-select form-select-sm" onchange="this.form.submit()">
+                    <option value="25" <?= ($limit ?? 25) === 25 ? 'selected' : '' ?>>25</option>
+                    <option value="50" <?= ($limit ?? 25) === 50 ? 'selected' : '' ?>>50</option>
+                    <option value="100" <?= ($limit ?? 25) === 100 ? 'selected' : '' ?>>100</option>
+                    <option value="200" <?= ($limit ?? 25) === 200 ? 'selected' : '' ?>>200</option>
+                    <option value="500" <?= ($limit ?? 25) === 500 ? 'selected' : '' ?>>500</option>
+                    <option value="ALL" <?= ($limit ?? 25) >= 5000 ? 'selected' : '' ?>>All</option>
+                </select>
+            </div>
             <div class="col-6 col-md-2">
                 <label class="form-label small fw-semibold text-secondary mb-1">Registered Date</label>
                 <select name="date_filter" class="form-select form-select-sm">
@@ -426,12 +437,25 @@
             </table>
         </div>
 
-        <!-- Pagination Bar -->
-        <?php if ($totalPages > 1): ?>
-            <div class="card-footer bg-white border-top py-3 px-4 d-flex align-items-center justify-content-between flex-wrap gap-2">
+        <!-- Pagination Bar & Per-Page Controls -->
+        <div class="card-footer bg-white border-top py-3 px-4 d-flex align-items-center justify-content-between flex-wrap gap-3">
+            <div class="d-flex align-items-center gap-3 flex-wrap">
                 <div class="small text-muted">
-                    Showing <strong><?= ($offset + 1) ?></strong> to <strong><?= min($totalRecords, $offset + $limit) ?></strong> of <strong><?= number_format($totalRecords) ?></strong> users
+                    Showing <strong><?= $totalRecords > 0 ? ($offset + 1) : 0 ?></strong> to <strong><?= min($totalRecords, $offset + $limit) ?></strong> of <strong><?= number_format($totalRecords) ?></strong> users
                 </div>
+                <div class="d-inline-flex align-items-center gap-2 small text-muted">
+                    <span>Per Page:</span>
+                    <select class="form-select form-select-sm d-inline-block w-auto py-1 px-2.5 fw-semibold border-secondary-subtle" style="font-size: 0.82rem;" onchange="changeUsersPerPage(this.value)">
+                        <option value="25" <?= ($limit ?? 25) === 25 ? 'selected' : '' ?>>25 records</option>
+                        <option value="50" <?= ($limit ?? 25) === 50 ? 'selected' : '' ?>>50 records</option>
+                        <option value="100" <?= ($limit ?? 25) === 100 ? 'selected' : '' ?>>100 records</option>
+                        <option value="200" <?= ($limit ?? 25) === 200 ? 'selected' : '' ?>>200 records</option>
+                        <option value="500" <?= ($limit ?? 25) === 500 ? 'selected' : '' ?>>500 records</option>
+                        <option value="ALL" <?= ($limit ?? 25) >= 5000 ? 'selected' : '' ?>>Show All</option>
+                    </select>
+                </div>
+            </div>
+            <?php if ($totalPages > 1): ?>
                 <nav aria-label="Users pagination">
                     <ul class="pagination pagination-sm mb-0">
                         <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>">
@@ -451,8 +475,8 @@
                         </li>
                     </ul>
                 </nav>
-            </div>
-        <?php endif; ?>
+            <?php endif; ?>
+        </div>
     </div>
 </div>
 
@@ -1240,3 +1264,12 @@ function onEditLocDistrictChange(distId, selectedBlockId = 0) {
 </script>
 
 <?php require dirname(__DIR__) . '/layouts/footer.php'; ?>
+
+<script>
+function changeUsersPerPage(val) {
+    const url = new URL(window.location.href);
+    url.searchParams.set('limit', val);
+    url.searchParams.set('page', '1');
+    window.location.href = url.toString();
+}
+</script>

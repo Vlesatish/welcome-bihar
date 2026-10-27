@@ -1079,9 +1079,18 @@ public function adminApplications(): void
         $countStmt->execute($params);
         $totalRecords = (int)$countStmt->fetchColumn();
 
+        // Pagination & Per-Page Limit
+        $limitInput = $_GET['limit'] ?? '25';
+        if (strtoupper((string)$limitInput) === 'ALL') {
+            $limit = 5000;
+        } else {
+            $limit = max(10, min(1000, (int)$limitInput));
+            if (!in_array($limit, [10, 25, 50, 100, 200, 500, 1000], true)) {
+                $limit = 25;
+            }
+        }
         $page = max(1, (int)($_GET['page'] ?? 1));
-        $limit = 25;
-        $totalPages = max(1, ceil($totalRecords / $limit));
+        $totalPages = max(1, (int)ceil($totalRecords / $limit));
         if ($page > $totalPages) $page = $totalPages;
         $offset = ($page - 1) * $limit;
 

@@ -514,12 +514,25 @@
                     </table>
                 </div>
 
-                <!-- PAGINATION FOOTER -->
-                <?php if ($totalPages > 1): ?>
-                    <div class="card-footer bg-white py-2 px-3 border-top d-flex align-items-center justify-content-between flex-wrap gap-2">
-                        <div class="small text-muted" style="font-size: 0.75rem;">
-                            Page <strong><?= $page ?></strong> of <strong><?= $totalPages ?></strong> (<?= number_format($totalRecords) ?> total records)
+                <!-- PAGINATION FOOTER & PER PAGE -->
+                <div class="card-footer bg-white py-2.5 px-3 border-top d-flex align-items-center justify-content-between flex-wrap gap-2">
+                    <div class="d-flex align-items-center gap-3 flex-wrap">
+                        <div class="small text-muted" style="font-size: 0.76rem;">
+                            Showing <strong><?= $totalRecords > 0 ? ($offset + 1) : 0 ?></strong> to <strong><?= min($totalRecords, $offset + $limit) ?></strong> of <strong><?= number_format($totalRecords) ?></strong> records
                         </div>
+                        <div class="d-inline-flex align-items-center gap-1.5 small text-muted">
+                            <span style="font-size: 0.74rem;">Show:</span>
+                            <select class="form-select form-select-sm d-inline-block w-auto py-0.5 px-2 fw-semibold" style="font-size: 0.74rem;" onchange="changeAppPerPage(this.value)">
+                                <option value="25" <?= ($limit ?? 25) === 25 ? 'selected' : '' ?>>25 per page</option>
+                                <option value="50" <?= ($limit ?? 25) === 50 ? 'selected' : '' ?>>50 per page</option>
+                                <option value="100" <?= ($limit ?? 25) === 100 ? 'selected' : '' ?>>100 per page</option>
+                                <option value="200" <?= ($limit ?? 25) === 200 ? 'selected' : '' ?>>200 per page</option>
+                                <option value="500" <?= ($limit ?? 25) === 500 ? 'selected' : '' ?>>500 per page</option>
+                                <option value="ALL" <?= ($limit ?? 25) >= 5000 ? 'selected' : '' ?>>Show All</option>
+                            </select>
+                        </div>
+                    </div>
+                    <?php if ($totalPages > 1): ?>
                         <ul class="pagination pagination-sm mb-0">
                             <?php
                                 function buildPageUrl($p) {
@@ -544,8 +557,8 @@
                                 <a class="page-link" href="<?= buildPageUrl($totalPages) ?>">Last &raquo;</a>
                             </li>
                         </ul>
-                    </div>
-                <?php endif; ?>
+                    <?php endif; ?>
+                </div>
             <?php endif; ?>
         </div>
     </div>
@@ -554,3 +567,12 @@
 
 <?php require __DIR__ . '/applications_modals.php'; ?>
 
+
+<script>
+function changeAppPerPage(val) {
+    const url = new URL(window.location.href);
+    url.searchParams.set('limit', val);
+    url.searchParams.set('page', '1');
+    window.location.href = url.toString();
+}
+</script>
