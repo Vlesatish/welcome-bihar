@@ -12,8 +12,6 @@ use PDO;
 
 class ApplicationController
 {
-    use \App\Controllers\Traits\ApplicationAdminTrait;
-    use \App\Controllers\Traits\ApplicationApiTrait;
 
     public function __construct()
     {
@@ -952,4 +950,1197 @@ class ApplicationController
      * POST /admin/applications/reassign
      */
     
+
+
+public function adminApplications(): void
+    {
+        $user = AuthService::user();
+        if (!$user) {
+            header('Location: /login');
+            exit;
+        }
+
+        $isAdmin = AuthService::isAdmin();
+        $hasOperatorAccess = AuthService::canAccessOperatorMode((int)$user['id']);
+        $activeMode = AuthService::activePortalMode();
+
+        if (!$isAdmin && (!$hasOperatorAccess || $activeMode !== 'OPERATOR')) {
+            $_SESSION['flash_error'] = 'Administrative privilege or Staff Mode required.';
+            header('Location: /user/dashboard');
+            exit;
+        }
+
+        $db = Database::getConnection();
+
+        // Auto-sync RTPS certificates in background without blocking page render
+        try {
+            $lastSync = $_SESSION['last_rtps_admin_bg_sync'] ?? 0;
+            if (time() - $lastSync > 60) {
+                $_SESSION['last_rtps_admin_bg_sync'] = time();
+                \App\Services\RtpsCertificateService::dispatchBackgroundWorker(0);
+            }
+        } catch (\Throwable $e) {}
+
+        // 1. Fetch active service (srv_block_app)
+        $dtRow = $db->query("SELECT id, code, name_en, fee_amount FROM data_types WHERE code = 'srv_block_app' AND is_active = 1 LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        $dataTypeId = $dtRow ? (int)$dtRow['id'] : 4;
+
+        // Operator scoping & zero access check
+        $isOperator = !$isAdmin;
+        $userId = (int)$user['id'];
+        $operatorDistrictId = $isOperator ? (int)($user['assigned_district_id'] ?? 0) : 0;
+        $operatorBlockId = $isOperator ? (int)($user['assigned_block_id'] ?? 0) : 0;
+        $assignedBlocks = $isOperator ? AuthService::getOperatorAssignedBlocks($userId) : [];
+        $unassignedOperator = ($isOperator && empty($assignedBlocks));
+
+        if ($unassignedOperator) {
+            $tabCounts = ['ALL' => 0, 'PENDING' => 0, 'IN_PROCESS' => 0, 'APPROVED' => 0, 'REJECTED' => 0];
+            $currentTab = 'ALL';
+            $search = '';
+            $dateFilter = 'ALL';
+            $districtId = 0;
+            $blockId = 0;
+            $appCode = '';
+            $retailerId = 0;
+            $applications = [];
+            $districts = [];
+            $blocks = [];
+            $retailers = [];
+            $appCodes = $this->getApplicationCodes();
+            $page = 1;
+            $totalPages = 1;
+            $totalRecords = 0;
+            require dirname(__DIR__, 2) . '/Views/admin/applications.php';
+            return;
+        }
+
+        $assignedCodes = [];
+        if ($isOperator) {
+            $assignedCodes = $db->query("
+                SELECT DISTINCT application_code
+                FROM operator_application_code_assignments
+                WHERE operator_user_id = {$userId} AND is_active = 1
+            ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+        }
+
+        // 2. Tab counts for All | Pending | In Process | Approved | Rejected (Unified Single-Query)
+        if ($isOperator) {
+            $tabCounts = OperatorAuthorizationService::getStatusCounts($userId);
+        } else {
+            $tabCounts = [
+                'ALL' => (int)$db->query("SELECT COUNT(*) FROM applications WHERE data_type_id = {$dataTypeId}")->fetchColumn(),
+                'PENDING' => (int)$db->query("SELECT COUNT(*) FROM applications WHERE data_type_id = {$dataTypeId} AND status = 'PENDING'")->fetchColumn(),
+                'IN_PROCESS' => (int)$db->query("SELECT COUNT(*) FROM applications WHERE data_type_id = {$dataTypeId} AND status IN ('IN_PROCESS', 'UNDER_REVIEW')")->fetchColumn(),
+                'APPROVED' => (int)$db->query("SELECT COUNT(*) FROM applications WHERE data_type_id = {$dataTypeId} AND status IN ('APPROVED', 'COMPLETED')")->fetchColumn(),
+                'REJECTED' => (int)$db->query("SELECT COUNT(*) FROM applications WHERE data_type_id = {$dataTypeId} AND status = 'REJECTED'")->fetchColumn(),
+            ];
+        }
+
+        // 3. Query filters
+        $currentTab = strtoupper(trim($_GET['status'] ?? 'ALL'));
+        if (!in_array($currentTab, ['ALL', 'PENDING', 'IN_PROCESS', 'APPROVED', 'REJECTED'], true)) {
+            $currentTab = 'ALL';
+        }
+
+        $search = trim($_GET['search'] ?? '');
+        $dateFilter = strtoupper(trim($_GET['date_filter'] ?? 'ALL'));
+        $districtId = !empty($_GET['district_id']) ? (int)$_GET['district_id'] : 0;
+        $blockId = !empty($_GET['block_id']) ? (int)$_GET['block_id'] : 0;
+        $appCode = strtoupper(trim($_GET['app_code'] ?? ''));
+        $retailerId = !empty($_GET['retailer_id']) ? (int)$_GET['retailer_id'] : 0;
+        $assignmentStatus = strtoupper(trim($_GET['assignment_status'] ?? 'ALL'));
+
+        $filterParams = [
+            'status' => $currentTab,
+            'search' => $search,
+            'date_filter' => $dateFilter,
+            'district_id' => $districtId,
+            'block_id' => $blockId,
+            'app_code' => $appCode,
+            'retailer_id' => $retailerId,
+            'assignment_status' => $assignmentStatus,
+        ];
+
+        $filterBuild = OperatorAuthorizationService::buildFilterConditions($filterParams, $isOperator, $userId, 'a');
+        $where = $filterBuild['where'];
+        $params = $filterBuild['params'];
+
+        if (!$isOperator) {
+            $where[] = "a.data_type_id = :admin_data_type_id";
+            $params[':admin_data_type_id'] = $dataTypeId;
+        }
+
+        $whereClause = !empty($where) ? implode(' AND ', $where) : '1=1';
+
+        // Count total for pagination on complete authorized dataset
+        $countSql = "SELECT COUNT(*) FROM applications a LEFT JOIN users u ON a.user_id = u.id WHERE {$whereClause}";
+        $countStmt = $db->prepare($countSql);
+        $countStmt->execute($params);
+        $totalRecords = (int)$countStmt->fetchColumn();
+
+        $page = max(1, (int)($_GET['page'] ?? 1));
+        $limit = 25;
+        $totalPages = max(1, ceil($totalRecords / $limit));
+        if ($page > $totalPages) $page = $totalPages;
+        $offset = ($page - 1) * $limit;
+
+        // Fetch applications with LEFT JOINs to prevent dropped rows
+        $sql = "
+            SELECT a.id, a.app_ref, a.batch_ref, a.applicant_name, a.applicant_mobile, a.applicant_identifier,
+                   a.fee_debited, a.commission_credited, a.status, a.admin_remarks, a.remarks,
+                   a.rejection_reason, a.result_file, a.is_refunded, a.is_commission_paid,
+                   a.district_id, a.block_id, a.application_code, a.assigned_operator_id, a.assigned_at, a.assignment_method,
+                   a.created_at, a.updated_at,
+                   u.id as retailer_id, u.name as retailer_name, u.mobile as retailer_mobile, u.center_name,
+                   d.name as district_name, d.name_hi as district_name_hi,
+                   b.name as block_name, b.name_hi as block_name_hi,
+                   op.name as assigned_operator_name, op.mobile as assigned_operator_mobile
+            FROM applications a
+            LEFT JOIN users u ON a.user_id = u.id
+            LEFT JOIN districts d ON a.district_id = d.id
+            LEFT JOIN blocks b ON a.block_id = b.id
+            LEFT JOIN users op ON a.assigned_operator_id = op.id
+            WHERE {$whereClause}
+            ORDER BY a.updated_at DESC, a.id DESC
+            LIMIT {$limit} OFFSET {$offset}
+        ";
+
+        $stmt = $db->prepare($sql);
+        $stmt->execute($params);
+        $applications = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Fetch dynamic fields and status history for these applications
+        $appIds = array_column($applications, 'id');
+        $fieldValuesByApp = [];
+        $statusHistoryByApp = [];
+
+        if (!empty($appIds)) {
+            $inClause = implode(',', array_map('intval', $appIds));
+            $fvRows = $db->query("
+                SELECT afv.application_id, afv.field_name, afv.field_value, dtf.label_en, acf.label as acf_label
+                FROM application_field_values afv
+                LEFT JOIN data_type_fields dtf ON afv.field_id = dtf.id
+                LEFT JOIN application_code_fields acf ON afv.code_field_id = acf.id
+                WHERE afv.application_id IN ({$inClause})
+            ")->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($fvRows as $fv) {
+                $lbl = !empty($fv['acf_label']) ? $fv['acf_label'] : (!empty($fv['label_en']) ? $fv['label_en'] : ucwords(str_replace(['_', '-'], ' ', (string)$fv['field_name'])));
+                $fieldValuesByApp[$fv['application_id']][$fv['field_name']] = [
+                    'label' => $lbl,
+                    'value' => $fv['field_value']
+                ];
+            }
+
+            $histRows = $db->query("
+                SELECT application_id, from_status, to_status, actor_name, actor_role, remarks, rejection_reason, created_at
+                FROM application_status_history
+                WHERE application_id IN ({$inClause})
+                ORDER BY id ASC
+            ")->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($histRows as $hr) {
+                $statusHistoryByApp[$hr['application_id']][] = $hr;
+            }
+        }
+
+        foreach ($applications as &$app) {
+            $app['fields'] = $fieldValuesByApp[$app['id']] ?? [];
+            $app['history'] = $statusHistoryByApp[$app['id']] ?? [];
+            if (empty($app['application_code'])) {
+                $app['application_code'] = $app['fields']['application_code']['value'] ?? '';
+            }
+            if (empty($app['application_code']) && preg_match('#^([A-Z]{3,6})/#', (string)$app['applicant_identifier'], $cm)) {
+                $app['application_code'] = $cm[1];
+            }
+            if (empty($app['application_code'])) {
+                $app['application_code'] = 'BICCO';
+            }
+        }
+        unset($app);
+        unset($app);
+
+        if ($isOperator) {
+            $districts = AuthService::getOperatorAssignedDistricts($userId);
+            $blocks = AuthService::getOperatorAssignedBlocks($userId, $districtId > 0 ? $districtId : null);
+        } else {
+            $districts = $db->query("SELECT id, name, name_hi, state FROM districts WHERE is_active = 1 ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+            $blocks = [];
+            if ($districtId > 0) {
+                $bStmt = $db->prepare("SELECT id, name, name_hi FROM blocks WHERE district_id = ? AND is_active = 1 ORDER BY name ASC");
+                $bStmt->execute([$districtId]);
+                $blocks = $bStmt->fetchAll(PDO::FETCH_ASSOC);
+            }
+        }
+
+        if ($isOperator) {
+            $opCond = OperatorAuthorizationService::getAuthorizedSqlCondition($userId, 'a');
+            $retailersQuery = "
+                SELECT DISTINCT u.id, u.name, u.mobile, u.center_name
+                FROM users u
+                JOIN applications a ON a.user_id = u.id
+                WHERE {$opCond}
+                ORDER BY u.name ASC
+            ";
+        } else {
+            $retailersQuery = "
+                SELECT DISTINCT u.id, u.name, u.mobile, u.center_name
+                FROM users u
+                JOIN applications a ON a.user_id = u.id
+                WHERE a.data_type_id = {$dataTypeId}
+                ORDER BY u.name ASC
+            ";
+        }
+        $retailers = $db->query($retailersQuery)->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        $appCodes = $this->getApplicationCodes();
+
+        require dirname(__DIR__, 2) . '/Views/admin/applications.php';
+    }
+
+    
+public function reassignStaff(): void
+    {
+        $user = AuthService::user();
+        if (!$user || $user['role'] !== 'ADMIN') {
+            $_SESSION['flash_error'] = 'Access denied: Admin only.';
+            header('Location: /admin/applications');
+            exit;
+        }
+
+        if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
+            $_SESSION['flash_error'] = 'Invalid CSRF token.';
+            header('Location: /admin/applications');
+            exit;
+        }
+
+        $appId = (int)($_POST['application_id'] ?? 0);
+        $newOperatorId = !empty($_POST['operator_id']) ? (int)$_POST['operator_id'] : null;
+        $reason = trim((string)($_POST['reason'] ?? ''));
+
+        if ($appId <= 0) {
+            $_SESSION['flash_error'] = 'Invalid application ID.';
+            header('Location: /admin/applications');
+            exit;
+        }
+
+        try {
+            \App\Services\StaffRoutingService::reassignApplication($appId, $newOperatorId, $reason, (int)$user['id']);
+            $_SESSION['flash_success'] = 'Application operator updated successfully.';
+        } catch (\Exception $e) {
+            $_SESSION['flash_error'] = 'Failed to reassign: ' . $e->getMessage();
+        }
+
+        $redirect = !empty($_POST['redirect_to']) ? $_POST['redirect_to'] : '/admin/applications';
+        header('Location: ' . $redirect);
+        exit;
+    }
+
+    public function routeUnassignedApplications(): void
+    {
+        $user = AuthService::user();
+        if (!$user || $user['role'] !== 'ADMIN') {
+            $_SESSION['flash_error'] = 'Access denied: Admin only.';
+            header('Location: /admin/applications');
+            exit;
+        }
+
+        if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
+            $_SESSION['flash_error'] = 'Invalid CSRF token.';
+            header('Location: /admin/applications');
+            exit;
+        }
+
+        $districtId = !empty($_POST['district_id']) ? (int)$_POST['district_id'] : null;
+        $blockId = !empty($_POST['block_id']) ? (int)$_POST['block_id'] : null;
+
+        try {
+            $res = \App\Services\StaffRoutingService::routeUnassignedApplications($districtId, $blockId, (int)$user['id']);
+            if ($res['routed_count'] > 0) {
+                $_SESSION['flash_success'] = "Successfully routed {$res['routed_count']} unassigned applications to matching active operators.";
+            } else {
+                $_SESSION['flash_info'] = "No unassigned applications matched active operators.";
+            }
+        } catch (\Throwable $e) {
+            $_SESSION['flash_error'] = "Routing failed: " . $e->getMessage();
+        }
+
+        $redirect = !empty($_POST['redirect_to']) ? $_POST['redirect_to'] : '/admin/applications?assignment_status=UNASSIGNED';
+        header('Location: ' . $redirect);
+        exit;
+    }
+
+
+public function apiGetRequests(): void
+    {
+        header('Content-Type: application/json; charset=utf-8');
+        $user = AuthService::user();
+        if (!$user) {
+            http_response_code(401);
+            echo json_encode(['error' => 'Unauthenticated']);
+            exit;
+        }
+
+        $db = Database::getConnection();
+        $userId = (int)$user['id'];
+        $role = $user['role'];
+
+        $where = ["1=1"];
+        $params = [];
+
+        $activeMode = AuthService::activePortalMode();
+        $isOperatorMode = ($activeMode === 'OPERATOR' && AuthService::canAccessOperatorMode());
+        $effectiveRole = $role;
+        if ($isOperatorMode) {
+            $effectiveRole = 'OPERATOR';
+        } elseif ($role === 'USER') {
+            $effectiveRole = 'USER';
+        }
+
+        // Scope
+        if ($effectiveRole === 'USER') {
+            $where[] = "a.user_id = :scope_uid";
+            $params[':scope_uid'] = $userId;
+        } elseif ($effectiveRole === 'DISTRIBUTOR') {
+            $where[] = "a.distributor_id = :scope_did";
+            $params[':scope_did'] = $userId;
+        } elseif ($effectiveRole === 'OPERATOR') {
+            $where[] = OperatorAuthorizationService::getAuthorizedSqlCondition((int)$userId, 'a');
+        }
+
+        // Filters
+        $status = trim($_GET['status'] ?? '');
+        if (!empty($status) && $status !== 'ALL') {
+            if ($status === 'IN_PROCESS') {
+                $where[] = "(a.status = 'IN_PROCESS' OR a.status = 'UNDER_REVIEW')";
+            } elseif ($status === 'COMPLETED') {
+                $where[] = "(a.status = 'COMPLETED' OR a.status = 'APPROVED')";
+            } else {
+                $where[] = "a.status = :filter_status";
+                $params[':filter_status'] = $status;
+            }
+        }
+
+        $search = trim($_GET['search'] ?? '');
+        if (!empty($search)) {
+            $where[] = "(a.app_ref LIKE :q OR a.applicant_name LIKE :q OR a.applicant_mobile LIKE :q OR a.applicant_identifier LIKE :q OR CAST(a.id AS CHAR) LIKE :q)";
+            $params[':q'] = "%{$search}%";
+        }
+
+        $dateFilter = trim($_GET['date_filter'] ?? $_GET['dateFilter'] ?? 'ALL');
+        if ($dateFilter === 'TODAY') {
+            $where[] = "DATE(a.created_at) = CURDATE()";
+        } elseif ($dateFilter === 'WEEK') {
+            $where[] = "a.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)";
+        } elseif ($dateFilter === 'MONTH') {
+            $where[] = "a.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
+        }
+
+        $whereClause = implode(' AND ', $where);
+        $sql = "
+            SELECT a.id, a.app_ref, a.user_id, a.applicant_name, a.applicant_mobile, a.applicant_identifier,
+                   a.fee_debited, a.commission_credited, a.status, a.admin_remarks, a.remarks,
+                   a.result_file, a.is_refunded, a.is_commission_paid, a.assigned_operator_id,
+                   a.created_at, a.updated_at,
+                   u.name as retailer_name, u.center_name, u.mobile as retailer_mobile,
+                   op.name as operator_name,
+                   d.name as district_name,
+                   b.name as block_name,
+                   dt.name_en as dt_name_en
+            FROM applications a
+            JOIN users u ON a.user_id = u.id
+            LEFT JOIN users op ON a.assigned_operator_id = op.id
+            LEFT JOIN districts d ON a.district_id = d.id
+            LEFT JOIN blocks b ON a.block_id = b.id
+            JOIN data_types dt ON a.data_type_id = dt.id
+            WHERE {$whereClause}
+            ORDER BY a.id DESC
+            LIMIT 150
+        ";
+
+        $stmt = $db->prepare($sql);
+        $stmt->execute($params);
+        $rawRows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $appIds = array_column($rawRows, 'id');
+        $fieldValuesByApp = [];
+        if (!empty($appIds)) {
+            $inClause = implode(',', array_map('intval', $appIds));
+            $fvRows = $db->query("
+                SELECT afv.application_id, afv.field_name, afv.field_value, dtf.label_en
+                FROM application_field_values afv
+                LEFT JOIN data_type_fields dtf ON afv.field_id = dtf.id
+                WHERE afv.application_id IN ({$inClause})
+            ")->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($fvRows as $fv) {
+                $fieldValuesByApp[$fv['application_id']][$fv['field_name']] = $fv['field_value'];
+            }
+        }
+
+        $results = [];
+        foreach ($rawRows as $r) {
+            $fData = $fieldValuesByApp[$r['id']] ?? [];
+            if (!isset($fData['applicant_name'])) $fData['applicant_name'] = $r['applicant_name'];
+            if (!isset($fData['mobile'])) $fData['mobile'] = $r['applicant_mobile'];
+            if (!isset($fData['application_number'])) $fData['application_number'] = $r['applicant_identifier'];
+            if (!isset($fData['district_name'])) $fData['district_name'] = $r['district_name'];
+            if (!isset($fData['block_name'])) $fData['block_name'] = $r['block_name'];
+
+            $statusDisplay = $r['status'];
+            if ($r['status'] === 'UNDER_REVIEW') $statusDisplay = 'IN_PROCESS';
+            elseif ($r['status'] === 'APPROVED') $statusDisplay = 'COMPLETED';
+
+            $results[] = [
+                'id' => (string)$r['id'],
+                'requestNumber' => (string)$r['id'],
+                'app_ref' => $r['app_ref'],
+                'retailerId' => (string)$r['user_id'],
+                'retailerName' => $r['retailer_name'] . ($r['center_name'] ? " ({$r['center_name']})" : ''),
+                'retailerMobile' => $r['retailer_mobile'],
+                'serviceId' => 'srv_block_app',
+                'serviceTitle' => $r['dt_name_en'] ?: 'Block & District Application Pass Service',
+                'status' => $statusDisplay,
+                'raw_status' => $r['status'],
+                'price' => (float)$r['fee_debited'],
+                'fee_debited' => (float)$r['fee_debited'],
+                'createdAt' => date('c', strtotime($r['created_at'])),
+                'created_at' => $r['created_at'],
+                'formData' => $fData,
+                'adminRemarks' => $r['admin_remarks'] ?: $r['remarks'],
+                'outputAttachmentUrl' => $r['result_file'],
+                'isRefunded' => (bool)$r['is_refunded'],
+                'isCommissionPaid' => (bool)$r['is_commission_paid']
+            ];
+        }
+
+        echo json_encode($results);
+        exit;
+    }
+
+    /**
+     * POST /api/requests - In-place AJAX submit request
+     */
+    public function apiSubmitRequest(): void
+    {
+        header('Content-Type: application/json; charset=utf-8');
+        $user = AuthService::user();
+        if (!$user) {
+            http_response_code(401);
+            echo json_encode(['success' => false, 'error' => 'Please log in to submit requests.']);
+            exit;
+        }
+
+        $userId = (int)$user['id'];
+        $db = Database::getConnection();
+
+        // Parse JSON or POST payload
+        $rawInput = file_get_contents('php://input');
+        $jsonData = json_decode($rawInput, true);
+
+        // If batch payload submitted to /api/requests, dispatch to apiSubmitBatch
+        if (($jsonData && (!empty($jsonData['items']) || !empty($jsonData['batch']))) || !empty($_POST['items']) || !empty($_POST['batch'])) {
+            $this->apiSubmitBatch();
+            return;
+        }
+
+        $formData = [];
+        if ($jsonData && isset($jsonData['formData'])) {
+            $formData = $jsonData['formData'];
+        } else {
+            $formData = array_merge($_POST, $_GET);
+        }
+
+        // Enforce active service
+        $activeDataType = $db->query("SELECT id, is_active FROM data_types WHERE code = 'srv_block_app' LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        if (!$activeDataType) {
+            $activeDataType = $db->query("SELECT id, is_active FROM data_types WHERE id = 4 LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        }
+        if (!$activeDataType || (int)$activeDataType['is_active'] === 0) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'Selected service is currently inactive or disabled by administrator.']);
+            exit;
+        }
+        $dataTypeId = (int)$activeDataType['id'];
+
+        // Resolve District ID
+        $districtId = (int)($formData['district_id'] ?? 0);
+        $districtName = trim((string)($formData['district'] ?? $formData['district_name'] ?? ''));
+        if ($districtId <= 0 && !empty($districtName)) {
+            $dStmt = $db->prepare("SELECT id FROM districts WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1");
+            $dStmt->execute([$districtName]);
+            $districtId = (int)($dStmt->fetchColumn() ?: 0);
+        }
+
+        // Resolve Block ID
+        $blockId = (int)($formData['block_id'] ?? 0);
+        $blockName = trim((string)($formData['block'] ?? $formData['block_name'] ?? ''));
+        if ($blockId <= 0 && !empty($blockName)) {
+            $bSql = "SELECT id FROM blocks WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))" . ($districtId > 0 ? " AND district_id = {$districtId}" : "") . " LIMIT 1";
+            $bStmt = $db->prepare($bSql);
+            $bStmt->execute([$blockName]);
+            $blockId = (int)($bStmt->fetchColumn() ?: 0);
+        }
+
+        if ($districtId <= 0 || $blockId <= 0) {
+            http_response_code(422);
+            echo json_encode(['success' => false, 'error' => 'Please select a valid State, District, and Block before submitting.']);
+            exit;
+        }
+
+        // Dynamic price calculation
+        $currentPricing = PricingService::calculatePrice($dataTypeId, $districtId, $blockId, $formData);
+        $serverFee = (float)$currentPricing['final_fee'];
+
+        // Validate displayed price (re-acceptance if rate changed)
+        $displayedPrice = isset($formData['displayed_price']) ? (float)$formData['displayed_price'] : (isset($formData['confirmed_fee']) ? (float)$formData['confirmed_fee'] : null);
+        if ($displayedPrice !== null && abs($displayedPrice - $serverFee) > 0.01) {
+            http_response_code(409);
+            echo json_encode([
+                'success' => false,
+                'price_changed' => true,
+                'new_price' => $serverFee,
+                'error' => "Notice: Service rate for this location has updated to ₹" . number_format($serverFee, 2) . " ({$currentPricing['rate_note']}). Please review and re-confirm."
+            ]);
+            exit;
+        }
+
+        // Check wallet balance
+        $currentWallet = \App\Services\WalletService::getBalance($userId);
+        if ($currentWallet < $serverFee) {
+            http_response_code(400);
+            echo json_encode([
+                'success' => false,
+                'error' => "Insufficient Wallet Balance! Required: ₹" . number_format($serverFee, 2) . ", Available: ₹" . number_format($currentWallet, 2) . ". Please recharge."
+            ]);
+            exit;
+        }
+
+        try {
+            $result = \App\Services\ApplicationService::submit($userId, $dataTypeId, $districtId, $blockId, $formData, $_FILES);
+            $newBalance = \App\Services\WalletService::getBalance($userId);
+
+            $reqObject = [
+                'id' => (string)$result['application_id'],
+                'requestNumber' => (string)$result['application_id'],
+                'app_ref' => $result['app_ref'],
+                'serviceId' => 'srv_block_app',
+                'serviceTitle' => 'Block & District Application Pass Service',
+                'status' => 'PENDING',
+                'raw_status' => 'PENDING',
+                'price' => (float)$result['price'],
+                'fee_debited' => (float)$result['price'],
+                'createdAt' => date('c'),
+                'created_at' => date('Y-m-d H:i:s'),
+                'formData' => $result['formData'],
+                'adminRemarks' => null,
+                'outputAttachmentUrl' => null,
+                'isRefunded' => false,
+                'isCommissionPaid' => false
+            ];
+
+            echo json_encode([
+                'success' => true,
+                'request' => $reqObject,
+                'remainingWalletBalance' => $newBalance,
+                'message' => "Request #{$result['app_ref']} submitted successfully! Fee ₹" . number_format($serverFee, 2) . " deducted."
+            ]);
+            exit;
+        } catch (Exception $e) {
+            http_response_code(400);
+            $newBalance = \App\Services\WalletService::getBalance($userId);
+            echo json_encode([
+                'success' => false,
+                'error' => $e->getMessage(),
+                'remainingWalletBalance' => $newBalance
+            ]);
+            exit;
+        }
+    }
+
+    /**
+     * POST /api/requests/batch - Atomic batch submission for multiple applications
+     */
+    public function apiSubmitBatch(): void
+    {
+        header('Content-Type: application/json; charset=utf-8');
+        $user = AuthService::user();
+        if (!$user) {
+            http_response_code(401);
+            echo json_encode(['success' => false, 'error' => 'Please log in to submit requests.']);
+            exit;
+        }
+
+        $userId = (int)$user['id'];
+        $db = Database::getConnection();
+
+        $rawInput = file_get_contents('php://input');
+        $jsonData = json_decode($rawInput, true) ?: [];
+
+        $items = $jsonData['items'] ?? $jsonData['batch'] ?? ($_POST['items'] ?? $_POST['batch'] ?? []);
+        if (is_string($items)) {
+            $items = json_decode($items, true) ?: [];
+        }
+
+        if (empty($items) || !is_array($items)) {
+            http_response_code(422);
+            echo json_encode(['success' => false, 'error' => 'Batch list is empty. Please add at least one application.']);
+            exit;
+        }
+
+        // Active service
+        $activeDataType = $db->query("SELECT id, is_active FROM data_types WHERE code = 'srv_block_app' LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        if (!$activeDataType) {
+            $activeDataType = $db->query("SELECT id, is_active FROM data_types WHERE id = 4 LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        }
+        if (!$activeDataType || (int)$activeDataType['is_active'] === 0) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'Selected service is currently inactive or disabled by administrator.']);
+            exit;
+        }
+        $dataTypeId = (int)$activeDataType['id'];
+
+        $options = [
+            'accept_price_change' => !empty($jsonData['accept_price_change']) || !empty($_POST['accept_price_change'])
+        ];
+
+        try {
+            $result = \App\Services\ApplicationService::submitBatch($userId, $dataTypeId, $items, $options);
+            if (isset($result['price_changed']) && $result['price_changed'] === true) {
+                http_response_code(409);
+                echo json_encode($result);
+                exit;
+            }
+
+            echo json_encode($result);
+            exit;
+        } catch (\Exception $e) {
+            http_response_code(400);
+            $currentWallet = \App\Services\WalletService::getBalance($userId);
+            echo json_encode([
+                'success' => false,
+                'error' => $e->getMessage(),
+                'remainingWalletBalance' => $currentWallet
+            ]);
+            exit;
+        }
+    }
+
+    /**
+     * POST /api/requests/update-status (and /api/requests/:id/status)
+     */
+    public function apiUpdateStatus(): void
+    {
+        header('Content-Type: application/json; charset=utf-8');
+        $user = AuthService::user();
+        if (!$user) {
+            http_response_code(401);
+            echo json_encode(['success' => false, 'error' => 'Unauthenticated session. Please log in.']);
+            exit;
+        }
+
+        $activeMode = AuthService::activePortalMode();
+        $isOperatorMode = ($activeMode === 'OPERATOR' && AuthService::canAccessOperatorMode());
+        $effectiveRole = $user['role'] ?? '';
+        if ($isOperatorMode) {
+            $effectiveRole = 'OPERATOR';
+        }
+
+        if (!in_array($effectiveRole, ['ADMIN', 'OPERATOR', 'DISTRIBUTOR'], true)) {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'error' => 'Unauthorized action.']);
+            exit;
+        }
+
+        $rawInput = file_get_contents('php://input');
+        $jsonData = json_decode($rawInput, true) ?: [];
+
+        $appId = (int)($_POST['application_id'] ?? $_POST['id'] ?? $jsonData['id'] ?? $jsonData['application_id'] ?? ($_GET['id'] ?? 0));
+        $newStatus = trim((string)($_POST['status'] ?? $jsonData['status'] ?? ''));
+        $adminRemarks = trim((string)($_POST['adminRemarks'] ?? $_POST['admin_remarks'] ?? $jsonData['adminRemarks'] ?? $jsonData['admin_remarks'] ?? ''));
+        $rejectionReason = trim((string)($_POST['rejectionReason'] ?? $_POST['rejection_reason'] ?? $jsonData['rejectionReason'] ?? $jsonData['rejection_reason'] ?? ''));
+        $outputUrl = trim((string)($_POST['outputAttachmentUrl'] ?? $jsonData['outputAttachmentUrl'] ?? ''));
+
+        // Handle uploaded file if present
+        if (!empty($_FILES['result_file']['name']) && $_FILES['result_file']['error'] === UPLOAD_ERR_OK) {
+            $file = $_FILES['result_file'];
+            $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+            $allowedExts = ['pdf', 'jpg', 'jpeg', 'png'];
+
+            if (!in_array($ext, $allowedExts, true) || $file['size'] > 15 * 1024 * 1024) {
+                http_response_code(422);
+                echo json_encode(['success' => false, 'error' => 'Invalid file format or file exceeds 15MB limit.']);
+                exit;
+            }
+
+            // Verify binary MIME type
+            $finfo = finfo_open(FILEINFO_MIME_TYPE);
+            $mime = finfo_file($finfo, $file['tmp_name']);
+            finfo_close($finfo);
+
+            $allowedMimes = ['application/pdf', 'image/jpeg', 'image/png'];
+            if (!in_array($mime, $allowedMimes, true)) {
+                http_response_code(422);
+                echo json_encode(['success' => false, 'error' => "Invalid file content ({$mime}). Only genuine PDF and images allowed."]);
+                exit;
+            }
+
+            $resDir = dirname(dirname(__DIR__)) . '/public/uploads/results';
+            if (!is_dir($resDir)) mkdir($resDir, 0755, true);
+            $safeName = 'res_' . date('Ymd_His') . '_' . bin2hex(random_bytes(8)) . '.' . $ext;
+            if (move_uploaded_file($file['tmp_name'], $resDir . '/' . $safeName)) {
+                $outputUrl = '/uploads/results/' . $safeName;
+            }
+        }
+
+        if ($effectiveRole === 'OPERATOR') {
+            if (!AuthService::canOperatorAccessApplication((int)$user['id'], $appId)) {
+                http_response_code(403);
+                echo json_encode(['success' => false, 'error' => 'Forbidden: You do not have permission to access or update applications outside your assigned District and Block.']);
+                exit;
+            }
+        }
+
+        if ($newStatus === 'REJECTED' && empty(trim($rejectionReason))) {
+            http_response_code(422);
+            echo json_encode(['success' => false, 'error' => 'Rejection reason is mandatory. Please provide a clear explanation for rejecting the application.']);
+            exit;
+        }
+
+        if (($newStatus === 'APPROVED' || $newStatus === 'COMPLETED') && empty($outputUrl)) {
+            $db = Database::getConnection();
+            $checkStmt = $db->prepare("SELECT result_file FROM applications WHERE id = ?");
+            $checkStmt->execute([$appId]);
+            $outputUrl = $checkStmt->fetchColumn() ?: null;
+        }
+
+        try {
+            $result = \App\Services\ApplicationService::updateStatus(
+                $appId,
+                $newStatus,
+                $user['id'],
+                $effectiveRole,
+                $user['name'],
+                $adminRemarks,
+                $rejectionReason,
+                $adminRemarks,
+                $outputUrl ?: null
+            );
+
+            echo json_encode([
+                'success' => true,
+                'message' => $result['message'],
+                'status' => $newStatus,
+                'outputAttachmentUrl' => $outputUrl ?: null
+            ]);
+            exit;
+        } catch (Exception $e) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+            exit;
+        }
+    }
+
+
+    /**
+     * GET /api/requests/chat
+     */
+    public function apiGetChat(): void
+    {
+        header('Content-Type: application/json; charset=utf-8');
+        $user = AuthService::user();
+        if (!$user) {
+            http_response_code(401);
+            echo json_encode(['error' => 'Unauthenticated']);
+            exit;
+        }
+
+        $appId = (int)($_GET['application_id'] ?? $_GET['id'] ?? 0);
+        if ($appId <= 0) {
+            echo json_encode(['messages' => []]);
+            exit;
+        }
+
+        $db = Database::getConnection();
+        $stmt = $db->prepare("SELECT a.id, a.user_id, a.assigned_operator_id, dt.enable_chat FROM applications a JOIN data_types dt ON a.data_type_id = dt.id WHERE a.id = ?");
+        $stmt->execute([$appId]);
+        $app = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$app) {
+            http_response_code(404);
+            echo json_encode(['error' => 'Application not found.']);
+            exit;
+        }
+
+        $activeMode = AuthService::activePortalMode();
+        $isOperatorMode = ($activeMode === 'OPERATOR' && AuthService::canAccessOperatorMode());
+        $effectiveRole = $user['role'];
+        if ($isOperatorMode) {
+            $effectiveRole = 'OPERATOR';
+        } elseif ($user['role'] === 'USER') {
+            $effectiveRole = 'USER';
+        }
+
+        // Operator authorization check
+        if ($effectiveRole === 'OPERATOR') {
+            if ((int)$app['user_id'] === (int)$user['id']) {
+                http_response_code(403);
+                echo json_encode(['error' => 'You cannot view chats as operator on an application submitted by your own retailer account.']);
+                exit;
+            }
+            if (!AuthService::canOperatorAccessApplication((int)$user['id'], $appId)) {
+                http_response_code(403);
+                echo json_encode(['error' => 'Forbidden: You do not have permission to view chats for applications outside your assigned District and Block.']);
+                exit;
+            }
+        } elseif ($effectiveRole === 'USER' && (int)$app['user_id'] !== (int)$user['id']) {
+            http_response_code(403);
+            echo json_encode(['error' => 'Unauthorized: You do not have permission to view chats for this application.']);
+            exit;
+        }
+
+        $chats = \App\Services\ApplicationService::getChats($appId);
+        echo json_encode(['messages' => $chats]);
+        exit;
+    }
+
+    /**
+     * POST /api/requests/chat
+     */
+    public function apiSendChat(): void
+    {
+        header('Content-Type: application/json; charset=utf-8');
+        $user = AuthService::user();
+        if (!$user) {
+            http_response_code(401);
+            echo json_encode(['error' => 'Unauthenticated']);
+            exit;
+        }
+
+        $rawInput = file_get_contents('php://input');
+        $jsonData = json_decode($rawInput, true) ?: [];
+
+        $appId = (int)($_POST['application_id'] ?? $jsonData['application_id'] ?? ($_GET['id'] ?? 0));
+        $message = trim((string)($_POST['message'] ?? $jsonData['message'] ?? ''));
+        $attachmentUrl = trim((string)($_POST['attachment_url'] ?? $jsonData['attachment_url'] ?? ''));
+
+        if ($appId <= 0 || empty($message)) {
+            http_response_code(422);
+            echo json_encode(['error' => 'Message and application ID are required.']);
+            exit;
+        }
+
+        $db = Database::getConnection();
+        $stmt = $db->prepare("SELECT a.id, a.user_id, a.assigned_operator_id, dt.enable_chat FROM applications a JOIN data_types dt ON a.data_type_id = dt.id WHERE a.id = ?");
+        $stmt->execute([$appId]);
+        $app = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$app) {
+            http_response_code(404);
+            echo json_encode(['error' => 'Application not found.']);
+            exit;
+        }
+
+        $activeMode = AuthService::activePortalMode();
+        $isOperatorMode = ($activeMode === 'OPERATOR' && AuthService::canAccessOperatorMode());
+        $effectiveRole = $user['role'];
+        if ($isOperatorMode) {
+            $effectiveRole = 'OPERATOR';
+        } elseif ($user['role'] === 'USER') {
+            $effectiveRole = 'USER';
+        }
+
+        // Operator authorization check
+        if ($effectiveRole === 'OPERATOR') {
+            if ((int)$app['user_id'] === (int)$user['id']) {
+                http_response_code(403);
+                echo json_encode(['error' => 'You cannot process or send chat as operator on an application submitted by your own retailer account.']);
+                exit;
+            }
+            if (!AuthService::canOperatorAccessApplication((int)$user['id'], $appId)) {
+                http_response_code(403);
+                echo json_encode(['error' => 'Forbidden: You do not have permission to send chat messages for applications outside your assigned District and Block.']);
+                exit;
+            }
+        }
+
+        // Check if chat is enabled
+        if ((int)($app['enable_chat'] ?? 1) === 0) {
+            http_response_code(403);
+            echo json_encode(['error' => 'Chat is disabled for this service by administrator.']);
+            exit;
+        }
+
+        // Retailer ownership check
+        if ($effectiveRole === 'USER' && (int)$app['user_id'] !== (int)$user['id']) {
+            http_response_code(403);
+            echo json_encode(['error' => 'Unauthorized: You do not own this application.']);
+            exit;
+        }
+
+        try {
+            $chat = \App\Services\ApplicationService::addChat(
+                $appId,
+                $user['id'],
+                $user['name'],
+                $effectiveRole,
+                $message,
+                $attachmentUrl ?: null
+            );
+            echo json_encode(['success' => true, 'message' => $chat]);
+            exit;
+        } catch (Exception $e) {
+            http_response_code(400);
+            echo json_encode(['error' => $e->getMessage()]);
+            exit;
+        }
+    }
+
+    /**
+     * POST /api/requests/upload - File upload endpoint for photos/documents
+     */
+    public function apiUploadFile(): void
+    {
+        header('Content-Type: application/json; charset=utf-8');
+        if (!AuthService::check()) {
+            http_response_code(401);
+            echo json_encode(['error' => 'Unauthenticated']);
+            exit;
+        }
+
+        $file = $_FILES['file'] ?? $_FILES['attachment'] ?? null;
+        if (!$file || $file['error'] !== UPLOAD_ERR_OK) {
+            http_response_code(400);
+            echo json_encode(['error' => 'No valid file uploaded.']);
+            exit;
+        }
+
+        $origName = $file['name'];
+        $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
+        $allowedExts = ['pdf', 'jpg', 'jpeg', 'png', 'webp'];
+
+        if (!in_array($ext, $allowedExts, true)) {
+            http_response_code(422);
+            echo json_encode(['error' => "Invalid file extension '.{$ext}'. Allowed: " . implode(', ', $allowedExts)]);
+            exit;
+        }
+
+        // Validate MIME type against file content
+        $finfo = finfo_open(FILEINFO_MIME_TYPE);
+        $mime = finfo_file($finfo, $file['tmp_name']);
+        finfo_close($finfo);
+
+        $allowedMimes = [
+            'pdf' => ['application/pdf'],
+            'jpg' => ['image/jpeg', 'image/pjpeg'],
+            'jpeg' => ['image/jpeg', 'image/pjpeg'],
+            'png' => ['image/png'],
+            'webp' => ['image/webp']
+        ];
+
+        if (!isset($allowedMimes[$ext]) || !in_array($mime, $allowedMimes[$ext], true)) {
+            http_response_code(422);
+            echo json_encode(['error' => "Security error: File MIME type '{$mime}' does not match extension '.{$ext}'."]);
+            exit;
+        }
+
+        if ($file['size'] > 25 * 1024 * 1024) {
+            http_response_code(422);
+            echo json_encode(['error' => 'File size exceeds 25MB limit.']);
+            exit;
+        }
+
+        $targetDir = dirname(__DIR__, 3) . '/public/uploads/documents';
+        if (!is_dir($targetDir)) mkdir($targetDir, 0755, true);
+
+        $safeName = 'doc_' . date('Ymd_His') . '_' . bin2hex(random_bytes(6)) . '.' . $ext;
+        if (move_uploaded_file($file['tmp_name'], $targetDir . '/' . $safeName)) {
+            $url = '/uploads/documents/' . $safeName;
+            $sizeStr = ($file['size'] > 1024 * 1024)
+                ? round($file['size'] / (1024 * 1024), 2) . ' MB'
+                : round($file['size'] / 1024, 1) . ' KB';
+
+            echo json_encode([
+                'success' => true,
+                'url' => $url,
+                'filename' => $origName,
+                'size' => $sizeStr
+            ]);
+            exit;
+        }
+
+        http_response_code(500);
+        echo json_encode(['error' => 'Failed to save file on server.']);
+        exit;
+    }
+
+    /**
+     * GET /api/block-rates - Fetch active block rates
+     */
+    
+
+
+    /**
+     * User: Fetch fresh ServiceOnline CAPTCHA session for manual tracking modal
+     * GET /applications/rtps-captcha
+     */
+    public function getRtpsCaptcha(): void
+    {
+        if (!AuthService::check()) {
+            http_response_code(401);
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+            exit;
+        }
+
+        $res = \App\Services\RtpsCertificateService::fetchCaptchaSession();
+        header('Content-Type: application/json');
+        echo json_encode($res);
+        exit;
+    }
+
+    /**
+     * User: One-Click / Manual Check Status & Auto Attach for an authorized application
+     * POST /applications/auto-fetch
+     */
+    public function autoFetchRtpsCertificate(): void
+    {
+        if (!AuthService::check()) {
+            http_response_code(401);
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'message' => 'Please log in to track applications.']);
+            exit;
+        }
+
+        $appId = !empty($_POST['application_id']) ? (int)$_POST['application_id'] : 0;
+        if ($appId <= 0) {
+            http_response_code(400);
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'message' => 'Invalid Application ID.']);
+            exit;
+        }
+
+        $db = Database::getConnection();
+        $stmt = $db->prepare("SELECT id, user_id, status, result_file, applicant_identifier, applicant_name FROM applications WHERE id = ? LIMIT 1");
+        $stmt->execute([$appId]);
+        $app = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$app) {
+            http_response_code(404);
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'message' => 'Application record not found.']);
+            exit;
+        }
+
+        // Strict Ownership Enforcement: Users can only check their own submitted applications
+        $currentUserId = (int)AuthService::id();
+        if ((int)$app['user_id'] !== $currentUserId && !AuthService::isStaffOrAdmin()) {
+            http_response_code(403);
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'message' => 'Access denied: You can only check applications submitted by your account.']);
+            exit;
+        }
+
+        if (!empty($app['result_file']) && $app['status'] === 'COMPLETED') {
+            header('Content-Type: application/json');
+            echo json_encode([
+                'success' => true,
+                'is_completed' => true,
+                'result_file' => $app['result_file'],
+                'message' => 'Certificate already downloaded and attached!'
+            ]);
+            exit;
+        }
+
+        // Release session lock so client can poll or browse concurrently
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+
+        $options = [
+            'actor_user_id' => $currentUserId,
+            'actor_role' => AuthService::role(),
+            'actor_name' => AuthService::user()['name'] ?? 'User',
+            'track_using' => $_POST['track_using'] ?? null,
+            'apply_date' => $_POST['apply_date'] ?? null,
+            'captcha_answer' => $_POST['captcha_answer'] ?? null,
+            'captcha_session_id' => $_POST['captcha_session_id'] ?? null,
+            'father_name' => $_POST['father_name'] ?? null,
+            'mother_name' => $_POST['mother_name'] ?? null,
+            'force' => !empty($_POST['force'])
+        ];
+
+        try {
+            $res = \App\Services\RtpsCertificateService::checkAndProcessApplication($appId, $options);
+            header('Content-Type: application/json');
+            echo json_encode($res);
+        } catch (\Throwable $e) {
+            http_response_code(500);
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'message' => 'Tracking error: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
+    /**
+     * User: Poll application status for live modal updates
+     * GET /applications/poll-status?id=123
+     */
+    public function pollApplicationStatus(): void
+    {
+        if (!AuthService::check()) {
+            http_response_code(401);
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'message' => 'Unauthorized']);
+            exit;
+        }
+
+        $appId = !empty($_GET['id']) ? (int)$_GET['id'] : 0;
+        if ($appId <= 0) {
+            http_response_code(400);
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'message' => 'Invalid ID']);
+            exit;
+        }
+
+        $db = Database::getConnection();
+        $stmt = $db->prepare("SELECT id, user_id, status, result_file, rejection_reason, admin_remarks, remarks FROM applications WHERE id = ? LIMIT 1");
+        $stmt->execute([$appId]);
+        $app = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$app) {
+            http_response_code(404);
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'message' => 'Not found']);
+            exit;
+        }
+
+        if ((int)$app['user_id'] !== (int)AuthService::id() && !AuthService::isStaffOrAdmin()) {
+            http_response_code(403);
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'message' => 'Access denied']);
+            exit;
+        }
+
+        $qStmt = $db->prepare("SELECT status, last_status_message, last_checked_at FROM rtps_certificate_queue WHERE application_id = ? LIMIT 1");
+        $qStmt->execute([$appId]);
+        $q = $qStmt->fetch(PDO::FETCH_ASSOC);
+
+        $qStatus = $q['status'] ?? 'NONE';
+        $qMsg = $q['last_status_message'] ?? '';
+        $qChecked = $q['last_checked_at'] ?? null;
+        $isRej = ($app['status'] === 'REJECTED' || stripos($qStatus, 'FAILED') !== false || stripos($qMsg, 'reject') !== false);
+
+        header('Content-Type: application/json');
+        echo json_encode([
+            'is_completed' => ($app['status'] === 'COMPLETED' || $app['status'] === 'APPROVED' || !empty($app['result_file'])),
+            'is_rejected' => $isRej,
+            'status' => $app['status'],
+            'is_checking' => ($qStatus === 'CHECKING'),
+            'last_check_status' => $qMsg,
+            'rejection_reason' => $app['rejection_reason'] ?? $qMsg,
+            'portal_status' => $isRej ? 'Rejected' : ($qStatus === 'ATTACHED' ? 'Delivered' : 'Under Process'),
+            'checked_at' => $qChecked,
+            'has_file' => !empty($app['result_file']),
+            'result_file' => $app['result_file']
+        ]);
+        exit;
+    }
 }

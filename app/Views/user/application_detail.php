@@ -19,6 +19,11 @@
             <?= e(__('status_' . strtolower($app['status']))) ?>
         </span>
         <?= render_status_stepper_dots($app, true, 'fs-6 ms-1') ?>
+        <button type="button"
+                class="btn btn-primary btn-sm fw-bold rounded-pill px-3 shadow-sm"
+                onclick="openRtpsTrackModal(<?= (int)$app['id'] ?>, '<?= e(addslashes($app['applicant_identifier'] ?? '')) ?>', '<?= e(addslashes($app['applicant_name'] ?? '')) ?>', {created_at: '<?= e($app['created_at']) ?>'})">
+            <i class="bi bi-arrow-repeat me-1"></i> Check Status & Auto Attach
+        </button>
         <button class="btn btn-outline-dark btn-sm btn-copy-clipboard" data-copy="<?= e($app['app_ref']) ?>" title="Copy Reference">
             <i class="bi bi-copy"></i>
         </button>
@@ -70,7 +75,7 @@
                 <div>
                     <h5 class="fw-bold mb-1 text-info-emphasis">Application In Process — Automatic RTPS Tracking Active</h5>
                     <div class="text-dark small">
-                        This application is tracked in the RTPS certificate queue. The system checks the official portal every night at <strong>12:00 AM (Asia/Kolkata)</strong>.
+                        This application is tracked in the RTPS certificate queue. The system automatically checks the official portal every <strong>4 hours (Asia/Kolkata)</strong>.
                     </div>
                     <div class="small mt-1 text-secondary">
                         Application Number: <strong><?= e($app['applicant_identifier'] ?? $app['app_ref']) ?></strong> | Applicant: <strong><?= e($app['applicant_name']) ?></strong>
@@ -79,7 +84,7 @@
             </div>
             <div>
                 <span class="badge bg-primary text-white px-3 py-2 rounded-pill">
-                    <i class="bi bi-arrow-repeat me-1"></i> Auto Check (Every 5 Hours / 7 AM)
+                    <i class="bi bi-arrow-repeat me-1"></i> Auto Check (Every 4 Hours / 7 AM)
                 </span>
             </div>
         </div>
@@ -360,4 +365,5 @@ function handleStatusChange(status) {
 }
 </script>
 
+<?php require dirname(__DIR__) . '/layouts/rtps_track_modal.php'; ?>
 <?php require dirname(__DIR__) . '/layouts/footer.php'; ?>

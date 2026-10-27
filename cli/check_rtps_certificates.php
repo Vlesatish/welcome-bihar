@@ -53,7 +53,7 @@ if (isset($options['set-7am'])) {
     $stmt = $db->prepare("
         UPDATE rtps_certificate_queue
         SET next_check_at = ?,
-            last_status_message = 'Scheduled check set to 7:00 AM Asia/Kolkata (Every 5 Hours cycle)'
+            last_status_message = 'Scheduled check set to 7:00 AM Asia/Kolkata (Every 4 Hours cycle)'
         WHERE status != 'ATTACHED'
     ");
     $stmt->execute([$targetTime]);
@@ -76,9 +76,9 @@ if (!$lockFp || !flock($lockFp, LOCK_EX | LOCK_NB)) {
 }
 
 echo "========================================================\n";
-echo "  WELCOME BIHAR - RTPS CERTIFICATE 5-HOUR SCHEDULE WORKER\n";
+echo "  WELCOME BIHAR - RTPS CERTIFICATE 4-HOUR SCHEDULE WORKER\n";
 echo "  Timezone: Asia/Kolkata | Current Time: " . date('Y-m-d H:i:s') . "\n";
-echo "  Cycle: Every 5 Hours & 7:00 AM Morning Check\n";
+echo "  Cycle: Every 4 Hours & 7:00 AM Morning Check\n";
 echo "========================================================\n";
 
 do {
@@ -89,7 +89,7 @@ do {
         echo "    - Total Eligible Applications : " . $res['total_eligible'] . "\n";
         echo "    - Processed in this run       : " . $res['processed'] . "\n";
         echo "    - Attached & Completed        : " . $res['ready'] . "\n";
-        echo "    - Unavailable (In 5 Hours)    : " . $res['unavailable'] . "\n";
+        echo "    - Unavailable (In 4 Hours)    : " . $res['unavailable'] . "\n";
         echo "    - Errors (Retrying)           : " . $res['errors'] . "\n";
 
         $stats = RtpsCertificateService::getQueueStats();
@@ -97,7 +97,7 @@ do {
         echo "    - Total Queued Applications   : " . $stats['total_queued'] . "\n";
         echo "    - Pending Check               : " . $stats['pending_check'] . "\n";
         echo "    - Due Right Now               : " . $stats['due_now'] . "\n";
-        echo "    - Unavailable (Next 5-Hr Run) : " . $stats['unavailable'] . "\n";
+        echo "    - Unavailable (Next 4-Hr Run) : " . $stats['unavailable'] . "\n";
         echo "    - Attached & Completed        : " . $stats['attached_completed'] . "\n";
 
     } catch (\Throwable $e) {

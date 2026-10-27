@@ -11,6 +11,79 @@ use PDO;
 
 class RtpsCertificateService
 {
+    /**
+     * Establish a live session with ServiceOnline portal and fetch fresh CAPTCHA image.
+     * Returns session_id, csrf_token, and base64-encoded image data.
+     */
+    public static function fetchCaptchaSession(): array
+    {
+        $sessionId = bin2hex(random_bytes(16));
+        $cookieJar = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'so_cap_sess_' . $sessionId . '.txt';
+
+        $curlFn = function (string $url, $post = null, ?string $referer = null) use ($cookieJar): array {
+            $ch = curl_init($url);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_COOKIEJAR, $cookieJar);
+            curl_setopt($ch, CURLOPT_COOKIEFILE, $cookieJar);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+            if ($referer) {
+                curl_setopt($ch, CURLOPT_REFERER, $referer);
+            }
+            if ($post !== null) {
+                curl_setopt($ch, CURLOPT_POST, true);
+                curl_setopt($ch, CURLOPT_POSTFIELDS, is_array($post) ? http_build_query($post) : $post);
+            }
+            $res = curl_exec($ch);
+            $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+            return [$code, $res ?: ''];
+        };
+
+        try {
+            // 1. Visit citizenApplication.html to obtain session cookies and CSRF token
+            list($caCode, $caHtml) = $curlFn(self::SERVICEONLINE_BASE_URL . '/officials/citizenApplication.html');
+            if ($caCode !== 200 || empty($caHtml)) {
+                return ['success' => false, 'message' => "Portal citizenApplication.html unreachable (HTTP {$caCode})"];
+            }
+
+            preg_match('/(?:name="OWASP_CSRFTOKEN"\s+value="|setAttribute\(\s*"value",\s*")([A-Z0-9\-]{20,})/i', $caHtml, $csrfM);
+            $csrfToken = $csrfM[1] ?? '';
+
+            // 2. Fetch captcha image
+            list($cCap, $capBytes) = $curlFn(
+                self::SERVICEONLINE_BASE_URL . '/officials/captchaImage',
+                null,
+                self::SERVICEONLINE_BASE_URL . '/officials/citizenApplication.html'
+            );
+
+            if ($cCap !== 200 || empty($capBytes) || strlen($capBytes) < 50) {
+                return ['success' => false, 'message' => "Unable to fetch captcha image from portal (HTTP {$cCap})"];
+            }
+
+            // Save session metadata
+            $metaFile = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'so_meta_' . $sessionId . '.json';
+            file_put_contents($metaFile, json_encode([
+                'session_id' => $sessionId,
+                'cookie_file' => $cookieJar,
+                'csrf_token' => $csrfToken,
+                'created_at' => time()
+            ]));
+
+            return [
+                'success' => true,
+                'session_id' => $sessionId,
+                'csrf_token' => $csrfToken,
+                'captcha_image' => 'data:image/jpeg;base64,' . base64_encode($capBytes)
+            ];
+        } catch (\Throwable $e) {
+            return ['success' => false, 'message' => 'Captcha fetch exception: ' . $e->getMessage()];
+        }
+    }
+
     public const PORTAL_URL = 'https://swcs.bihar.gov.in/RtpsReportView/certificate_download.jsp';
     public const PORTAL_DOWNLOAD_ACTION = 'https://swcs.bihar.gov.in/RtpsReportView/certificateDownload.do';
     public const SERVICEONLINE_BASE_URL = 'https://serviceonline.bihar.gov.in';
@@ -71,7 +144,7 @@ class RtpsCertificateService
      * - '7_am_tomorrow' / '7am_tomorrow': Tomorrow 07:00:00
      * - 'due_now' / 'now': 1 minute in the past (immediately eligible)
      */
-    public static function calculateNextCheckTime(int $intervalHours = 5, ?string $preset = null): string
+    public static function calculateNextCheckTime(int $intervalHours = 4, ?string $preset = null): string
     {
         $tz = new DateTimeZone('Asia/Kolkata');
         $now = new DateTime('now', $tz);
@@ -90,7 +163,7 @@ class RtpsCertificateService
             return $past->format('Y-m-d H:i:s');
         }
 
-        // Default: 5 hours from now (har 5 ghante me run ho)
+        // Default: 4 hours from now (har 4 ghante me run ho)
         $next = (clone $now)->modify("+{$intervalHours} hours");
         return $next->format('Y-m-d H:i:s');
     }
@@ -183,7 +256,7 @@ class RtpsCertificateService
             ) VALUES (
                 ?, ?, ?, ?,
                 ?, ?, ?, 'QUEUED', ?,
-                0, ?, 'Queued for automatic scheduled checking (Every 5 Hours) Asia/Kolkata', NOW(), NOW()
+                0, ?, 'Queued for automatic scheduled checking (Every 4 Hours) Asia/Kolkata', NOW(), NOW()
             )
         ");
         $ins->execute([
@@ -432,13 +505,7 @@ POWERSHELL;
      * Real-time live check and certificate download from serviceonline.bihar.gov.in tracking flow.
      * Overcomes the 24-hour delay on swcs.bihar.gov.in by downloading certificates the same day they are approved.
      */
-    public static function fetchLiveCertificateFromServiceOnline(
-        string $applicationNumber,
-        string $applicantName,
-        array $candidateDates = [],
-        string $fatherName = '',
-        string $motherName = ''
-    ): array {
+    public static function fetchLiveCertificateFromServiceOnline(string $applicationNumber, string $applicantName, array $candidateDates = [], string $fatherName = '', string $motherName = '', array $customParams = []): array {
         $appNum = trim($applicationNumber);
         $cleanName = trim(preg_replace('/\s+/', ' ', $applicantName));
         if (empty($appNum) || empty($cleanName)) {
@@ -498,6 +565,58 @@ POWERSHELL;
         try {
             $curlFn(self::SERVICEONLINE_BASE_URL . '/');
 
+            $isManualSession = false;
+            $manualSessionFile = '';
+            if (!empty($customParams['captcha_session_id'])) {
+                $metaFile = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'so_meta_' . $customParams['captcha_session_id'] . '.json';
+                if (file_exists($metaFile)) {
+                    $meta = json_decode((string)file_get_contents($metaFile), true);
+                    if (!empty($meta['cookie_file']) && file_exists($meta['cookie_file'])) {
+                        $cookieJar = $meta['cookie_file'];
+                        $csrfToken = $meta['csrf_token'] ?? '';
+                        $isManualSession = true;
+                        $manualSessionFile = $metaFile;
+                    }
+                }
+            }
+
+            if ($isManualSession && !empty($customParams['captcha_answer'])) {
+                // Manual User/Admin Captcha flow: Single authoritative attempt using user input
+                $trackUsing = !empty($customParams['track_using']) ? (int)$customParams['track_using'] : 1;
+                $dateStr = !empty($customParams['apply_date']) ? trim($customParams['apply_date']) : date('d/m/Y');
+                $captcha = trim($customParams['captcha_answer']);
+
+                $postStep1 = [
+                    'OWASP_CSRFTOKEN' => $csrfToken,
+                    'track_option' => 'R',
+                    'spdv_appl_ref_no' => $appNum,
+                    'trackusing' => (string)$trackUsing,
+                    'applyDate' => $dateStr,
+                    'captchaAnswer' => $captcha,
+                    'whichTab' => 'liATab1',
+                    'submitFlag' => '',
+                    'otpDivShowFlag' => '',
+                ];
+
+                list($c1, $res1) = $curlFn(
+                    self::SERVICEONLINE_BASE_URL . '/officials/citizenServiceTrackList.do',
+                    $postStep1,
+                    self::SERVICEONLINE_BASE_URL . '/officials/citizenApplication.html'
+                );
+
+                if ($c1 === 200 && stripos($res1, "secTabOpen = 'YES'") !== false) {
+                    $step1Success = true;
+                    $s1Html = $res1;
+                    $matchedDate = $dateStr;
+                    $matchedTrackUsing = $trackUsing;
+                } else {
+                    $msg = 'CAPTCHA answer galat hai ya di gayi tithi (date) portal par match nahi hui. Kripya dobara check karein.';
+                    if (stripos($res1, 'Invalid Captcha') !== false || stripos($res1, 'captcha') !== false) {
+                        $msg = 'CAPTCHA answer galat hai. Kripya naya CAPTCHA refresh karke dalein.';
+                    }
+                    return ['success' => false, 'message' => $msg];
+                }
+            } else {
             $caCode = 0;
             $caHtml = '';
             for ($caAtt = 1; $caAtt <= 3; $caAtt++) {
@@ -573,6 +692,8 @@ POWERSHELL;
                     }
                 }
             }
+
+            } // end auto-solve else
 
             if (!$step1Success || empty($s1Html)) {
                 return [
@@ -804,51 +925,128 @@ POWERSHELL;
      * - Row 4 (Delivery of Application): If 'Under Process' -> 'Sign Pending (RO/CO Sign Baki Hai)'.
      * - Row 4: If 'Delivered' / 'Completed' -> Only attach if real Certificate PDF link is present; otherwise show status.
      */
+    /**
+     * Evaluate workflow stages according to Bihar RTPS ServicePlus business rules:
+     * - Parses entire workflow table in chronological sequence.
+     * - Intermediate Step 1 (Application Submission) is always 'Completed'; never treated as overall approval!
+     * - Task name containing 'Rejection-Approval' is NOT a rejection unless status column is 'Rejected'.
+     * - Newer approval/reopening supersedes older historical rejection.
+     * - If rejected: extracts rejection reason without inventing text ('Official portal par rejected; reason abhi load nahi hua' if missing).
+     * - Keeps field-verification remarks separate from final-decision remarks.
+     * - Prevents attaching Acknowledgment, Application Form, or Print Form Details as certificate.
+     */
     public static function evaluateRtpsStatus(array $parsedRows): array
     {
-        foreach ($parsedRows as $k => $r) {
-            if (stripos($r['status'] ?? '', 'Rejected') !== false || stripos($r['task_name'] ?? '', 'Rejection') !== false) {
-                $rejStep = is_numeric($r['s_no'] ?? '') ? (int)$r['s_no'] : (is_numeric($k) ? (int)$k : 3);
-                $rejReason = !empty($r['remarks']) && strtolower($r['remarks']) !== 'view' && strtolower($r['remarks']) !== 'na'
-                    ? trim($r['remarks'])
-                    : '';
+        if (empty($parsedRows)) {
+            return [
+                'action' => 'SHOW_STATUS',
+                'status' => 'IN_PROCESS',
+                'portal_status' => 'Under Process',
+                'message' => 'Status details not yet loaded from portal.',
+                'cert_doc' => null
+            ];
+        }
 
-                // If this row's remarks is empty or 'View', check if row 3 or any other row has remarks
-                if (empty($rejReason)) {
-                    foreach ($parsedRows as $otherR) {
-                        $otherRem = trim($otherR['remarks'] ?? '');
-                        if (!empty($otherRem) && strtolower($otherRem) !== 'view' && strtolower($otherRem) !== 'na') {
-                            $rejReason = $otherRem;
-                            break;
-                        }
-                    }
+        // Sort rows by s_no numeric ascending
+        ksort($parsedRows);
+
+        // Collect all task remarks
+        $allTaskRemarks = [];
+        $fieldVerificationRemarks = '';
+        foreach ($parsedRows as $r) {
+            $tName = trim((string)($r['task_name'] ?? ''));
+            $rem = trim((string)($r['remarks'] ?? ''));
+            if (!empty($rem) && !in_array(strtolower($rem), ['view', 'click here', 'na', 'n/a', '-', 'null'], true)) {
+                $allTaskRemarks[$tName] = $rem;
+                if (stripos($tName, 'field') !== false || stripos($tName, 'verification') !== false || stripos($tName, 'inquiry') !== false) {
+                    $fieldVerificationRemarks = $rem;
                 }
-
-                if (empty($rejReason)) {
-                    $rejReason = 'Application has been Rejected on official portal.';
-                }
-
-                $rejTask = !empty($r['task_name']) ? trim($r['task_name']) : 'Field Verification';
-
-                return [
-                    'action' => 'REJECT',
-                    'status' => 'REJECTED',
-                    'portal_status' => 'Rejected',
-                    'rejected_step' => $rejStep,
-                    'rejection_reason' => $rejReason,
-                    'rejected_task' => $rejTask,
-                    'message' => $rejReason,
-                    'cert_doc' => null,
-                ];
             }
         }
 
+        // 1. Identify decisions chronologically
+        // A row is rejected ONLY if its status column contains 'Rejected' (case-insensitive)
+        // Task name having 'Rejection' (e.g. 'Rejection-Approval') is NEVER a rejection by itself!
+        $hasRejection = false;
+        $rejectedRow = null;
+        $rejectedRowIndex = 0;
+        $latestDecisiveRow = null;
+        $latestDecisiveIndex = 0;
+
+        foreach ($parsedRows as $k => $r) {
+            $statusStr = trim((string)($r['status'] ?? ''));
+            $isRowRejected = (stripos($statusStr, 'Rejected') !== false);
+
+            if ($isRowRejected) {
+                $hasRejection = true;
+                $rejectedRow = $r;
+                $rejectedRowIndex = is_numeric($r['s_no'] ?? '') ? (int)$r['s_no'] : (int)$k;
+                $latestDecisiveRow = $r;
+                $latestDecisiveIndex = $rejectedRowIndex;
+            } elseif (!empty($statusStr) && !in_array(strtolower($statusStr), ['na', 'n/a', '-'], true)) {
+                // If this is a later step with decisive active status
+                $rowIdx = is_numeric($r['s_no'] ?? '') ? (int)$r['s_no'] : (int)$k;
+                if ($rowIdx > 1) { // Ignore row 1 (Submission Completed) for later decisions
+                    $latestDecisiveRow = $r;
+                    $latestDecisiveIndex = $rowIdx;
+                }
+            }
+        }
+
+        // Check if there was a historical rejection that was superseded by a later active/completed step
+        if ($hasRejection && $latestDecisiveRow !== null && $latestDecisiveIndex > $rejectedRowIndex) {
+            $latestStatus = trim((string)($latestDecisiveRow['status'] ?? ''));
+            // If the latest decisive step is Completed or Delivered or Forwarded, the rejection was superseded!
+            if (stripos($latestStatus, 'Rejected') === false && (stripos($latestStatus, 'Completed') !== false || stripos($latestStatus, 'Delivered') !== false || stripos($latestStatus, 'Forwarded') !== false)) {
+                // Rejection was reopened or appealed successfully; do NOT reject based on old row!
+                $hasRejection = false;
+                $rejectedRow = null;
+            }
+        }
+
+        // If authoritative current status is Rejected
+        if ($hasRejection && $rejectedRow !== null) {
+            $rejStep = is_numeric($rejectedRow['s_no'] ?? '') ? (int)$rejectedRow['s_no'] : 3;
+            $rejReason = '';
+
+            $rawRemarks = trim((string)($rejectedRow['remarks'] ?? ''));
+            if (!empty($rawRemarks) && !in_array(strtolower($rawRemarks), ['view', 'click here', 'na', 'n/a', '-', 'null'], true)) {
+                $rejReason = $rawRemarks;
+            }
+
+            // If rejected row remark is empty, check if field inquiry had remarks
+            if (empty($rejReason) && !empty($fieldVerificationRemarks)) {
+                $rejReason = $fieldVerificationRemarks;
+            }
+
+            // If still empty: STRICT RULE - DO NOT INVENT A REASON!
+            if (empty($rejReason)) {
+                $rejReason = 'Official portal par rejected; reason abhi load nahi hua';
+            }
+
+            $rejTask = !empty($rejectedRow['task_name']) ? trim($rejectedRow['task_name']) : 'Field Verification';
+
+            return [
+                'action' => 'REJECT',
+                'status' => 'REJECTED',
+                'portal_status' => 'Rejected',
+                'rejected_step' => $rejStep,
+                'rejection_reason' => $rejReason,
+                'rejected_task' => $rejTask,
+                'field_remarks' => $fieldVerificationRemarks,
+                'task_remarks' => $allTaskRemarks,
+                'message' => $rejReason,
+                'cert_doc' => null,
+            ];
+        }
+
+        // 2. Identify Step 3 (Verification) and Step 4 (Delivery)
         $row3 = $parsedRows[3] ?? null;
         $row4 = $parsedRows[4] ?? null;
 
         if (!$row3 || !$row4) {
             foreach ($parsedRows as $r) {
-                $task = strtolower($r['task_name']);
+                $task = strtolower((string)($r['task_name'] ?? ''));
                 if (str_contains($task, 'verification') || str_contains($task, 'inquiry')) {
                     $row3 = $row3 ?: $r;
                 }
@@ -858,22 +1056,33 @@ POWERSHELL;
             }
         }
 
-        $row3Status = trim($row3['status'] ?? '');
-        $row4Status = trim($row4['status'] ?? '');
+        $row3Status = trim((string)($row3['status'] ?? ''));
+        $row4Status = trim((string)($row4['status'] ?? ''));
 
-        // 1. Check Row 4 (Delivery stage) if Delivered / Completed
+        // Check Step 4 (Delivery / Final Approval)
         if ($row4 && (stripos($row4Status, 'Delivered') !== false || stripos($row4Status, 'Completed') !== false)) {
             $doc = $row4['issued_doc_link'] ?? null;
-            $docTitle = strtolower($row4['issued_doc'] ?? '');
+            $docTitle = strtolower((string)($row4['issued_doc'] ?? ''));
 
-            // Ensure document is genuinely the Certificate, not an acknowledgment or print form
-            if ($doc && !str_contains($docTitle, 'acknowledgment') && !str_contains($docTitle, 'print form')) {
+            // Never attach acknowledgment, print form details, or application form as certificate!
+            $isInvalidDoc = (
+                str_contains($docTitle, 'acknowledgment') ||
+                str_contains($docTitle, 'acknowledgement') ||
+                str_contains($docTitle, 'receipt') ||
+                str_contains($docTitle, 'print form') ||
+                str_contains($docTitle, 'form details') ||
+                str_contains($docTitle, 'application form')
+            );
+
+            if ($doc && !$isInvalidDoc) {
                 return [
                     'action' => 'DOWNLOAD_CERTIFICATE',
                     'status' => 'DELIVERED',
                     'portal_status' => 'Delivered',
-                    'message' => 'Certificate generated and ready for download.',
+                    'message' => 'Official certificate generated and ready for download.',
                     'cert_doc' => $doc,
+                    'task_remarks' => $allTaskRemarks,
+                    'field_remarks' => $fieldVerificationRemarks
                 ];
             }
 
@@ -883,11 +1092,13 @@ POWERSHELL;
                 'portal_status' => 'Delivered (PDF Not Available)',
                 'message' => 'Status is Delivered/Completed on portal, but certificate PDF is not yet available.',
                 'cert_doc' => null,
+                'task_remarks' => $allTaskRemarks,
+                'field_remarks' => $fieldVerificationRemarks
             ];
         }
 
-        // 2. Check Row 3 (Field Verification stage)
-        if ($row3 && !in_array(strtolower($row3Status), ['completed', 'delivered'])) {
+        // Check Step 3 (Field Verification stage)
+        if ($row3 && !in_array(strtolower($row3Status), ['completed', 'delivered'], true)) {
             if (stripos($row3Status, 'under process') !== false) {
                 return [
                     'action' => 'SHOW_STATUS',
@@ -895,19 +1106,23 @@ POWERSHELL;
                     'portal_status' => 'Pending',
                     'message' => 'Field Verification: Under Process (Pending).',
                     'cert_doc' => null,
+                    'task_remarks' => $allTaskRemarks,
+                    'field_remarks' => $fieldVerificationRemarks
                 ];
             } else {
                 return [
                     'action' => 'SHOW_STATUS',
                     'status' => 'IN_PROCESS',
-                    'portal_status' => $row3Status,
+                    'portal_status' => $row3Status ?: 'Field Verification',
                     'message' => "Field Verification: {$row3Status}.",
                     'cert_doc' => null,
+                    'task_remarks' => $allTaskRemarks,
+                    'field_remarks' => $fieldVerificationRemarks
                 ];
             }
         }
 
-        // 3. Row 3 is completed, check Row 4
+        // Step 3 is completed, check Step 4
         if ($row4 && stripos($row4Status, 'under process') !== false) {
             return [
                 'action' => 'SHOW_STATUS',
@@ -915,6 +1130,8 @@ POWERSHELL;
                 'portal_status' => 'Sign Pending (RO/CO Sign Baki Hai)',
                 'message' => 'Delivery of Application: Under Process (Digital Signature Pending).',
                 'cert_doc' => null,
+                'task_remarks' => $allTaskRemarks,
+                'field_remarks' => $fieldVerificationRemarks
             ];
         }
 
@@ -926,6 +1143,8 @@ POWERSHELL;
             'portal_status' => $finalStatus,
             'message' => "Live Portal Status: {$finalStatus}.",
             'cert_doc' => null,
+            'task_remarks' => $allTaskRemarks,
+            'field_remarks' => $fieldVerificationRemarks
         ];
     }
 
@@ -935,14 +1154,7 @@ POWERSHELL;
      * First checks live same-day tracking on serviceonline.bihar.gov.in,
      * and falls back to swcs.bihar.gov.in report download.
      */
-    public static function fetchCertificateFromPortal(
-        string $applicationNumber,
-        string $applicantName,
-        string $serviceType = 'RTPS',
-        array $candidateDates = [],
-        string $fatherName = '',
-        string $motherName = ''
-    ): array {
+    public static function fetchCertificateFromPortal(string $applicationNumber, string $applicantName, string $serviceType = 'RTPS', array $candidateDates = [], string $fatherName = '', string $motherName = '', array $customParams = []): array {
         $appNum = trim($applicationNumber);
         $cleanName = trim(preg_replace('/\s+/', ' ', $applicantName));
 
@@ -982,7 +1194,8 @@ POWERSHELL;
             $cleanName,
             $candidateDates,
             $fatherName,
-            $motherName
+            $motherName,
+            $customParams
         );
 
         if (!empty($liveRes['success']) && !empty($liveRes['pdf'])) {
@@ -1107,7 +1320,7 @@ POWERSHELL;
     /**
      * Perform an immediate portal check for a single application and attach if ready
      */
-    public static function checkAndProcessApplication(int $appId): array
+    public static function checkAndProcessApplication(int $appId, array $options = []): array
     {
         $db = Database::getConnection();
 
@@ -1138,9 +1351,27 @@ POWERSHELL;
             $db->prepare("UPDATE applications SET application_code = ? WHERE id = ?")->execute([$detectedCode, $appId]);
         }
 
-        // Update queue item to CHECKING with auto-healed code and service_type
-        $db->prepare("UPDATE rtps_certificate_queue SET status = 'CHECKING', application_code = ?, service_type = ?, updated_at = NOW() WHERE application_id = ?")
-           ->execute([$detectedCode, $serviceType, $appId]);
+        // Atomic per-application lock to prevent duplicate concurrent checks
+        // Also auto-recovers stale CHECKING states (> 10 minutes old)
+        $lockStmt = $db->prepare("
+            UPDATE rtps_certificate_queue
+            SET status = 'CHECKING',
+                application_code = ?,
+                service_type = ?,
+                updated_at = NOW()
+            WHERE application_id = ?
+              AND (status != 'CHECKING' OR updated_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE))
+        ");
+        $lockStmt->execute([$detectedCode, $serviceType, $appId]);
+
+        if (empty($options['force']) && $lockStmt->rowCount() === 0) {
+            $chkLock = $db->prepare("SELECT status, updated_at FROM rtps_certificate_queue WHERE application_id = ?");
+            $chkLock->execute([$appId]);
+            $qLock = $chkLock->fetch(PDO::FETCH_ASSOC);
+            if ($qLock && $qLock['status'] === 'CHECKING') {
+                return ['success' => false, 'message' => 'Application check is already in progress. Please wait a moment.'];
+            }
+        }
 
         // Collect candidate dates and applicant details
         $candidateDates = [];
@@ -1164,7 +1395,7 @@ POWERSHELL;
             }
         } catch (\Throwable $e) {}
 
-        $fetchRes = self::fetchCertificateFromPortal($appNum, $applicantName, $serviceType, $candidateDates, $fatherName, $motherName);
+        $fetchRes = self::fetchCertificateFromPortal($appNum, $applicantName, $serviceType, $candidateDates, $fatherName, $motherName, $options);
 
         if (!empty($fetchRes['success']) && !empty($fetchRes['pdf'])) {
             // Update queue with matched service if different
@@ -1202,16 +1433,68 @@ POWERSHELL;
         $reason = $fetchRes['message'] ?? 'Certificate not yet generated on portal';
 
         if (!empty($fetchRes['status']) && $fetchRes['status'] === 'REJECTED') {
-            $rejReason = !empty($fetchRes['rejection_reason']) ? $fetchRes['rejection_reason'] : ($fetchRes['message'] ?? 'Application rejected on official portal');
-            $db->prepare("
-                UPDATE applications
-                SET status = 'REJECTED',
-                    rejection_reason = ?,
-                    admin_remarks = ?,
-                    remarks = ?,
-                    updated_at = NOW()
-                WHERE id = ?
-            ")->execute([$rejReason, 'Rejected on official portal: ' . $rejReason, $rejReason, $appId]);
+            $rejReason = !empty($fetchRes['rejection_reason'])
+                ? $fetchRes['rejection_reason']
+                : 'Official portal par rejected; reason abhi load nahi hua';
+
+            // Conflict Protection:
+            // If local record already has an attached certificate PDF verified on disk or status is COMPLETED,
+            // DO NOT delete the certificate file or blindly overwrite status! Flag for Admin Review.
+            $hasLocalCertificate = (
+                !empty($app['result_file']) &&
+                file_exists(dirname(dirname(__DIR__)) . DIRECTORY_SEPARATOR . 'public' . DIRECTORY_SEPARATOR . ltrim($app['result_file'], '/\\')) &&
+                filesize(dirname(dirname(__DIR__)) . DIRECTORY_SEPARATOR . 'public' . DIRECTORY_SEPARATOR . ltrim($app['result_file'], '/\\')) >= 1000
+            );
+
+            if ($hasLocalCertificate || $app['status'] === 'COMPLETED') {
+                $conflictMsg = 'CONFLICT DETECTED: Local certificate exists on disk (' . ($app['result_file'] ?? '') . '), but official portal returned Rejected. Flagged for Admin Review.';
+
+                $db->prepare("
+                    UPDATE rtps_certificate_queue
+                    SET last_status_message = ?,
+                        updated_at = NOW()
+                    WHERE application_id = ?
+                ")->execute([$conflictMsg, $appId]);
+
+                $db->prepare("
+                    UPDATE applications
+                    SET admin_remarks = CONCAT(IFNULL(admin_remarks, ''), '\n[PORTAL CONFLICT REVIEW REQUIRED]: Official portal reports Rejected (' , ?, ') but certificate is already attached.')
+                    WHERE id = ?
+                ")->execute([$rejReason, $appId]);
+
+                AuditService::log('RTPS_STATUS_CONFLICT_REVIEW_REQUIRED', 'APPLICATION', (string)$appId, [
+                    'reason' => $conflictMsg,
+                    'portal_rejection_reason' => $rejReason,
+                    'local_file' => $app['result_file'] ?? ''
+                ]);
+
+                return [
+                    'success' => false,
+                    'conflict' => true,
+                    'status' => $app['status'],
+                    'portal_status' => 'Rejected (Conflict Review)',
+                    'rejection_reason' => $rejReason,
+                    'app_id' => $appId,
+                    'message' => $conflictMsg
+                ];
+            }
+
+            // Normal rejection: Local certificate does not exist, portal returned Rejected.
+            // Transition status through ApplicationService::updateStatus for atomic idempotent wallet refund.
+            $actorUserId = $options['actor_user_id'] ?? 1;
+            $actorRole = $options['actor_role'] ?? 'SYSTEM';
+            $actorName = $options['actor_name'] ?? 'System Operator';
+
+            ApplicationService::updateStatus(
+                $appId,
+                'REJECTED',
+                (int)$actorUserId,
+                (string)$actorRole,
+                (string)$actorName,
+                $rejReason,
+                $rejReason,
+                'Official Portal: ' . $rejReason
+            );
 
             $db->prepare("
                 UPDATE rtps_certificate_queue
@@ -1228,6 +1511,8 @@ POWERSHELL;
                 'portal_status' => 'Rejected',
                 'rejected_step' => $fetchRes['rejected_step'] ?? 3,
                 'rejection_reason' => $rejReason,
+                'field_remarks' => $fetchRes['field_remarks'] ?? '',
+                'task_remarks' => $fetchRes['task_remarks'] ?? [],
                 'app_id' => $appId,
                 'message' => $rejReason
             ];
@@ -1254,21 +1539,6 @@ POWERSHELL;
         ?int $actorUserId = null,
         ?string $actorRole = 'SYSTEM'
     ): array {
-        $db = Database::getConnection();
-
-        $appStmt = $db->prepare("
-            SELECT id, app_ref, status, applicant_identifier, applicant_name
-            FROM applications
-            WHERE id = ?
-            LIMIT 1
-        ");
-        $appStmt->execute([$appId]);
-        $app = $appStmt->fetch(PDO::FETCH_ASSOC);
-
-        if (!$app) {
-            throw new Exception("Application ID {$appId} not found.");
-        }
-
         // 1. Determine whether $filePathOrBinary is raw binary string, URL, or existing file path
         $binary = null;
         if (strncmp($filePathOrBinary, '%PDF-', 5) === 0) {
@@ -1294,6 +1564,21 @@ POWERSHELL;
         // 2. Validate PDF signature (%PDF-)
         if (strncmp($binary, '%PDF-', 5) !== 0) {
             throw new Exception("Validation failed: The attached document is not a valid PDF file. Header '%PDF-' not detected.");
+        }
+
+        $db = Database::getConnection();
+
+        $appStmt = $db->prepare("
+            SELECT id, app_ref, status, applicant_identifier, applicant_name
+            FROM applications
+            WHERE id = ?
+            LIMIT 1
+        ");
+        $appStmt->execute([$appId]);
+        $app = $appStmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$app) {
+            throw new Exception("Application ID {$appId} not found.");
         }
 
         // 3. Save PDF securely into a healthy, writable upload directory
@@ -1429,7 +1714,7 @@ POWERSHELL;
         ?string $portalStatus = null
     ): void {
         $db = Database::getConnection();
-        $nextCheckAt = $customNextCheckAt ?: self::calculateNextCheckTime(5);
+        $nextCheckAt = $customNextCheckAt ?: self::calculateNextCheckTime(4);
 
         $upd = $db->prepare("
             UPDATE rtps_certificate_queue
@@ -1480,7 +1765,7 @@ POWERSHELL;
         ?string $customNextCheckAt = null
     ): void {
         $db = Database::getConnection();
-        $nextCheckAt = $customNextCheckAt ?: self::calculateNextCheckTime(5);
+        $nextCheckAt = $customNextCheckAt ?: self::calculateNextCheckTime(4);
 
         $upd = $db->prepare("
             UPDATE rtps_certificate_queue
@@ -1494,7 +1779,7 @@ POWERSHELL;
         ");
         $upd->execute([
             $nextCheckAt,
-            'Portal Communication Issue: ' . $errorMessage . ' (Application remains In Process; will retry in 5 hours)',
+            'Portal Communication Issue: ' . $errorMessage . ' (Application remains In Process; will retry in 4 hours)',
             $appId
         ]);
 
@@ -1505,7 +1790,7 @@ POWERSHELL;
     }
 
     /**
-     * Process scheduled queue checks (Every 5 Hours or 7:00 AM Morning Check)
+     * Process scheduled queue checks (Every 4 Hours or 7:00 AM Morning Check)
      */
     public static function processScheduledQueue(int $limit = 50, bool $force = false): array
     {
@@ -1576,7 +1861,7 @@ POWERSHELL;
                 } else {
                     self::markCertificateUnavailable(
                         $appId,
-                        $fetchRes['message'] ?? 'Certificate pending on portal; next check scheduled in 5 hours.'
+                        $fetchRes['message'] ?? 'Certificate pending on portal; next check scheduled in 4 hours.'
                     );
                     $unavailable++;
                 }

@@ -335,6 +335,11 @@ try {
             $ctrl->pollApplicationStatus();
             break;
 
+        case '/admin/applications/rtps-captcha':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->getRtpsCaptcha();
+            break;
+
         case '/admin/users':
             $ctrl = new \App\Controllers\AdminController();
             $ctrl->users();
@@ -698,6 +703,21 @@ try {
         case '/applications/export-csv':
             $ctrl = new \App\Controllers\ApplicationController();
             $ctrl->exportCsv();
+            break;
+
+        case '/applications/auto-fetch':
+            $ctrl = new \App\Controllers\ApplicationController();
+            $ctrl->autoFetchRtpsCertificate();
+            break;
+
+        case '/applications/poll-status':
+            $ctrl = new \App\Controllers\ApplicationController();
+            $ctrl->pollApplicationStatus();
+            break;
+
+        case '/applications/rtps-captcha':
+            $ctrl = new \App\Controllers\ApplicationController();
+            $ctrl->getRtpsCaptcha();
             break;
 
         // Wallet & Payment

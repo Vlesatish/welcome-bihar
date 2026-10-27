@@ -424,13 +424,21 @@ document.addEventListener('DOMContentLoaded', function () {
                                                 <i class="bi bi-file-earmark-pdf-fill me-1"></i>Download Certificate
                                             </a>
                                         <?php elseif ($status === 'REJECTED' || $prog['is_rejected']): ?>
-                                            <span class="badge bg-danger-subtle text-danger border border-danger-subtle py-1 px-1.5 text-nowrap" style="font-size: 0.68rem;" title="<?= e('Rejected: ' . ($prog['rejection_reason'] ?: 'Application rejected on portal')) ?>">
-                                                <i class="bi bi-x-circle me-1"></i>Rejected on Portal
-                                            </span>
-                                        <?php elseif ($status === 'IN_PROCESS'): ?>
-                                            <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle py-1 px-1.5 text-nowrap" style="font-size: 0.68rem;" title="Automatic RTPS Check Scheduled (Every 5 Hours / 7 AM)">
-                                                <i class="bi bi-clock-history me-1"></i>RTPS Check (5-Hr)
-                                            </span>
+                                            <button type="button"
+                                                    class="btn btn-sm btn-outline-danger fw-bold py-1 px-2.5 rounded-2 shadow-2xs text-nowrap"
+                                                    style="font-size: 0.75rem;"
+                                                    onclick="openRtpsTrackModal(<?= (int)$app['id'] ?>, '<?= e(addslashes($app['applicant_identifier'] ?? '')) ?>', '<?= e(addslashes($app['applicant_name'] ?? '')) ?>', {created_at: '<?= e($app['created_at']) ?>'})"
+                                                    title="<?= e('Rejection Remarks देखें: ' . ($prog['rejection_reason'] ?: 'Rejected')) ?>">
+                                                <i class="bi bi-x-circle me-1"></i>Remarks देखें
+                                            </button>
+                                        <?php else: ?>
+                                            <button type="button"
+                                                    class="btn btn-sm btn-primary fw-bold py-1 px-2.5 rounded-2 shadow-2xs text-nowrap"
+                                                    style="font-size: 0.75rem;"
+                                                    onclick="openRtpsTrackModal(<?= (int)$app['id'] ?>, '<?= e(addslashes($app['applicant_identifier'] ?? '')) ?>', '<?= e(addslashes($app['applicant_name'] ?? '')) ?>', {created_at: '<?= e($app['created_at']) ?>'})"
+                                                    title="serviceonline.bihar.gov.in se status check aur certificate auto attach karein">
+                                                <i class="bi bi-arrow-repeat me-1"></i>Check Status & Auto Attach
+                                            </button>
                                         <?php endif; ?>
 
                                         <button type="button"
@@ -906,4 +914,5 @@ document.addEventListener('DOMContentLoaded', function () {
 });
 </script>
 
+<?php require dirname(__DIR__) . '/layouts/rtps_track_modal.php'; ?>
 <?php require dirname(__DIR__) . '/layouts/footer.php'; ?>

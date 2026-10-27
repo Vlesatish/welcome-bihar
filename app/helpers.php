@@ -72,7 +72,7 @@ if (!function_exists('get_application_progress')) {
                 }
             }
             if (empty($rejectionReason)) {
-                $rejectionReason = 'आवेदक/आवेदिका द्वारा संलग्न प्रपत्र/दस्तावेज सत्यापन में अस्वीकृत (Verification criteria not fulfilled)';
+                $rejectionReason = 'Official portal par rejected; reason abhi load nahi hua';
             }
         }
 
