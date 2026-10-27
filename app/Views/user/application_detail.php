@@ -19,11 +19,6 @@
             <?= e(__('status_' . strtolower($app['status']))) ?>
         </span>
         <?= render_status_stepper_dots($app, true, 'fs-6 ms-1') ?>
-        <button type="button"
-                class="btn btn-primary btn-sm fw-bold rounded-pill px-3 shadow-sm"
-                onclick="openRtpsTrackModal(<?= (int)$app['id'] ?>, '<?= e(addslashes($app['applicant_identifier'] ?? '')) ?>', '<?= e(addslashes($app['applicant_name'] ?? '')) ?>', {created_at: '<?= e($app['created_at']) ?>'})">
-            <i class="bi bi-arrow-repeat me-1"></i> Check Status & Auto Attach
-        </button>
         <button class="btn btn-outline-dark btn-sm btn-copy-clipboard" data-copy="<?= e($app['app_ref']) ?>" title="Copy Reference">
             <i class="bi bi-copy"></i>
         </button>
@@ -365,5 +360,5 @@ function handleStatusChange(status) {
 }
 </script>
 
-<?php require dirname(__DIR__) . '/layouts/rtps_track_modal.php'; ?>
+
 <?php require dirname(__DIR__) . '/layouts/footer.php'; ?>

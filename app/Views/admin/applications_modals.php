@@ -606,6 +606,24 @@ document.addEventListener('DOMContentLoaded', function () {
                         }
                         const pData = await pRes.json();
 
+                        if (pData.status === 'REJECTED') {
+                            clearInterval(pollInterval);
+                            delete activeRowPolls[appId];
+                            if (typeof Swal !== 'undefined') {
+                                Swal.fire({
+                                    icon: 'error',
+                                    title: 'Application Rejected',
+                                    text: pData.portal_status || pData.last_check_status || 'Application officially rejected on portal.',
+                                    timer: 2500,
+                                    showConfirmButton: false
+                                });
+                            } else if (typeof showToast === 'function') {
+                                showToast('danger', 'Application Rejected: ' + (pData.portal_status || pData.last_check_status || ''));
+                            }
+                            setTimeout(() => window.location.reload(), 1200);
+                            return;
+                        }
+
                         if (pData.is_completed) {
                             clearInterval(modalPollInterval);
                             modalPollInterval = null;
@@ -707,6 +725,24 @@ document.addEventListener('DOMContentLoaded', function () {
                             throw new Error('HTTP ' + pRes.status);
                         }
                         const pData = await pRes.json();
+
+                        if (pData.status === 'REJECTED') {
+                            clearInterval(pollInterval);
+                            delete activeRowPolls[appId];
+                            if (typeof Swal !== 'undefined') {
+                                Swal.fire({
+                                    icon: 'error',
+                                    title: 'Application Rejected',
+                                    text: pData.portal_status || pData.last_check_status || 'Application officially rejected on portal.',
+                                    timer: 2500,
+                                    showConfirmButton: false
+                                });
+                            } else if (typeof showToast === 'function') {
+                                showToast('danger', 'Application Rejected: ' + (pData.portal_status || pData.last_check_status || ''));
+                            }
+                            setTimeout(() => window.location.reload(), 1200);
+                            return;
+                        }
 
                         if (pData.is_completed) {
                             clearInterval(pollInterval);

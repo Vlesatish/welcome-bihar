@@ -463,8 +463,8 @@
                                                 </button>
 
                                             <?php elseif ($status === 'IN_PROCESS' || $status === 'UNDER_REVIEW'): ?>
-                                                <button type="button" class="btn btn-xs btn-primary fw-bold rounded-2 px-2 py-1 shadow-2xs text-nowrap" onclick="openRtpsTrackModal(<?= (int)$app['id'] ?>, '<?= e(addslashes($app['applicant_identifier'] ?? '')) ?>', '<?= e(addslashes($app['applicant_name'] ?? '')) ?>', {created_at: '<?= e($app['created_at']) ?>'})" title="serviceonline.bihar.gov.in se status check aur certificate auto attach karein">
-                                                    <i class="bi bi-arrow-repeat me-1"></i> Check Status & Auto Attach
+                                                <button type="button" class="btn btn-xs btn-primary fw-bold rounded-2 px-2 py-1 shadow-2xs text-nowrap" onclick="autoFetchAndAttachRtps(<?= $app['id'] ?>, this)" title="Bihar RTPS Portal se 1-Click Download & Attach PDF">
+                                                    <i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Attach
                                                 </button>
                                                 <button type="button" class="btn btn-xs btn-outline-primary fw-semibold rounded-2 px-1.5 py-1" onclick="openUploadApproveModal(<?= $app['id'] ?>)" title="Upload Certificate Manually">
                                                     <i class="bi bi-cloud-arrow-up"></i>
@@ -488,8 +488,8 @@
                                                 </button>
 
                                             <?php elseif ($status === 'REJECTED'): ?>
-                                                <button type="button" class="btn btn-xs btn-outline-danger fw-semibold rounded-2 px-2 py-1 text-nowrap" onclick="openRtpsTrackModal(<?= (int)$app['id'] ?>, '<?= e(addslashes($app['applicant_identifier'] ?? '')) ?>', '<?= e(addslashes($app['applicant_name'] ?? '')) ?>', {created_at: '<?= e($app['created_at']) ?>'})" title="<?= e('Official portal rejection remarks: ' . ($prog['rejection_reason'] ?: 'Rejected')) ?>">
-                                                    <i class="bi bi-x-circle me-1"></i> Remarks देखें
+                                                <button type="button" class="btn btn-xs btn-outline-danger fw-semibold rounded-2 px-2 py-1" onclick="openDetailsModal(<?= $app['id'] ?>)" title="<?= e('Official portal rejection remarks: ' . ($prog['rejection_reason'] ?: 'Rejected')) ?>">
+                                                    Reason
                                                 </button>
                                             <?php endif; ?>
 
@@ -553,4 +553,4 @@
 
 
 <?php require __DIR__ . '/applications_modals.php'; ?>
-<?php require dirname(__DIR__) . '/layouts/rtps_track_modal.php'; ?>
+
