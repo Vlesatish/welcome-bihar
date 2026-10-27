@@ -2189,7 +2189,7 @@ public function apiGetBlockStaffRouting(): void
         unset($filterParams['page']);
         $queryString = http_build_query($filterParams);
 
-        require dirname(__DIR__, 2) . '/Views/admin/users.php';
+        require dirname(__DIR__) . '/Views/admin/users.php';
     }
 
     /**
@@ -2540,7 +2540,7 @@ public function apiGetBlockStaffRouting(): void
         unset($filterParams['page']);
         $queryString = http_build_query($filterParams);
 
-        require dirname(__DIR__, 2) . '/Views/admin/location_report.php';
+        require dirname(__DIR__) . '/Views/admin/location_report.php';
     }
 
     /**
@@ -2720,7 +2720,7 @@ public function apiGetBlockStaffRouting(): void
 
         try {
             $db = Database::getConnection();
-            $rootPath = dirname(__DIR__, 3);
+            $rootPath = dirname(__DIR__, 2);
 
             // 1. Fetch and validate application record
             $appStmt = $db->prepare("
@@ -2952,7 +2952,7 @@ public function apiGetBlockStaffRouting(): void
         $resultFile = !empty($row['result_file']) ? $row['result_file'] : ($row['certificate_file'] ?? '');
         $isVerifiedFile = false;
         if (!empty($resultFile)) {
-            $root = dirname(__DIR__, 3);
+            $root = dirname(__DIR__, 2);
             $p1 = $root . '/public' . (str_starts_with($resultFile, '/') ? '' : '/') . $resultFile;
             $p2 = $root . '/storage' . (str_starts_with($resultFile, '/') ? '' : '/') . $resultFile;
             if ((file_exists($p1) && filesize($p1) >= 64) || (file_exists($p2) && filesize($p2) >= 64)) {

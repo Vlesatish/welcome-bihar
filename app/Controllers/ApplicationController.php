@@ -1010,7 +1010,7 @@ public function adminApplications(): void
             $page = 1;
             $totalPages = 1;
             $totalRecords = 0;
-            require dirname(__DIR__, 2) . '/Views/admin/applications.php';
+            require dirname(__DIR__) . '/Views/admin/applications.php';
             return;
         }
 
@@ -1193,7 +1193,7 @@ public function adminApplications(): void
 
         $appCodes = $this->getApplicationCodes();
 
-        require dirname(__DIR__, 2) . '/Views/admin/applications.php';
+        require dirname(__DIR__) . '/Views/admin/applications.php';
     }
 
     
@@ -1947,7 +1947,7 @@ public function apiGetRequests(): void
             exit;
         }
 
-        $targetDir = dirname(__DIR__, 3) . '/public/uploads/documents';
+        $targetDir = dirname(__DIR__, 2) . '/public/uploads/documents';
         if (!is_dir($targetDir)) mkdir($targetDir, 0755, true);
 
         $safeName = 'doc_' . date('Ymd_His') . '_' . bin2hex(random_bytes(6)) . '.' . $ext;
