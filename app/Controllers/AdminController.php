@@ -2812,66 +2812,18 @@ public function apiGetBlockStaffRouting(): void
                 WHERE application_id = ? AND status != 'ATTACHED'
             ")->execute([$appId]);
 
-            // 6. Build correct background worker path (root/cli/check_rtps_certificates.php)
-            $cliScript = $rootPath . DIRECTORY_SEPARATOR . 'cli' . DIRECTORY_SEPARATOR . 'check_rtps_certificates.php';
-            if (!file_exists($cliScript)) {
-                throw new \Exception("Background worker script not found at {$cliScript}");
-            }
-
-            // 7. Platform-compatible worker execution (Windows / Linux)
-            $phpBin = PHP_BINARY;
-            if (empty($phpBin) || !file_exists($phpBin)) {
-                if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-                    $defaultWinPhp = 'C:\\xampp\\php\\php.exe';
-                    $phpBin = file_exists($defaultWinPhp) ? $defaultWinPhp : 'php';
-                } else {
-                    $phpBin = 'php';
-                }
-            }
-
-            $launched = false;
-            $cmd = '';
-            if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-                $cmd = sprintf('start /B "" %s %s --app-id=%d > NUL 2>&1', escapeshellarg($phpBin), escapeshellarg($cliScript), $appId);
-                $p = popen($cmd, 'r');
-                if ($p !== false) {
-                    pclose($p);
-                    $launched = true;
-                }
-            } else {
-                $cmd = sprintf('nohup %s %s --app-id=%d > /dev/null 2>&1 &', escapeshellarg($phpBin), escapeshellarg($cliScript), $appId);
-                exec($cmd, $out, $ret);
-                $launched = ($ret === 0);
-            }
-
-            // 8. If worker launch failed, do not return success: log and set recoverable queue status
-            if (!$launched) {
-                $db->prepare("
-                    UPDATE rtps_certificate_queue
-                    SET status = 'QUEUED',
-                        last_status_message = 'Worker process launch failed; scheduled cycle will retry',
-                        updated_at = NOW()
-                    WHERE application_id = ? AND status != 'ATTACHED'
-                ")->execute([$appId]);
-
-                error_log("Failed to launch RTPS background worker for App ID {$appId} (Command: {$cmd})");
-                http_response_code(500);
-                header('Content-Type: application/json');
-                echo json_encode([
-                    'success' => false,
-                    'message' => 'Background worker process could not be launched. Queue status has been safely preserved for automatic retry.'
-                ]);
-                exit;
-            }
+            // Direct fast authoritative execution: Runs immediately without fragile nohup / CLI dependency on shared hosting
+            @set_time_limit(90);
+            $user = AuthService::user();
+            $res = \App\Services\RtpsCertificateService::checkAndProcessApplication($appId, [
+                'actor_user_id' => (int)($user['id'] ?? 1),
+                'actor_role' => $user['role'] ?? 'ADMIN',
+                'actor_name' => $user['name'] ?? 'Admin',
+                'force' => true
+            ]);
 
             header('Content-Type: application/json');
-            echo json_encode([
-                'success' => true,
-                'in_background' => true,
-                'app_id' => $appId,
-                'status' => 'CHECKING',
-                'message' => 'RTPS Portal verification background me chal raha hai. Aap dusre pages par ja sakte hain, page bilkul nahi rukega.'
-            ]);
+            echo json_encode($res);
             exit;
         } catch (\Throwable $e) {
             http_response_code(500);

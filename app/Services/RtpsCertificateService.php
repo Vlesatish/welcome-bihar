@@ -532,7 +532,7 @@ POWERSHELL;
 
         $nowTs = time();
         $dates[] = date('d/m/Y', $nowTs);
-        for ($k = 1; $k <= 30; $k++) {
+        for ($k = 1; $k <= 3; $k++) {
             $dates[] = date('d/m/Y', strtotime("-{$k} days", $nowTs));
         }
         $dates = array_unique(array_filter($dates));

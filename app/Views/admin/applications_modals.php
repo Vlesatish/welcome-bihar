@@ -660,6 +660,19 @@ document.addEventListener('DOMContentLoaded', function () {
                         isModalPollRunning = false;
                     }
                 }, 2500);
+            } else if (data.status === 'REJECTED') {
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Application Rejected',
+                        text: data.rejection_reason || data.message || 'Application officially rejected on portal.',
+                        timer: 2500,
+                        showConfirmButton: false
+                    });
+                } else if (typeof showToast === 'function') {
+                    showToast('danger', 'Application Rejected: ' + (data.rejection_reason || data.message || ''));
+                }
+                setTimeout(() => window.location.reload(), 1200);
             } else if (data.success) {
                 btn.disabled = false;
                 btn.innerHTML = '<i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Fetch & Attach';
@@ -793,6 +806,19 @@ document.addEventListener('DOMContentLoaded', function () {
                 }, 2500);
 
                 activeRowPolls[appId] = pollInterval;
+            } else if (data.status === 'REJECTED') {
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Application Rejected',
+                        text: data.rejection_reason || data.message || 'Application officially rejected on portal.',
+                        timer: 2500,
+                        showConfirmButton: false
+                    });
+                } else if (typeof showToast === 'function') {
+                    showToast('danger', 'Application Rejected: ' + (data.rejection_reason || data.message || ''));
+                }
+                setTimeout(() => window.location.reload(), 1200);
             } else if (data.success) {
                 if (typeof Swal !== 'undefined') {
                     Swal.fire({
