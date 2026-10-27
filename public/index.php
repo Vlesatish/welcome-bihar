@@ -56,6 +56,9 @@ spl_autoload_register(function ($class) {
     $relativeClass = substr($class, $len);
     $file = $baseDir . str_replace('\\', '/', $relativeClass) . '.php';
 
+    if (!file_exists($file) && $class === 'App\\Controllers\\PanCardController') {
+        $file = $baseDir . 'PanCardController.php';
+    }
     if (file_exists($file)) {
         require $file;
     }
@@ -661,6 +664,13 @@ try {
         case '/pan-card':
             $ctrl = new \App\Controllers\PanCardController();
             $ctrl->index();
+            break;
+
+        case '/services/pan-card/list':
+        case '/pan-card/list':
+        case '/services/pan-card-list':
+            $ctrl = new \App\Controllers\PanCardController();
+            $ctrl->list();
             break;
 
         case '/services/pan-card/apply':

@@ -34,7 +34,23 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
     <!-- Bootstrap Icons -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
     <!-- Custom Stylesheet -->
-    <link href="/assets/css/custom.css" rel="stylesheet">
+    <link href="/assets/css/custom.css?v=<?= @filemtime(dirname(__DIR__, 2) . '/public/assets/css/custom.css') ?: time() ?>" rel="stylesheet">
+    <style>
+        .wb-sidebar-dropdown { position: relative; width: 100%; margin-bottom: 2px; }
+        .wb-sidebar-dropdown-toggle { display: flex; align-items: center; width: 100%; cursor: pointer; user-select: none; }
+        .wb-sidebar-dropdown-toggle .wb-dropdown-arrow { font-size: 0.72rem; margin-left: 0.35rem; color: #94a3b8; transition: transform 0.25s ease, color 0.18s ease; flex-shrink: 0; }
+        .wb-sidebar-dropdown-toggle:hover .wb-dropdown-arrow { color: #ffffff; }
+        .wb-sidebar-dropdown-toggle[aria-expanded="true"] .wb-dropdown-arrow,
+        .wb-sidebar-dropdown-toggle:not(.collapsed) .wb-dropdown-arrow,
+        .wb-sidebar-dropdown.open .wb-dropdown-arrow { transform: rotate(180deg); color: #60a5fa; }
+        .wb-sidebar-submenu { display: flex !important; flex-direction: column !important; gap: 3px !important; padding: 0.35rem 0 0.35rem 0.85rem !important; margin: 4px 0 6px 1.15rem !important; border-left: 2px solid rgba(255, 255, 255, 0.15) !important; }
+        .wb-submenu-link { display: flex !important; align-items: center !important; gap: 0.65rem !important; padding: 0.48rem 0.75rem !important; border-radius: 6px !important; color: #cbd5e1 !important; text-decoration: none !important; font-size: 0.84rem !important; font-weight: 500 !important; line-height: 1.25 !important; transition: all 0.18s ease !important; background: transparent !important; }
+        .wb-submenu-link i { font-size: 0.95rem !important; width: 18px !important; text-align: center !important; color: #94a3b8 !important; transition: color 0.18s ease !important; flex-shrink: 0 !important; }
+        .wb-submenu-link:hover { background: rgba(255, 255, 255, 0.08) !important; color: #ffffff !important; text-decoration: none !important; }
+        .wb-submenu-link:hover i { color: #60a5fa !important; }
+        .wb-submenu-link.active { background: rgba(37, 99, 235, 0.25) !important; color: #93c5fd !important; font-weight: 600 !important; box-shadow: inset 3px 0 0 #3b82f6 !important; }
+        .wb-submenu-link.active i { color: #60a5fa !important; }
+    </style>
     <script>
         try {
             if (window.innerWidth >= 992 && localStorage.getItem('wb_sidebar_collapsed') === '1') {
@@ -236,13 +252,13 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                 $isPanParentActive = $isPanApplyActive || $isPanListActive;
                 ?>
                 <div class="wb-sidebar-dropdown <?= $isPanParentActive ? 'open' : '' ?>">
-                    <a class="wb-sidebar-link wb-sidebar-dropdown-toggle <?= $isPanParentActive ? 'active' : '' ?>" 
+                    <a class="wb-sidebar-link wb-sidebar-dropdown-toggle <?= $isPanParentActive ? 'active' : 'collapsed' ?>" 
                        data-bs-toggle="collapse" 
                        href="#panCardSubmenu" 
                        role="button" 
                        aria-expanded="<?= $isPanParentActive ? 'true' : 'false' ?>" 
                        aria-controls="panCardSubmenu">
-                        <i class="bi bi-credit-card-2-front text-primary"></i>
+                        <i class="bi bi-credit-card-2-front"></i>
                         <span>New Pan Card</span>
                         <span class="badge bg-danger ms-auto me-1" style="font-size: 0.65rem;">New</span>
                         <i class="bi bi-chevron-down wb-dropdown-arrow"></i>
