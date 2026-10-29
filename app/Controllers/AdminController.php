@@ -1796,39 +1796,76 @@ public function staffRouting(): void
         AuthService::requireRole(['ADMIN']);
         $db = Database::getConnection();
 
-        $districtId = !empty($_GET['district_id']) ? (int)$_GET['district_id'] : 0;
-        $blockId = !empty($_GET['block_id']) ? (int)$_GET['block_id'] : 0;
-        $appCode = strtoupper(trim($_GET['app_code'] ?? ''));
-        $staffStatus = strtoupper(trim($_GET['staff_status'] ?? 'ALL'));
-        $search = trim($_GET['search'] ?? '');
+        $filterDistrictId = !empty($_GET['district_id']) ? (int)$_GET['district_id'] : 0;
+        $filterBlockId = !empty($_GET['block_id']) ? (int)$_GET['block_id'] : 0;
+        $filterAppCode = strtoupper(trim((string)($_GET['app_code'] ?? '')));
+        $rawStatus = strtoupper(trim((string)($_GET['status'] ?? ($_GET['staff_status'] ?? ''))));
+        $filterStatus = in_array($rawStatus, ['ACTIVE', 'INACTIVE'], true) ? $rawStatus : '';
+        $search = trim((string)($_GET['search'] ?? ''));
+
+        $districtId = $filterDistrictId;
+        $blockId = $filterBlockId;
+        $appCode = $filterAppCode;
+        $staffStatus = $filterStatus !== '' ? $filterStatus : 'ALL';
+
+        // Ensure legacy operator district/block assignments on users table are synced to operator_block_assignments
+        try {
+            $db->exec("
+                INSERT IGNORE INTO operator_block_assignments (operator_user_id, district_id, block_id, is_active, assigned_by, created_at, updated_at)
+                SELECT id, assigned_district_id, assigned_block_id, 1, 1, NOW(), NOW()
+                FROM users
+                WHERE assigned_district_id IS NOT NULL AND assigned_district_id > 0
+                  AND assigned_block_id IS NOT NULL AND assigned_block_id > 0
+                  AND (
+                      role = 'OPERATOR'
+                      OR EXISTS (
+                          SELECT 1 FROM user_role_assignments ura
+                          WHERE ura.user_id = users.id AND ura.role_code = 'OPERATOR' AND ura.is_active = 1
+                      )
+                  )
+            ");
+        } catch (\Throwable $e) {}
 
         // Fetch active districts for filter
         $districts = $db->query("SELECT id, name FROM districts WHERE is_active = 1 ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
 
-        $availableBlocks = [];
-        if ($districtId > 0) {
+        $blocks = [];
+        if ($filterDistrictId > 0) {
             $bStmt = $db->prepare("SELECT id, name, district_id FROM blocks WHERE district_id = ? AND is_active = 1 ORDER BY name ASC");
-            $bStmt->execute([$districtId]);
-            $availableBlocks = $bStmt->fetchAll(PDO::FETCH_ASSOC);
+            $bStmt->execute([$filterDistrictId]);
+            $blocks = $bStmt->fetchAll(PDO::FETCH_ASSOC);
         }
+        $availableBlocks = $blocks;
 
-        // Query operators
-        $where = ["u.role = 'OPERATOR'"];
+        // Fetch all active application codes for filter dropdown
+        $availableCodeRows = \App\Services\ApplicationCodeFieldService::getAvailableApplicationCodes(null, $db);
+        $allActiveCodes = array_values(array_unique(array_filter(array_column($availableCodeRows, 'application_code'))));
+
+        // Query operators (dedicated OPERATOR role + dual-role operators + multi-block assignments)
+        $where = [
+            "(
+                u.role = 'OPERATOR'
+                OR EXISTS (
+                    SELECT 1 FROM user_role_assignments ura
+                    WHERE ura.user_id = u.id AND ura.role_code = 'OPERATOR' AND ura.is_active = 1
+                )
+            )"
+        ];
         $params = [];
 
-        if ($districtId > 0) {
-            $where[] = "u.assigned_district_id = :district_id";
-            $params[':district_id'] = $districtId;
+        if ($filterDistrictId > 0) {
+            $where[] = "COALESCE(oba.district_id, u.assigned_district_id) = :district_id";
+            $params[':district_id'] = $filterDistrictId;
         }
 
-        if ($blockId > 0) {
-            $where[] = "u.assigned_block_id = :block_id";
-            $params[':block_id'] = $blockId;
+        if ($filterBlockId > 0) {
+            $where[] = "COALESCE(oba.block_id, u.assigned_block_id) = :block_id";
+            $params[':block_id'] = $filterBlockId;
         }
 
-        if ($staffStatus === 'ACTIVE') {
+        if ($filterStatus === 'ACTIVE') {
             $where[] = "u.status = 'ACTIVE'";
-        } elseif ($staffStatus === 'INACTIVE') {
+        } elseif ($filterStatus === 'INACTIVE') {
             $where[] = "u.status != 'ACTIVE'";
         }
 
@@ -1839,12 +1876,16 @@ public function staffRouting(): void
 
         $whereClause = implode(' AND ', $where);
         $sql = "
-            SELECT u.id, u.name, u.mobile, u.email, u.status, u.assigned_district_id, u.assigned_block_id,
+            SELECT u.id, u.name, u.mobile, u.email, u.status,
+                   COALESCE(oba.district_id, u.assigned_district_id) AS district_id,
+                   COALESCE(oba.block_id, u.assigned_block_id) AS block_id,
                    d.name as district_name, b.name as block_name
             FROM users u
-            LEFT JOIN districts d ON u.assigned_district_id = d.id
-            LEFT JOIN blocks b ON u.assigned_block_id = b.id
+            LEFT JOIN operator_block_assignments oba ON oba.operator_user_id = u.id AND oba.is_active = 1
+            LEFT JOIN districts d ON COALESCE(oba.district_id, u.assigned_district_id) = d.id
+            LEFT JOIN blocks b ON COALESCE(oba.block_id, u.assigned_block_id) = b.id
             WHERE {$whereClause}
+            GROUP BY u.id, COALESCE(oba.district_id, u.assigned_district_id), COALESCE(oba.block_id, u.assigned_block_id)
             ORDER BY u.status = 'ACTIVE' DESC, d.name ASC, b.name ASC, u.name ASC
         ";
 
@@ -1866,12 +1907,15 @@ public function staffRouting(): void
                 SUM(CASE WHEN status IN ('IN_PROCESS', 'UNDER_REVIEW') THEN 1 ELSE 0 END) as in_process_count
             FROM applications
             WHERE assigned_operator_id = ?
+              AND (? = 0 OR district_id = ?)
+              AND (? = 0 OR block_id = ?)
         ");
 
         $staffList = [];
+        $allPreparedList = [];
         foreach ($allOperators as $op) {
-            $opDist = (int)($op['assigned_district_id'] ?? 0);
-            $opBlk = (int)($op['assigned_block_id'] ?? 0);
+            $opDist = (int)($op['district_id'] ?? 0);
+            $opBlk = (int)($op['block_id'] ?? 0);
 
             $assignedCodes = [];
             if ($opDist > 0 && $opBlk > 0) {
@@ -1879,20 +1923,33 @@ public function staffRouting(): void
                 $assignedCodes = $codeStmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
             }
 
-            // Filter by appCode if specified
-            if (!empty($appCode) && !in_array($appCode, $assignedCodes, true)) {
-                continue;
-            }
-
-            $countStmt->execute([(int)$op['id']]);
+            $countStmt->execute([(int)$op['id'], $opDist, $opDist, $opBlk, $opBlk]);
             $counts = $countStmt->fetch(PDO::FETCH_ASSOC) ?: ['pending_count' => 0, 'in_process_count' => 0];
 
+            $op['district_id'] = $opDist;
+            $op['block_id'] = $opBlk;
+            $op['assigned_district_id'] = $opDist;
+            $op['assigned_block_id'] = $opBlk;
             $op['assigned_codes'] = $assignedCodes;
             $op['pending_count'] = (int)($counts['pending_count'] ?? 0);
             $op['in_process_count'] = (int)($counts['in_process_count'] ?? 0);
 
+            $allPreparedList[] = $op;
+
+            if (!empty($filterAppCode) && !in_array($filterAppCode, $assignedCodes, true)) {
+                continue;
+            }
+
             $staffList[] = $op;
         }
+
+        // If user navigated from Block Rates for an unassigned code (?district_id=X&block_id=Y&app_code=Z)
+        // and no operator in that block has that code assigned yet, still show the block's operators so Admin can assign it
+        if (empty($staffList) && !empty($allPreparedList) && $filterDistrictId > 0 && $filterBlockId > 0 && !empty($filterAppCode)) {
+            $staffList = $allPreparedList;
+        }
+
+        $operators = $staffList;
 
         // Summary metrics
         $totalRules = (int)$db->query("SELECT COUNT(*) FROM operator_application_code_assignments WHERE is_active = 1")->fetchColumn();

@@ -56,7 +56,7 @@ class StaffRoutingService
             : "0";
 
         $excludeClause = "";
-        $params = [$districtId, $blockId, $code, $districtId, $blockId];
+        $params = [$districtId, $blockId, $code, $districtId, $blockId, $districtId, $blockId];
         if ($excludeUserId !== null && $excludeUserId > 0) {
             $excludeClause = " AND u.id != ? ";
             $params[] = $excludeUserId;
@@ -85,9 +85,12 @@ class StaffRoutingService
                   )
               )
               AND u.status = 'ACTIVE'
-              AND EXISTS (
-                  SELECT 1 FROM operator_block_assignments oba
-                  WHERE oba.operator_user_id = u.id AND oba.district_id = ? AND oba.block_id = ? AND oba.is_active = 1
+              AND (
+                  (u.assigned_district_id = ? AND u.assigned_block_id = ?)
+                  OR EXISTS (
+                      SELECT 1 FROM operator_block_assignments oba
+                      WHERE oba.operator_user_id = u.id AND oba.district_id = ? AND oba.block_id = ? AND oba.is_active = 1
+                  )
               )
               {$excludeClause}
             ORDER BY active_load ASC, last_assignment_seq ASC, u.id ASC
@@ -648,13 +651,16 @@ class StaffRoutingService
                     WHERE ura.user_id = u.id AND ura.role_code = 'OPERATOR' AND ura.is_active = 1
                 )
             )
-            AND EXISTS (
-                SELECT 1 FROM operator_block_assignments oba
-                WHERE oba.operator_user_id = u.id AND oba.district_id = ? AND oba.block_id = ? AND oba.is_active = 1
+            AND (
+                (u.assigned_district_id = ? AND u.assigned_block_id = ?)
+                OR EXISTS (
+                    SELECT 1 FROM operator_block_assignments oba
+                    WHERE oba.operator_user_id = u.id AND oba.district_id = ? AND oba.block_id = ? AND oba.is_active = 1
+                )
             )
             ORDER BY u.status = 'ACTIVE' DESC, u.name ASC
         ");
-        $stmt->execute([$districtId, $blockId]);
+        $stmt->execute([$districtId, $blockId, $districtId, $blockId]);
         return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     }
 
@@ -684,12 +690,15 @@ class StaffRoutingService
                   )
               )
               AND u.status = 'ACTIVE'
-              AND EXISTS (
-                  SELECT 1 FROM operator_block_assignments oba
-                  WHERE oba.operator_user_id = u.id AND oba.district_id = ? AND oba.block_id = ? AND oba.is_active = 1
+              AND (
+                  (u.assigned_district_id = ? AND u.assigned_block_id = ?)
+                  OR EXISTS (
+                      SELECT 1 FROM operator_block_assignments oba
+                      WHERE oba.operator_user_id = u.id AND oba.district_id = ? AND oba.block_id = ? AND oba.is_active = 1
+                  )
               )
         ");
-        $stmt->execute([$districtId, $blockId, $code, $districtId, $blockId]);
+        $stmt->execute([$districtId, $blockId, $code, $districtId, $blockId, $districtId, $blockId]);
         return ((int)$stmt->fetchColumn() > 0);
     }
 }
