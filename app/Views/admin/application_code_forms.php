@@ -88,14 +88,24 @@
                 <strong>Form Incomplete:</strong> Missing active core fields (<code>application_number</code> and <code>applicant_name</code>). This code is not available to retailers.
             </div>
         </div>
-        <form method="POST" action="/admin/application-code-forms/init-core" class="m-0">
-            <?= csrf_field() ?>
-            <input type="hidden" name="code" value="<?= e($selectedCode) ?>">
-            <button type="submit" class="btn btn-sm btn-dark fw-bold d-inline-flex align-items-center gap-1 shadow-xs">
-                <i class="bi bi-magic"></i>
-                <span>Initialize Core Fields</span>
-            </button>
-        </form>
+        <div class="d-flex align-items-center gap-2">
+            <form method="POST" action="/admin/application-code-forms/init-core" class="m-0">
+                <?= csrf_field() ?>
+                <input type="hidden" name="code" value="<?= e($selectedCode) ?>">
+                <button type="submit" class="btn btn-sm btn-dark fw-bold d-inline-flex align-items-center gap-1 shadow-xs">
+                    <i class="bi bi-magic"></i>
+                    <span>Initialize Core Fields</span>
+                </button>
+            </form>
+            <form method="POST" action="/admin/application-code-forms/delete-code" class="m-0" onsubmit="return confirm(<?= htmlspecialchars(json_encode("Are you sure you want to delete Application Code \"{$selectedCode}\"?"), ENT_QUOTES, 'UTF-8') ?>)">
+                <?= csrf_field() ?>
+                <input type="hidden" name="code" value="<?= e($selectedCode) ?>">
+                <button type="submit" class="btn btn-sm btn-danger fw-bold d-inline-flex align-items-center gap-1 shadow-xs">
+                    <i class="bi bi-trash"></i>
+                    <span>Delete Code</span>
+                </button>
+            </form>
+        </div>
     </div>
 <?php endif; ?>
 
@@ -111,8 +121,20 @@
                 <span class="badge bg-warning text-dark border">Form Incomplete</span>
             <?php endif; ?>
         </div>
-        <div class="text-muted small" style="font-size: 0.74rem;">
-            <i class="bi bi-info-circle me-1"></i>Global code form: Configured fields automatically apply to all blocks for this code.
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+            <div class="text-muted small" style="font-size: 0.74rem;">
+                <i class="bi bi-info-circle me-1"></i>Global code form: Configured fields automatically apply to all blocks for this code.
+            </div>
+            <?php if ($selectedCode !== ''): ?>
+                <form method="POST" action="/admin/application-code-forms/delete-code" class="m-0 d-inline" onsubmit="return confirm(<?= htmlspecialchars(json_encode("Delete Application Code \"{$selectedCode}\" and all its configured fields/rates?"), ENT_QUOTES, 'UTF-8') ?>)">
+                    <?= csrf_field() ?>
+                    <input type="hidden" name="code" value="<?= e($selectedCode) ?>">
+                    <button type="submit" class="btn btn-xs btn-outline-danger py-1 px-2 rounded-2 fw-semibold d-inline-flex align-items-center gap-1" style="font-size: 0.74rem;" title="Delete Application Code <?= e($selectedCode) ?>">
+                        <i class="bi bi-trash"></i>
+                        <span>Delete Code</span>
+                    </button>
+                </form>
+            <?php endif; ?>
         </div>
     </div>
 

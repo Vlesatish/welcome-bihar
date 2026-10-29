@@ -612,6 +612,11 @@ try {
             $ctrl->initializeCoreFields();
             break;
 
+        case '/admin/application-code-forms/delete-code':
+            $ctrl = new \App\Controllers\ApplicationCodeFieldController();
+            $ctrl->deleteCode();
+            break;
+
         case '/admin/settings':
             $ctrl = new \App\Controllers\SettingsController();
             if ($requestMethod === 'POST') $ctrl->save();

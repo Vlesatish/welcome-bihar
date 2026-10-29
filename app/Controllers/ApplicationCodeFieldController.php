@@ -441,6 +441,77 @@ class ApplicationCodeFieldController
     }
 
     /**
+     * Delete an entire Application Code across form fields, rate rules, and data_type_fields options.
+     */
+    public function deleteCode(): void
+    {
+        if (!AuthService::isAdmin()) {
+            header('Location: /login');
+            exit;
+        }
+
+        $code = strtoupper(trim((string)($_POST['code'] ?? '')));
+        if (!AuthService::validateCsrfToken($_POST['csrf_token'] ?? '')) {
+            $_SESSION['flash_error'] = 'Invalid CSRF token.';
+            header('Location: /admin/application-code-forms?code=' . urlencode($code));
+            exit;
+        }
+
+        if ($code === '') {
+            $_SESSION['flash_error'] = 'Application Code is required.';
+            header('Location: /admin/application-code-forms');
+            exit;
+        }
+
+        $db = $this->db;
+        $db->beginTransaction();
+        try {
+            // 1. Remove from data_type_fields options_json (where field_name = 'application_code')
+            $dtfStmt = $db->prepare("SELECT id, options_json FROM data_type_fields WHERE field_name = 'application_code'");
+            $dtfStmt->execute();
+            foreach ($dtfStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                $opts = !empty($row['options_json']) ? json_decode($row['options_json'], true) : [];
+                if (is_array($opts)) {
+                    $filtered = array_values(array_filter($opts, static function ($opt) use ($code): bool {
+                        return strcasecmp(trim((string)($opt['value'] ?? '')), $code) !== 0;
+                    }));
+                    $upd = $db->prepare("UPDATE data_type_fields SET options_json = ? WHERE id = ?");
+                    $upd->execute([json_encode($filtered, JSON_UNESCAPED_UNICODE), $row['id']]);
+                }
+            }
+
+            // 2. Delete from service_rate_rules
+            $db->prepare("DELETE FROM service_rate_rules WHERE UPPER(TRIM(application_code)) = ?")->execute([$code]);
+
+            // 3. Delete from operator_application_code_assignments (if table exists)
+            try {
+                $db->prepare("DELETE FROM operator_application_code_assignments WHERE UPPER(TRIM(application_code)) = ?")->execute([$code]);
+            } catch (\Throwable $e) {}
+
+            // 4. Delete from application_code_fields
+            $db->prepare("DELETE FROM application_code_fields WHERE UPPER(TRIM(application_code)) = ?")->execute([$code]);
+
+            $db->commit();
+
+            AuditService::log('APPLICATION_CODE_DELETED', 'APPLICATION_CODE', $code, [
+                'code' => $code
+            ]);
+
+            $_SESSION['flash_success'] = "Application code '{$code}' deleted successfully.";
+        } catch (\Throwable $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            $_SESSION['flash_error'] = 'Failed to delete application code: ' . $e->getMessage();
+            header('Location: /admin/application-code-forms?code=' . urlencode($code));
+            exit;
+        }
+
+        header('Location: /admin/application-code-forms');
+        exit;
+    }
+
+    /**
      * Reorder fields
      */
     public function reorder(): void
