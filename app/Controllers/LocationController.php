@@ -349,6 +349,9 @@ class LocationController
         $name = trim($_POST['name'] ?? '');
         $nameHi = trim($_POST['name_hi'] ?? '') ?: $name;
         $code = strtoupper(trim($_POST['code'] ?? ''));
+        if ($code === '') {
+            $code = strtoupper(substr(preg_replace('/[^A-Za-z0-9]/', '', $name), 0, 6)) ?: ('DST' . time());
+        }
         $isActive = isset($_POST['is_active']) ? 1 : 0;
 
         $db = Database::getConnection();
@@ -385,6 +388,9 @@ class LocationController
         $name = trim($_POST['name'] ?? '');
         $nameHi = trim($_POST['name_hi'] ?? '') ?: $name;
         $code = trim($_POST['code'] ?? '');
+        if ($code === '') {
+            $code = strtoupper(preg_replace('/[^A-Za-z0-9_]/', '_', $name)) ?: ('BLK_' . time());
+        }
         $isActive = isset($_POST['is_active']) ? 1 : 0;
 
         $db = Database::getConnection();
