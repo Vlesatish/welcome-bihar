@@ -45,10 +45,13 @@ class ApplicationCodeFieldController
 
         // Fetch all distinct application codes across rate rules, data types, and custom forms
         $rateCodes = ApplicationCodeFieldService::getAvailableApplicationCodes($dataTypeId, $db);
+        $validCodeList = array_column($rateCodes, 'application_code');
 
         $selectedCode = strtoupper(trim((string)($_GET['code'] ?? '')));
-        if ($selectedCode === '' && !empty($rateCodes)) {
+        if (($selectedCode === '' || !in_array($selectedCode, $validCodeList, true)) && !empty($rateCodes)) {
             $selectedCode = $rateCodes[0]['application_code'];
+        } elseif (empty($rateCodes)) {
+            $selectedCode = '';
         }
 
         // Fetch configured fields for selected code

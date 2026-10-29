@@ -65,10 +65,6 @@
                         </a>
                     <?php endforeach; ?>
                 <?php endif; ?>
-                <button type="button" class="btn btn-sm btn-outline-success py-1 px-2.5 rounded-2 d-inline-flex align-items-center gap-1 shadow-2xs" style="font-size: 0.78rem;" onclick="promptNewApplicationCode()">
-                    <i class="bi bi-plus-circle"></i>
-                    <span>+ New Code</span>
-                </button>
             </div>
 
             <div class="d-flex align-items-center gap-2">
@@ -569,17 +565,6 @@ function escapeHtml(str) {
     const d = document.createElement('div');
     d.textContent = str || '';
     return d.innerHTML;
-}
-
-function promptNewApplicationCode() {
-    const code = prompt("Enter new Application Code (e.g. LABOURCARD, DRIVING_LIC, PAN):");
-    if (!code) return;
-    const clean = code.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '');
-    if (clean.length < 2) {
-        alert("Invalid code. Must be at least 2 alphanumeric characters.");
-        return;
-    }
-    window.location.href = '/admin/application-code-forms?code=' + encodeURIComponent(clean);
 }
 </script>
 
