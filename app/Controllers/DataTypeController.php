@@ -33,19 +33,35 @@ class DataTypeController
         ");
         $activeService = $activeServiceStmt->fetch(PDO::FETCH_ASSOC);
 
-        // 2. Fetch archived / deactivated other services (for historical reference only)
+        // 2. Fetch PAN Card service (pan_card)
+        $panServiceStmt = $db->query("
+            SELECT dt.*,
+                   (SELECT COUNT(*) FROM applications WHERE data_type_id = dt.id OR application_code = 'PAN_CARD') as app_count
+            FROM data_types dt
+            WHERE dt.code = 'pan_card'
+            LIMIT 1
+        ");
+        $panService = $panServiceStmt->fetch(PDO::FETCH_ASSOC);
+
+        // Count active application codes
+        $codeRows = \App\Services\ApplicationCodeFieldService::getAvailableApplicationCodes(
+            $activeService ? (int)$activeService['id'] : 4,
+            $db
+        );
+        $activeCodeCount = count($codeRows);
+
+        // 3. Fetch archived / deactivated other services
         $archivedServices = $db->query("
             SELECT dt.*,
                    (SELECT COUNT(*) FROM data_type_fields WHERE data_type_id = dt.id) as field_count,
                    (SELECT COUNT(*) FROM applications WHERE data_type_id = dt.id) as app_count,
                    (SELECT COUNT(*) FROM service_rate_rules WHERE data_type_id = dt.id AND is_active = 1) as rule_count
             FROM data_types dt
-            WHERE dt.code != 'srv_block_app'
+            WHERE dt.code NOT IN ('srv_block_app', 'pan_card')
             ORDER BY dt.id ASC
         ")->fetchAll(PDO::FETCH_ASSOC);
 
-        // All data types list for backwards compatibility
-        $dataTypes = $activeService ? array_merge([$activeService], $archivedServices) : $archivedServices;
+        $dataTypes = array_values(array_filter(array_merge([$activeService, $panService], $archivedServices)));
 
         require dirname(__DIR__) . '/Views/admin/data_types.php';
     }
@@ -59,6 +75,7 @@ class DataTypeController
         }
 
         $id = (int)($_POST['id'] ?? 0);
+        $code = trim($_POST['code'] ?? 'srv_block_app') ?: 'srv_block_app';
         $nameEn = trim($_POST['name_en'] ?? '');
         $nameHi = trim($_POST['name_hi'] ?? '') ?: $nameEn;
         $category = trim($_POST['category'] ?? 'District & Block Services') ?: 'District & Block Services';
@@ -79,17 +96,35 @@ class DataTypeController
 
         try {
             if (empty($nameEn)) {
-                throw new Exception("Service Name (English) is required.");
+                throw new Exception("Service Name is required.");
             }
 
-            // Strictly manage srv_block_app only (prevent duplicate or unrelated new services)
-            $existingSrvId = (int)$db->query("SELECT id FROM data_types WHERE code = 'srv_block_app' LIMIT 1")->fetchColumn();
-            $targetId = ($id > 0) ? $id : $existingSrvId;
+            if ($id > 0) {
+                $targetId = $id;
+            } else {
+                $stmtChk = $db->prepare("SELECT id FROM data_types WHERE code = ? LIMIT 1");
+                $stmtChk->execute([$code]);
+                $targetId = (int)$stmtChk->fetchColumn();
+            }
 
             $enableChat = isset($_POST['enable_chat']) ? 1 : 0;
             $warningImage = trim($_POST['warning_image'] ?? '');
 
             if ($targetId > 0) {
+                // Keep existing notice/announcement/warning_image if not posted in basic edit modal
+                $existingRowStmt = $db->prepare("SELECT notice, announcement, warning_image, category, badge, icon, duplicate_check_field, sort_order FROM data_types WHERE id = ?");
+                $existingRowStmt->execute([$targetId]);
+                $existingRow = $existingRowStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+                if (!isset($_POST['notice'])) $notice = (string)($existingRow['notice'] ?? '');
+                if (!isset($_POST['announcement'])) $announcement = (string)($existingRow['announcement'] ?? '');
+                if (!isset($_POST['warning_image'])) $warningImage = (string)($existingRow['warning_image'] ?? '');
+                if (!isset($_POST['category'])) $category = (string)($existingRow['category'] ?? $category);
+                if (!isset($_POST['badge'])) $badge = (string)($existingRow['badge'] ?? '');
+                if (!isset($_POST['icon'])) $icon = (string)($existingRow['icon'] ?? $icon);
+                if (!isset($_POST['duplicate_check_field'])) $dupField = (string)($existingRow['duplicate_check_field'] ?? $dupField);
+                if (!isset($_POST['sort_order'])) $sortOrder = (int)($existingRow['sort_order'] ?? 1);
+
                 $stmt = $db->prepare("
                     UPDATE data_types
                     SET name_en = ?, name_hi = ?, category = ?, processing_time = ?, badge = ?,
@@ -100,12 +135,12 @@ class DataTypeController
                 ");
                 $stmt->execute([
                     $nameEn, $nameHi, $category, $processingTime, $badge,
-                    $descEn, $descHi, $notice, $announcement, $warningImage ?: null,
+                    $descEn, $descHi, $notice ?: null, $announcement ?: null, $warningImage ?: null,
                     $icon, $fee, $comm, $dupField,
                     $enableChat, $isActive, $sortOrder, $targetId
                 ]);
                 AuditService::log('DATA_TYPE_UPDATED', 'DATA_TYPE', (string)$targetId, ['name' => $nameEn]);
-                $_SESSION['flash_success'] = 'Block & District Application Pass Service settings updated successfully.';
+                $_SESSION['flash_success'] = "Service '{$nameEn}' updated successfully.";
             } else {
                 $stmt = $db->prepare("
                     INSERT INTO data_types (
@@ -114,20 +149,20 @@ class DataTypeController
                         icon, fee_amount, distributor_commission, duplicate_check_field,
                         enable_chat, is_active, sort_order, created_at
                     ) VALUES (
-                        'srv_block_app', ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?,
                         ?, ?, ?, ?, ?,
                         ?, ?, ?, ?,
                         ?, ?, ?, NOW()
                     )
                 ");
                 $stmt->execute([
-                    $nameEn, $nameHi, $category, $processingTime, $badge,
-                    $descEn, $descHi, $notice, $announcement, $warningImage ?: null,
+                    $code, $nameEn, $nameHi, $category, $processingTime, $badge,
+                    $descEn, $descHi, $notice ?: null, $announcement ?: null, $warningImage ?: null,
                     $icon, $fee, $comm, $dupField,
                     $enableChat, $isActive, $sortOrder
                 ]);
                 AuditService::log('DATA_TYPE_CREATED', 'DATA_TYPE', (string)$db->lastInsertId(), ['name' => $nameEn]);
-                $_SESSION['flash_success'] = 'Block & District Application Pass Service created successfully.';
+                $_SESSION['flash_success'] = "Service '{$nameEn}' created successfully.";
             }
         } catch (Exception $e) {
             $_SESSION['flash_error'] = 'Error: ' . $e->getMessage();

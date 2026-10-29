@@ -232,9 +232,13 @@ class PanCardController
 
             $user = AuthService::user();
             $userId = (int)$user['id'];
-            $panFee = 107.00;
-            $distCommission = 7.00;
-            $panDataTypeId = $this->getPanDataTypeId();
+            $panDtRow = $this->db->query("SELECT id, fee_amount, distributor_commission, is_active FROM data_types WHERE code = 'pan_card' LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+            if ($panDtRow && (int)($panDtRow['is_active'] ?? 1) === 0) {
+                throw new Exception('PAN Card service is currently disabled by administrator.');
+            }
+            $panFee = ($panDtRow && (float)$panDtRow['fee_amount'] > 0) ? (float)$panDtRow['fee_amount'] : 107.00;
+            $distCommission = ($panDtRow && isset($panDtRow['distributor_commission'])) ? (float)$panDtRow['distributor_commission'] : 7.00;
+            $panDataTypeId = $panDtRow ? (int)$panDtRow['id'] : $this->getPanDataTypeId();
 
             // 1. Sanitize text fields
             $fullName = trim((string)($_POST['full_name'] ?? ''));

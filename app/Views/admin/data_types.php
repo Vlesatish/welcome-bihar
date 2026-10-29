@@ -2,291 +2,274 @@
 
 <!-- Page Header -->
 <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2 pb-2 border-bottom">
-    <div>
-        <h1 class="h5 fw-bold mb-0 text-dark d-flex align-items-center gap-2">
-            <i class="bi bi-sliders text-primary"></i>
-            <span>Service Settings</span>
-        </h1>
-        <div class="small text-muted" style="font-size: 0.74rem;">
-            Configuration for Block & District Application Pass Service
-        </div>
+    <div class="d-flex align-items-center gap-2">
+        <i class="bi bi-sliders text-primary fs-5"></i>
+        <h1 class="h5 fw-bold mb-0 text-dark">Service Management</h1>
     </div>
     <div class="d-flex gap-2 flex-wrap">
-        <a href="/admin/data-types/fields?id=<?= $activeService['id'] ?? 4 ?>" class="btn btn-sm btn-outline-secondary rounded-pill px-3 py-1 fw-semibold shadow-2xs">
-            <i class="bi bi-ui-checks me-1"></i> Form Fields
+        <a href="/admin/block-rates" class="btn btn-sm btn-warning rounded-pill px-3 py-1 fw-bold text-dark shadow-2xs">
+            <i class="bi bi-currency-rupee me-1"></i>Block Rates
         </a>
-        <a href="/admin/block-rates" class="btn btn-sm btn-warning rounded-pill px-3 py-1 fw-bold text-dark shadow-2xs" style="background-color: #f59e0b; border-color: #d97706;">
-            <i class="bi bi-currency-rupee me-1"></i> Block Rates
+        <a href="/admin/application-code-forms" class="btn btn-sm btn-outline-primary rounded-pill px-3 py-1 fw-semibold shadow-2xs">
+            <i class="bi bi-ui-checks-grid me-1"></i>Code Forms
         </a>
-        <button type="button" class="btn btn-sm btn-outline-primary rounded-pill px-3 py-1 fw-semibold shadow-2xs" onclick='openNoticeModal(<?= json_encode($activeService ?? []) ?>)'>
-            <i class="bi bi-megaphone me-1"></i> Notice
-        </button>
+        <a href="/admin/service-availability" class="btn btn-sm btn-outline-success rounded-pill px-3 py-1 fw-semibold shadow-2xs">
+            <i class="bi bi-toggle-on me-1"></i>Block ON/OFF
+        </a>
     </div>
 </div>
 
-<!-- Primary Service Active Management Card -->
-<?php if (!empty($activeService)): ?>
-    <div class="row mb-4">
-        <div class="col-12">
-            <div class="card shadow-sm rounded-3 border bg-white" style="border: 1px solid #e2e8f0;">
-                <div class="card-header bg-white py-3 px-3.5 border-bottom d-flex align-items-center justify-content-between flex-wrap gap-2">
+<div class="row g-3">
+    <!-- 1. BLOCK APPLICATION PASS SERVICE -->
+    <?php if (!empty($activeService)): ?>
+        <div class="col-lg-6">
+            <div class="card shadow-sm rounded-3 border bg-white h-100">
+                <div class="card-header bg-white py-3 px-3.5 border-bottom d-flex align-items-center justify-content-between">
                     <div class="d-flex align-items-center gap-2">
-                        <i class="bi bi-building text-primary"></i>
-                        <h2 class="h6 fw-bold mb-0 text-dark"><?= e($activeService['name_en']) ?></h2>
+                        <span class="d-inline-flex align-items-center justify-content-center bg-primary-subtle text-primary rounded-2" style="width: 34px; height: 34px;">
+                            <i class="bi bi-building fs-6"></i>
+                        </span>
+                        <div>
+                            <h2 class="h6 fw-bold mb-0 text-dark"><?= e($activeService['name_en']) ?></h2>
+                            <span class="text-muted font-monospace" style="font-size: 0.72rem;"><?= (int)($activeCodeCount ?? 0) ?> Codes &bull; <?= (int)($activeService['rule_count'] ?? 0) ?> Block Rates</span>
+                        </div>
                     </div>
 
-                    <div class="d-flex align-items-center gap-2">
-                        <form method="POST" action="/admin/data-types/toggle-status" class="m-0 d-flex align-items-center gap-2">
-                            <?= csrf_field() ?>
-                            <input type="hidden" name="id" value="<?= $activeService['id'] ?>">
-                            <span class="badge <?= $activeService['is_active'] ? 'bg-success text-white' : 'bg-danger text-white' ?> text-uppercase px-2.5 py-1 fw-bold" style="font-size: 0.72rem;">
-                                <?= $activeService['is_active'] ? 'Active' : 'Inactive' ?>
-                            </span>
-                            <div class="form-check form-switch m-0">
-                                <input class="form-check-input" type="checkbox" role="switch" <?= $activeService['is_active'] ? 'checked' : '' ?> onchange="this.form.submit()" style="cursor: pointer;" title="Toggle Service Availability">
-                            </div>
-                        </form>
-                    </div>
+                    <form method="POST" action="/admin/data-types/toggle-status" class="m-0 d-flex align-items-center gap-2">
+                        <?= csrf_field() ?>
+                        <input type="hidden" name="id" value="<?= (int)$activeService['id'] ?>">
+                        <span class="badge <?= $activeService['is_active'] ? 'bg-success' : 'bg-danger' ?> text-white px-2 py-1">
+                            <?= $activeService['is_active'] ? 'ON' : 'OFF' ?>
+                        </span>
+                        <div class="form-check form-switch m-0">
+                            <input class="form-check-input" type="checkbox" role="switch" <?= $activeService['is_active'] ? 'checked' : '' ?> onchange="this.form.submit()" style="cursor: pointer;">
+                        </div>
+                    </form>
                 </div>
 
-                <div class="card-body p-3.5">
-                    <!-- Key Parameters Grid -->
-                    <div class="row g-3 mb-3">
-                        <div class="col-sm-6 col-lg-3">
-                            <div class="p-3 bg-light rounded-3 border h-100">
-                                <div class="small text-muted text-uppercase fw-semibold" style="font-size: 0.72rem;">Base Service Fee</div>
-                                <div class="fs-5 fw-bold text-dark mt-1">₹<?= number_format($activeService['fee_amount'], 2) ?></div>
-                                <div class="small text-muted" style="font-size: 0.72rem;">Default fallback rate</div>
+                <div class="card-body p-3.5 d-flex flex-column justify-content-between">
+                    <div class="row g-2.5 mb-3">
+                        <div class="col-6 col-sm-3">
+                            <div class="p-2.5 bg-light rounded-3 border text-center h-100">
+                                <div class="text-muted fw-semibold" style="font-size: 0.7rem;">Default Fee</div>
+                                <div class="fs-5 fw-bold text-dark mt-0.5">₹<?= number_format((float)$activeService['fee_amount'], 0) ?></div>
                             </div>
                         </div>
-
-                        <div class="col-sm-6 col-lg-3">
-                            <div class="p-3 bg-light rounded-3 border h-100">
-                                <div class="small text-muted text-uppercase fw-semibold" style="font-size: 0.72rem;">Distributor Commission</div>
-                                <div class="fs-5 fw-bold text-success mt-1">₹<?= number_format($activeService['distributor_commission'], 2) ?></div>
-                                <div class="small text-muted" style="font-size: 0.72rem;">Credited on completion</div>
+                        <div class="col-6 col-sm-3">
+                            <div class="p-2.5 bg-light rounded-3 border text-center h-100">
+                                <div class="text-muted fw-semibold" style="font-size: 0.7rem;">Distributor</div>
+                                <div class="fs-5 fw-bold text-success mt-0.5">₹<?= number_format((float)$activeService['distributor_commission'], 0) ?></div>
                             </div>
                         </div>
-
-                        <div class="col-sm-6 col-lg-3">
-                            <div class="p-3 bg-light rounded-3 border h-100">
-                                <div class="small text-muted text-uppercase fw-semibold" style="font-size: 0.72rem;">Processing Time</div>
-                                <div class="fs-5 fw-bold text-dark mt-1"><?= e($activeService['processing_time'] ?: '10-30 MIN') ?></div>
-                                <div class="small text-muted" style="font-size: 0.72rem;">Expected window</div>
+                        <div class="col-6 col-sm-3">
+                            <div class="p-2.5 bg-light rounded-3 border text-center h-100">
+                                <div class="text-muted fw-semibold" style="font-size: 0.7rem;">Time</div>
+                                <div class="fw-bold text-dark mt-1" style="font-size: 0.92rem;"><?= e($activeService['processing_time'] ?: '24-48 Hrs') ?></div>
                             </div>
                         </div>
-
-                        <div class="col-sm-6 col-lg-3">
-                            <div class="p-3 bg-light rounded-3 border h-100">
-                                <div class="small text-muted text-uppercase fw-semibold" style="font-size: 0.72rem;">Chat Feature</div>
-                                <div class="fs-5 fw-bold text-primary mt-1"><?= !empty($activeService['enable_chat']) ? 'Enabled' : 'Disabled' ?></div>
-                                <div class="small text-muted" style="font-size: 0.72rem;">Retailer-Operator messaging</div>
+                        <div class="col-6 col-sm-3">
+                            <div class="p-2.5 bg-light rounded-3 border text-center h-100">
+                                <div class="text-muted fw-semibold" style="font-size: 0.7rem;">Chat</div>
+                                <div class="fw-bold <?= !empty($activeService['enable_chat']) ? 'text-primary' : 'text-secondary' ?> mt-1" style="font-size: 0.92rem;">
+                                    <?= !empty($activeService['enable_chat']) ? 'ON' : 'OFF' ?>
+                                </div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Edit Service Button -->
-                    <div class="d-flex align-items-center justify-content-end gap-2 pt-2 border-top">
-                        <button type="button" class="btn btn-sm btn-primary rounded-pill px-3 py-1 fw-bold shadow-2xs" onclick='editDataType(<?= json_encode($activeService) ?>)'>
-                            <i class="bi bi-pencil-square me-1"></i> Edit Settings
+                    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 pt-2.5 border-top">
+                        <div class="d-flex gap-1.5 flex-wrap">
+                            <a href="/admin/block-rates" class="btn btn-sm btn-outline-dark rounded-2 px-2.5 py-1 fw-semibold">
+                                <i class="bi bi-currency-rupee"></i> Rates
+                            </a>
+                            <a href="/admin/application-code-forms" class="btn btn-sm btn-outline-secondary rounded-2 px-2.5 py-1 fw-semibold">
+                                <i class="bi bi-ui-checks-grid"></i> Forms
+                            </a>
+                            <button type="button" class="btn btn-sm btn-outline-warning text-dark rounded-2 px-2.5 py-1 fw-semibold" onclick='openNoticeModal(<?= htmlspecialchars(json_encode($activeService), ENT_QUOTES, "UTF-8") ?>)'>
+                                <i class="bi bi-megaphone"></i> Notice
+                            </button>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-primary rounded-2 px-3 py-1 fw-bold" onclick='editDataType(<?= htmlspecialchars(json_encode($activeService), ENT_QUOTES, "UTF-8") ?>)'>
+                            <i class="bi bi-pencil-square me-1"></i>Edit
                         </button>
                     </div>
                 </div>
             </div>
         </div>
-    </div>
-<?php endif; ?>
+    <?php endif; ?>
 
-<!-- Preserved / Archived Services Section (Collapsed Read-Only) -->
-<div class="row">
-    <div class="col-12">
-        <div class="card border rounded-3 shadow-xs mb-4">
-            <div class="card-header bg-light py-2.5 px-3 d-flex align-items-center justify-content-between" style="cursor: pointer;" data-bs-toggle="collapse" data-bs-target="#collapseArchived" aria-expanded="false">
-                <div class="d-flex align-items-center gap-2">
-                    <i class="bi bi-archive text-muted"></i>
-                    <span class="small fw-bold text-dark">Archived Services (<?= count($archivedServices) ?>)</span>
-                    <span class="badge bg-secondary-subtle text-secondary border font-monospace" style="font-size: 0.65rem;">Read Only</span>
-                </div>
-                <i class="bi bi-chevron-down text-muted small"></i>
-            </div>
-            <div class="collapse" id="collapseArchived">
-                <div class="card-body p-0">
-                    <div class="p-3 bg-light-subtle border-bottom">
-                        <div class="small text-muted">Historical applications, wallet ledgers, and audit trail are safely preserved. New applications for these services are disabled.</div>
-                    </div>
-                    <?php if (empty($archivedServices)): ?>
-                        <div class="p-3 text-muted small">No other services in system.</div>
-                    <?php else: ?>
-                        <div class="table-responsive">
-                            <table class="table table-hover align-middle mb-0 text-muted small">
-                                <thead class="table-light">
-                                    <tr>
-                                        <th class="ps-3">Service Code</th>
-                                        <th>Name</th>
-                                        <th>Category</th>
-                                        <th>Historical Apps</th>
-                                        <th>Status</th>
-                                        <th class="text-end pe-3">Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach ($archivedServices as $as): ?>
-                                        <tr class="opacity-75">
-                                            <td class="ps-3 font-monospace"><?= e($as['code']) ?></td>
-                                            <td class="fw-semibold text-dark"><?= e($as['name_en']) ?></td>
-                                            <td><?= e($as['category']) ?></td>
-                                            <td><span class="badge bg-light text-dark border"><?= (int)($as['app_count'] ?? 0) ?> applications</span></td>
-                                            <td><span class="badge bg-secondary text-white">DEACTIVATED</span></td>
-                                            <td class="text-end pe-3">
-                                                <a href="/applications?data_type_id=<?= $as['id'] ?>" class="btn btn-sm btn-outline-secondary py-0 px-2" title="View Historical Applications">
-                                                    <i class="bi bi-eye"></i> View Apps
-                                                </a>
-                                            </td>
-                                        </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
+    <!-- 2. NEW PAN CARD SERVICE -->
+    <?php if (!empty($panService)): ?>
+        <div class="col-lg-6">
+            <div class="card shadow-sm rounded-3 border bg-white h-100">
+                <div class="card-header bg-white py-3 px-3.5 border-bottom d-flex align-items-center justify-content-between">
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="d-inline-flex align-items-center justify-content-center bg-danger-subtle text-danger rounded-2" style="width: 34px; height: 34px;">
+                            <i class="bi bi-person-vcard fs-6"></i>
+                        </span>
+                        <div>
+                            <h2 class="h6 fw-bold mb-0 text-dark"><?= e($panService['name_en']) ?></h2>
+                            <span class="text-muted font-monospace" style="font-size: 0.72rem;">PAN_CARD &bull; <?= (int)($panService['app_count'] ?? 0) ?> Applications</span>
                         </div>
-                    <?php endif; ?>
+                    </div>
+
+                    <form method="POST" action="/admin/data-types/toggle-status" class="m-0 d-flex align-items-center gap-2">
+                        <?= csrf_field() ?>
+                        <input type="hidden" name="id" value="<?= (int)$panService['id'] ?>">
+                        <span class="badge <?= $panService['is_active'] ? 'bg-success' : 'bg-danger' ?> text-white px-2 py-1">
+                            <?= $panService['is_active'] ? 'ON' : 'OFF' ?>
+                        </span>
+                        <div class="form-check form-switch m-0">
+                            <input class="form-check-input" type="checkbox" role="switch" <?= $panService['is_active'] ? 'checked' : '' ?> onchange="this.form.submit()" style="cursor: pointer;">
+                        </div>
+                    </form>
+                </div>
+
+                <div class="card-body p-3.5 d-flex flex-column justify-content-between">
+                    <div class="row g-2.5 mb-3">
+                        <div class="col-6 col-sm-3">
+                            <div class="p-2.5 bg-light rounded-3 border text-center h-100">
+                                <div class="text-muted fw-semibold" style="font-size: 0.7rem;">PAN Fee</div>
+                                <div class="fs-5 fw-bold text-dark mt-0.5">₹<?= number_format((float)$panService['fee_amount'], 0) ?></div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-sm-3">
+                            <div class="p-2.5 bg-light rounded-3 border text-center h-100">
+                                <div class="text-muted fw-semibold" style="font-size: 0.7rem;">Distributor</div>
+                                <div class="fs-5 fw-bold text-success mt-0.5">₹<?= number_format((float)$panService['distributor_commission'], 0) ?></div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-sm-3">
+                            <div class="p-2.5 bg-light rounded-3 border text-center h-100">
+                                <div class="text-muted fw-semibold" style="font-size: 0.7rem;">Time</div>
+                                <div class="fw-bold text-dark mt-1" style="font-size: 0.92rem;"><?= e($panService['processing_time'] ?: '1-2 Days') ?></div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-sm-3">
+                            <div class="p-2.5 bg-light rounded-3 border text-center h-100">
+                                <div class="text-muted fw-semibold" style="font-size: 0.7rem;">Applications</div>
+                                <div class="fs-5 fw-bold text-primary mt-0.5"><?= (int)($panService['app_count'] ?? 0) ?></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 pt-2.5 border-top">
+                        <div class="d-flex gap-1.5 flex-wrap">
+                            <a href="/services/pan-card/list" class="btn btn-sm btn-outline-dark rounded-2 px-2.5 py-1 fw-semibold">
+                                <i class="bi bi-card-list"></i> PAN List
+                            </a>
+                            <button type="button" class="btn btn-sm btn-outline-warning text-dark rounded-2 px-2.5 py-1 fw-semibold" onclick='openNoticeModal(<?= htmlspecialchars(json_encode($panService), ENT_QUOTES, "UTF-8") ?>)'>
+                                <i class="bi bi-megaphone"></i> Notice
+                            </button>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-primary rounded-2 px-3 py-1 fw-bold" onclick='editDataType(<?= htmlspecialchars(json_encode($panService), ENT_QUOTES, "UTF-8") ?>)'>
+                            <i class="bi bi-pencil-square me-1"></i>Edit
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
-    </div>
+    <?php endif; ?>
 </div>
 
 <!-- ============================================================== -->
-<!-- MODAL: EDIT SERVICE DETAILS                                    -->
+<!-- MODAL 1: SIMPLE EDIT SERVICE                                   -->
 <!-- ============================================================== -->
-<div class="modal fade" id="dataTypeModal" tabindex="-1" aria-labelledby="dtModalTitle" aria-hidden="true">
-    <div class="modal-dialog modal-lg">
-        <form method="POST" action="/admin/data-types/save" class="modal-content shadow-lg border-0">
+<div class="modal fade" id="dataTypeModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <form method="POST" action="/admin/data-types/save" class="modal-content shadow border-0 rounded-3">
             <?= csrf_field() ?>
-            <input type="hidden" name="id" id="dt_id" value="<?= $activeService['id'] ?? 4 ?>">
-            <input type="hidden" name="code" value="srv_block_app">
+            <input type="hidden" name="id" id="dt_id" value="0">
+            <input type="hidden" name="code" id="dt_code" value="srv_block_app">
 
-            <div class="modal-header bg-primary text-white">
-                <h5 class="modal-title fw-bold" id="dtModalTitle">Edit Service: Block & District Application Pass</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            <div class="modal-header py-2.5 px-3.5 border-bottom">
+                <h5 class="modal-title h6 fw-bold mb-0" id="dtModalTitle">Edit Service</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
 
-            <div class="modal-body p-4">
+            <div class="modal-body p-3.5">
                 <div class="row g-3">
-                    <div class="col-md-12">
-                        <label class="form-label fw-semibold">Service Name <span class="text-danger">*</span></label>
-                        <input type="text" name="name_en" id="dt_name_en" class="form-control" required placeholder="e.g. Block & District Application Pass Service">
-                        <input type="hidden" name="name_hi" id="dt_name_hi" value="">
+                    <div class="col-12">
+                        <label class="form-label small fw-bold mb-1">Service Name</label>
+                        <input type="text" name="name_en" id="dt_name_en" class="form-control form-control-sm" required>
                     </div>
 
-                    <div class="col-md-4">
-                        <label class="form-label fw-semibold">Category</label>
-                        <input type="text" name="category" id="dt_category" class="form-control" placeholder="e.g. District & Block Services" value="District & Block Services">
-                    </div>
-                    <div class="col-md-4">
-                        <label class="form-label fw-semibold">Processing Time</label>
-                        <input type="text" name="processing_time" id="dt_processing_time" class="form-control" placeholder="e.g. 10-30 MIN" value="10-30 MIN">
-                    </div>
-                    <div class="col-md-4">
-                        <label class="form-label fw-semibold">Badge (Optional)</label>
-                        <input type="text" name="badge" id="dt_badge" class="form-control" placeholder="e.g. POPULAR or INSTANT">
+                    <div class="col-6">
+                        <label class="form-label small fw-bold mb-1">Fee (₹)</label>
+                        <input type="number" step="0.01" name="fee_amount" id="dt_fee" class="form-control form-control-sm fw-bold" required>
                     </div>
 
-                    <div class="col-md-4">
-                        <label class="form-label fw-semibold">Icon (Bootstrap Icon Class)</label>
-                        <input type="text" name="icon" id="dt_icon" class="form-control font-monospace" placeholder="e.g. bi-building" value="bi-building">
-                    </div>
-                    <div class="col-md-4">
-                        <label class="form-label fw-semibold">Base Service Rate (₹) <span class="text-danger">*</span></label>
-                        <div class="input-group">
-                            <span class="input-group-text">₹</span>
-                            <input type="number" step="0.01" name="fee_amount" id="dt_fee" class="form-control fw-bold" required value="50.00">
-                        </div>
-                    </div>
-                    <div class="col-md-4">
-                        <label class="form-label fw-semibold">Distributor Comm. (₹)</label>
-                        <div class="input-group">
-                            <span class="input-group-text">₹</span>
-                            <input type="number" step="0.01" name="distributor_commission" id="dt_comm" class="form-control fw-bold" value="10.00">
-                        </div>
-                    </div>
-
-                    <div class="col-md-8">
-                        <label class="form-label fw-semibold">Duplicate Check Field (Key)</label>
-                        <input type="text" name="duplicate_check_field" id="dt_dup_field" class="form-control font-monospace" value="application_number" readonly>
-                        <div class="form-text small">Unique application number check prevents duplicate pass submissions.</div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="form-check form-switch mt-2">
-                            <input class="form-check-input" type="checkbox" name="is_active" id="dt_active" value="1" checked>
-                            <label class="form-check-label fw-semibold" for="dt_active">Service Is Active & Live</label>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="form-check form-switch mt-2">
-                            <input class="form-check-input" type="checkbox" name="enable_chat" id="dt_enable_chat" value="1" checked>
-                            <label class="form-check-label fw-semibold" for="dt_enable_chat">Enable Retailer-Operator Chat</label>
-                        </div>
+                    <div class="col-6">
+                        <label class="form-label small fw-bold mb-1">Distributor Comm. (₹)</label>
+                        <input type="number" step="0.01" name="distributor_commission" id="dt_comm" class="form-control form-control-sm fw-bold">
                     </div>
 
                     <div class="col-12">
-                        <label class="form-label fw-semibold">Caution / Guide Banner Image URL</label>
-                        <input type="text" name="warning_image" id="dt_warning_image" class="form-control font-monospace" placeholder="e.g. /uploads/notices/guide_banner.jpg">
-                        <div class="form-text small">Image displayed with zoom preview in the caution section on the retailer form.</div>
+                        <label class="form-label small fw-bold mb-1">Processing Time</label>
+                        <input type="text" name="processing_time" id="dt_processing_time" class="form-control form-control-sm" placeholder="e.g. 24-48 Hours">
                     </div>
 
-                    <div class="col-12">
-                        <label class="form-label fw-semibold">Description</label>
-                        <textarea name="description_en" id="dt_desc_en" rows="2" class="form-control" placeholder="Summary of service, eligibility, and instructions..."></textarea>
-                        <input type="hidden" name="description_hi" id="dt_desc_hi" value="">
+                    <div class="col-6">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" name="is_active" id="dt_active" value="1">
+                            <label class="form-check-label small fw-bold" for="dt_active">Service ON</label>
+                        </div>
+                    </div>
+
+                    <div class="col-6">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" name="enable_chat" id="dt_enable_chat" value="1">
+                            <label class="form-check-label small fw-bold" for="dt_enable_chat">Chat ON</label>
+                        </div>
                     </div>
                 </div>
             </div>
-            <div class="modal-footer bg-light">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="submit" class="btn btn-primary fw-bold px-4">
-                    <i class="bi bi-save me-1"></i> Save Service
-                </button>
+
+            <div class="modal-footer py-2 px-3.5 bg-light border-top">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" class="btn btn-sm btn-primary fw-bold px-3">Save</button>
             </div>
         </form>
     </div>
 </div>
 
-<!-- Modal 2: Notice Banner & Announcement -->
-<div class="modal fade" id="noticeModal" tabindex="-1">
-    <div class="modal-dialog">
-        <form method="POST" action="/admin/data-types/notice" enctype="multipart/form-data" class="modal-content shadow-lg border-0">
+<!-- ============================================================== -->
+<!-- MODAL 2: NOTICE & BANNER                                       -->
+<!-- ============================================================== -->
+<div class="modal fade" id="noticeModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <form method="POST" action="/admin/data-types/notice" enctype="multipart/form-data" class="modal-content shadow border-0 rounded-3">
             <?= csrf_field() ?>
-            <input type="hidden" name="id" id="notice_dt_id" value="<?= $activeService['id'] ?? 4 ?>">
-            <div class="modal-header bg-warning-subtle">
-                <h5 class="modal-title fw-bold text-dark">
-                    <i class="bi bi-megaphone-fill text-warning me-2"></i>Notice Banner & Announcement
+            <input type="hidden" name="id" id="notice_dt_id" value="0">
+
+            <div class="modal-header py-2.5 px-3.5 bg-warning-subtle border-bottom">
+                <h5 class="modal-title h6 fw-bold mb-0 text-dark">
+                    <i class="bi bi-megaphone-fill text-warning me-1"></i>Form Notice
                 </h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
-            <div class="modal-body p-4">
+
+            <div class="modal-body p-3.5">
                 <div class="mb-3">
-                    <label class="form-label fw-semibold">Notice Banner (Alert at Top of Service Form)</label>
-                    <textarea name="notice" id="notice_text" class="form-control" rows="3" placeholder="e.g. Please ensure application code and application number are entered accurately."></textarea>
-                    <div class="form-text small">Displays as a prominent warning/info alert when user opens the application form.</div>
+                    <label class="form-label small fw-bold mb-1">Notice Text</label>
+                    <textarea name="notice" id="notice_text" class="form-control form-control-sm" rows="2" placeholder="Important notice shown on form..."></textarea>
                 </div>
 
                 <div class="mb-3">
-                    <label class="form-label fw-semibold">Announcement / Important Guidelines</label>
-                    <textarea name="announcement" id="announcement_text" class="form-control" rows="2" placeholder="e.g. Standard fee applies per application. Exact rate calculated based on District, Block, and Application Code."></textarea>
-                    <div class="form-text small">Additional guidelines displayed inside the application form.</div>
+                    <label class="form-label small fw-bold mb-1">Guidelines (Optional)</label>
+                    <textarea name="announcement" id="announcement_text" class="form-control form-control-sm" rows="2"></textarea>
                 </div>
 
-                <div class="mb-3">
-                    <label class="form-label fw-semibold">Warning Banner Image (Upload or URL)</label>
-                    <input type="file" name="warning_image_file" class="form-control form-control-sm mb-1" accept="image/*">
-                    <input type="text" name="warning_image" id="notice_warning_image" class="form-control form-control-sm font-monospace" placeholder="Or enter image URL e.g. /uploads/notices/banner.jpg">
-                    <div class="form-text small">Optional banner image rendered in the caution alert box.</div>
+                <div class="mb-0">
+                    <label class="form-label small fw-bold mb-1">Guide / Banner Image (Optional)</label>
+                    <input type="file" name="warning_image_file" class="form-control form-control-sm mb-1.5" accept="image/*">
+                    <input type="text" name="warning_image" id="notice_warning_image" class="form-control form-control-sm font-monospace" placeholder="/uploads/notices/banner.jpg">
                 </div>
             </div>
-            <div class="modal-footer bg-light">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                <button type="submit" class="btn btn-warning fw-bold px-4">
-                    <i class="bi bi-check-circle me-1"></i> Update Notice Banner
-                </button>
+
+            <div class="modal-footer py-2 px-3.5 bg-light border-top">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="submit" class="btn btn-sm btn-warning fw-bold px-3">Save Notice</button>
             </div>
         </form>
     </div>
@@ -295,20 +278,14 @@
 <script>
 function editDataType(dt) {
     document.getElementById('dt_id').value = dt.id;
-    document.getElementById('dt_name_en').value = dt.name_en;
-    document.getElementById('dt_name_hi').value = dt.name_hi || '';
-    document.getElementById('dt_category').value = dt.category || 'District & Block Services';
-    document.getElementById('dt_processing_time').value = dt.processing_time || '10-30 MIN';
-    document.getElementById('dt_badge').value = dt.badge || '';
-    document.getElementById('dt_icon').value = dt.icon || 'bi-building';
-    document.getElementById('dt_fee').value = dt.fee_amount;
-    document.getElementById('dt_comm').value = (dt.distributor_commission !== null && dt.distributor_commission !== undefined && dt.distributor_commission !== '') ? dt.distributor_commission : '0.00';
-    document.getElementById('dt_dup_field').value = dt.duplicate_check_field || 'application_number';
-    document.getElementById('dt_active').checked = (dt.is_active == 1);
-    document.getElementById('dt_enable_chat').checked = (dt.enable_chat != 0);
-    document.getElementById('dt_warning_image').value = dt.warning_image || '';
-    document.getElementById('dt_desc_en').value = dt.description_en || '';
-    document.getElementById('dt_desc_hi').value = dt.description_hi || '';
+    document.getElementById('dt_code').value = dt.code || 'srv_block_app';
+    document.getElementById('dtModalTitle').textContent = 'Edit: ' + (dt.name_en || 'Service');
+    document.getElementById('dt_name_en').value = dt.name_en || '';
+    document.getElementById('dt_processing_time').value = dt.processing_time || '24-48 Hours';
+    document.getElementById('dt_fee').value = dt.fee_amount || '0';
+    document.getElementById('dt_comm').value = (dt.distributor_commission !== null && dt.distributor_commission !== undefined && dt.distributor_commission !== '') ? dt.distributor_commission : '0';
+    document.getElementById('dt_active').checked = (parseInt(dt.is_active) === 1);
+    document.getElementById('dt_enable_chat').checked = (parseInt(dt.enable_chat || 0) !== 0);
 
     new bootstrap.Modal(document.getElementById('dataTypeModal')).show();
 }

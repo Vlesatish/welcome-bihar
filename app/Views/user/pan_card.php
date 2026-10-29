@@ -14,7 +14,11 @@ $isAdmin = in_array($currentRole, ['ADMIN', 'SUPER_ADMIN'], true);
 $isOperator = ($currentRole === 'OPERATOR' || $currentRole === 'STAFF' || (\App\Services\AuthService::canAccessOperatorMode((int)($currentUser['id'] ?? 0)) && $activeMode === 'OPERATOR'));
 $isStaffOrAdmin = $isAdmin || $isOperator;
 
-$panFee = 107.00;
+$panDtRow = null;
+try {
+    $panDtRow = \App\Config\Database::getConnection()->query("SELECT fee_amount, notice, announcement, warning_image FROM data_types WHERE code = 'pan_card' LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+} catch (\Throwable $e) {}
+$panFee = ($panDtRow && (float)$panDtRow['fee_amount'] > 0) ? (float)$panDtRow['fee_amount'] : 107.00;
 // Fetch fresh wallet balance directly from DB for accurate display
 $userBal = $currentUser ? (float)\App\Services\WalletService::getBalance((int)$currentUser['id']) : 0.00;
 $hasEnoughBalance = $isAdmin || ($userBal >= $panFee);
