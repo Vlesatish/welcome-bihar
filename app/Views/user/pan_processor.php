@@ -90,3 +90,4 @@ document.addEventListener('keydown', function(e) {
 <script type="module" src="/pan-processor/assets/app.js?v=<?= @filemtime(dirname(__DIR__, 3) . '/public/pan-processor/assets/app.js') ?: time() ?>"></script>
 
 <?php require __DIR__ . '/../layouts/footer.php'; ?>
+
