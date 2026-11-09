@@ -209,11 +209,6 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                     <i class="bi bi-card-checklist text-primary"></i>
                     <span>New Pan Card List</span>
                 </a>
-                <a class="wb-sidebar-link <?= (strpos($currentUri, '/services/pan-processor') === 0 || strpos($currentUri, '/pan-processor') === 0) ? 'active' : '' ?>" href="/services/pan-processor">
-                    <i class="bi bi-file-earmark-pdf-fill text-info"></i>
-                    <span>PAN Form Processor</span>
-                    <span class="badge bg-info text-dark ms-auto" style="font-size: 0.65rem;">Auto</span>
-                </a>
                 <a class="wb-sidebar-link <?= ($currentUri === '/admin/applications' && ($_GET['status'] ?? '') === 'PENDING') ? 'active' : '' ?>" href="/admin/applications?status=PENDING">
                     <i class="bi bi-hourglass-split text-warning"></i>
                     <span>Pending</span>
@@ -259,8 +254,7 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                 <?php
                 $isPanApplyActive = ($currentUri === '/services/pan-card' || $currentUri === '/pan-card' || $currentUri === '/services/pan-card/apply');
                 $isPanListActive = ($currentUri === '/services/pan-card/list' || $currentUri === '/pan-card/list' || $currentUri === '/services/pan-card-list');
-                $isPanProcessorActive = (strpos($currentUri, '/services/pan-processor') === 0 || strpos($currentUri, '/pan-processor') === 0);
-                $isPanParentActive = $isPanApplyActive || $isPanListActive || $isPanProcessorActive;
+                $isPanParentActive = $isPanApplyActive || $isPanListActive;
                 ?>
                 <div class="wb-sidebar-dropdown <?= $isPanParentActive ? 'open' : '' ?>">
                     <a class="wb-sidebar-link wb-sidebar-dropdown-toggle <?= $isPanParentActive ? 'active' : 'collapsed' ?>" 
@@ -284,18 +278,9 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                                 <i class="bi bi-card-checklist"></i>
                                 <span>New Pan Card List</span>
                             </a>
-                            <a class="wb-submenu-link <?= $isPanProcessorActive ? 'active' : '' ?>" href="/services/pan-processor">
-                                <i class="bi bi-file-earmark-pdf-fill text-info"></i>
-                                <span>PAN Form Processor</span>
-                            </a>
                         </div>
                     </div>
                 </div>
-                <a class="wb-sidebar-link <?= $isPanProcessorActive ? 'active' : '' ?>" href="/services/pan-processor">
-                    <i class="bi bi-file-earmark-pdf-fill text-info"></i>
-                    <span>PAN Auto Processor</span>
-                    <span class="badge bg-info text-dark ms-auto" style="font-size: 0.65rem;">Auto</span>
-                </a>
                 <a class="wb-sidebar-link <?= ($currentUri === '/applications' && $currentUri !== '/applications/new') ? 'active' : '' ?>" href="/applications">
                     <i class="bi bi-file-earmark-text"></i>
                     <span>Application List</span>

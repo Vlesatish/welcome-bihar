@@ -873,12 +873,21 @@ class PanCardController
 
     /**
      * PAN Form Auto Processor (Photo, Signature & PDF Merger < 2 MB)
+     * Strictly restricted to Administrators only
      */
     public function processor(): void
     {
         if (!AuthService::check()) {
             $_SESSION['flash_error'] = 'Please log in to access PAN Form Auto Processor.';
             header('Location: /login');
+            exit;
+        }
+
+        $user = AuthService::user();
+        $role = $user['role'] ?? 'USER';
+        if (!in_array($role, ['ADMIN', 'SUPER_ADMIN'], true)) {
+            $_SESSION['flash_error'] = 'Access denied. PAN Form Auto Processor is available only for Administrators.';
+            header('Location: /dashboard');
             exit;
         }
 

@@ -1,4 +1,13 @@
-<?php require __DIR__ . '/../layouts/header.php'; ?>
+<?php
+$currentUser = \App\Services\AuthService::user();
+$currentRole = $currentUser['role'] ?? 'USER';
+if (!in_array($currentRole, ['ADMIN', 'SUPER_ADMIN'], true)) {
+    $_SESSION['flash_error'] = 'Access denied. PAN Form Auto Processor is available only for Administrators.';
+    header('Location: /dashboard');
+    exit;
+}
+require __DIR__ . '/../layouts/header.php';
+?>
 
 <link rel="stylesheet" href="/pan-processor/assets/app.css?v=<?= @filemtime(dirname(__DIR__, 3) . '/public/pan-processor/assets/app.css') ?: time() ?>">
 

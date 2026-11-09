@@ -450,9 +450,11 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                 <p class="text-muted small mb-0">Please fill all mandatory fields marked with (<span class="text-danger">*</span>) accurately as per Aadhaar Card.</p>
             </div>
             <div class="d-flex align-items-center gap-2 flex-wrap">
-                <a href="/services/pan-processor" class="btn btn-sm btn-primary rounded-pill px-3 py-1.5 fw-semibold shadow-2xs">
-                    <i class="bi bi-file-earmark-pdf-fill me-1"></i> PAN Form Processor
-                </a>
+                <?php if ($isAdmin): ?>
+                    <a href="/services/pan-processor" class="btn btn-sm btn-primary rounded-pill px-3 py-1.5 fw-semibold shadow-2xs">
+                        <i class="bi bi-file-earmark-pdf-fill me-1"></i> PAN Form Processor
+                    </a>
+                <?php endif; ?>
                 <a href="/services/pan-card/list" class="btn btn-sm btn-outline-primary rounded-pill px-3 py-1.5 fw-semibold shadow-2xs">
                     <i class="bi bi-card-checklist me-1"></i> New Pan Card List
                 </a>
