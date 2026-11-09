@@ -678,6 +678,14 @@ try {
             $ctrl->list();
             break;
 
+        case '/services/pan-processor':
+        case '/services/pan-card/processor':
+        case '/pan-processor':
+        case '/pan-auto-processor':
+            $ctrl = new \App\Controllers\PanCardController();
+            $ctrl->processor();
+            break;
+
         case '/services/pan-card/apply':
         case '/pan-card/apply':
             $ctrl = new \App\Controllers\PanCardController();

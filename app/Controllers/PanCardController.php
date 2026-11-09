@@ -870,4 +870,18 @@ class PanCardController
 
         return substr($jpegData, 0, 2) . $app0 . substr($jpegData, 2);
     }
+
+    /**
+     * PAN Form Auto Processor (Photo, Signature & PDF Merger < 2 MB)
+     */
+    public function processor(): void
+    {
+        if (!AuthService::check()) {
+            $_SESSION['flash_error'] = 'Please log in to access PAN Form Auto Processor.';
+            header('Location: /login');
+            exit;
+        }
+
+        require dirname(__DIR__) . '/Views/user/pan_processor.php';
+    }
 }

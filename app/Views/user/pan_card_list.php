@@ -444,7 +444,10 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
             <h5 class="mb-0 fw-bold text-dark"><?= $isStaffOrAdmin ? 'PAN Card Application Requests' : 'New Pan Card List' ?></h5>
             <span class="badge bg-primary rounded-pill px-2.5 py-1" style="font-size: 0.78rem;"><?= $totalRequests ?></span>
         </div>
-        <div class="d-flex align-items-center gap-2">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+            <a href="/services/pan-processor" class="btn btn-sm btn-dark rounded-pill px-3 fw-bold shadow-2xs">
+                <i class="bi bi-file-earmark-pdf-fill text-warning me-1"></i> PAN Form Processor
+            </a>
             <?php if (!$isStaffOrAdmin): ?>
                 <a href="/services/pan-card" class="btn btn-sm btn-primary rounded-pill px-3 fw-bold shadow-2xs">
                     <i class="bi bi-plus-circle me-1"></i> New Pan Card Apply
