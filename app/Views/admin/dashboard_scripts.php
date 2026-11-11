@@ -555,6 +555,20 @@ document.addEventListener('DOMContentLoaded', function () {
         statusEl.textContent = req.status;
         statusEl.className = 'badge ' + (req.status === 'APPROVED' ? 'badge-status-approved' : (req.status === 'REJECTED' ? 'badge-status-rejected' : (req.status === 'IN_PROCESS' ? 'badge-status-in-process' : 'badge-status-pending')));
 
+        const spdsBox = document.getElementById('adminDashSmartPdsContainer');
+        if (spdsBox) {
+            if (typeof window.isSmartPdsApp === 'function' && window.isSmartPdsApp(req.applicant_identifier || f.application_number, req.application_code || f.application_code)) {
+                window.renderSmartPdsPanel(spdsBox, req.portal_tracking_json, {
+                    appId: req.id,
+                    rcNo: req.applicant_identifier || f.application_number,
+                    endpoint: '/admin/applications/smartpds-track'
+                });
+            } else {
+                spdsBox.classList.add('d-none');
+                spdsBox.innerHTML = '';
+            }
+        }
+
         const tbody = document.getElementById('detailsModalTableBody');
         tbody.innerHTML = '';
 

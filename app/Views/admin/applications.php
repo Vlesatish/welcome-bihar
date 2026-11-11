@@ -118,8 +118,11 @@
         </div>
 
         <div class="d-flex align-items-center gap-2 flex-wrap">
+            <button type="button" class="btn btn-sm btn-warning text-dark rounded-pill px-3 py-1 fw-bold shadow-sm d-flex align-items-center gap-1.5" data-bs-toggle="modal" data-bs-target="#modalSmartPdsQuickTrack" title="Track Bihar Ration Card (RC2026) directly from br.smartpds.nic.in">
+                <i class="bi bi-card-checklist"></i> <span>Track Ration Card (RC2026)</span>
+            </button>
             <?php if (\App\Services\AuthService::isAdmin()): ?>
-                <button type="button" class="btn btn-sm btn-primary rounded-pill px-3 py-1 fw-bold shadow-sm d-flex align-items-center gap-1.5" id="btnAdminTriggerAutoCheck" onclick="runAdminBatchRtpsCheck(this)" title="Bihar RTPS portal se sabhi pending certificates download aur auto attach karein">
+                <button type="button" class="btn btn-sm btn-primary rounded-pill px-3 py-1 fw-bold shadow-sm d-flex align-items-center gap-1.5" id="btnAdminTriggerAutoCheck" onclick="runAdminBatchRtpsCheck(this)" title="Bihar RTPS / SmartPDS portal se sabhi pending applications check karein">
                     <i class="bi bi-magic"></i> <span>Auto Check &amp; Attach (RTPS)</span>
                 </button>
             <?php endif; ?>
@@ -450,8 +453,19 @@
                                     <!-- 7. Actions -->
                                     <td class="text-end pe-3">
                                         <div class="d-flex gap-1 justify-content-end align-items-center flex-wrap">
+                                            <?php
+                                                $isSmartPdsRow = \App\Services\SmartPdsService::isRationCardApplication(
+                                                    (string)($app['applicant_identifier'] ?? ''),
+                                                    (string)($app['application_code'] ?? '')
+                                                );
+                                            ?>
 
                                             <?php if ($status === 'PENDING'): ?>
+                                                <?php if ($isSmartPdsRow): ?>
+                                                    <button type="button" class="btn btn-xs btn-warning text-dark fw-bold rounded-2 px-2 py-1 shadow-2xs text-nowrap" onclick="checkSmartPdsStatus(<?= $app['id'] ?>, this, '/admin/applications/smartpds-track')" title="SmartPDS br.smartpds.nic.in se Live Ration Card Status Check karein">
+                                                        <i class="bi bi-search me-0.5"></i> RC Status
+                                                    </button>
+                                                <?php endif; ?>
                                                 <button type="button" class="btn btn-xs btn-primary fw-bold rounded-2 px-2 py-1 shadow-2xs" onclick="quickUpdateStatus(<?= $app['id'] ?>, 'IN_PROCESS', this)" title="Start Process">
                                                     <i class="bi bi-lightning-charge-fill me-0.5"></i> Process
                                                 </button>
@@ -463,9 +477,15 @@
                                                 </button>
 
                                             <?php elseif ($status === 'IN_PROCESS' || $status === 'UNDER_REVIEW'): ?>
-                                                <button type="button" class="btn btn-xs btn-primary fw-bold rounded-2 px-2 py-1 shadow-2xs text-nowrap" onclick="autoFetchAndAttachRtps(<?= $app['id'] ?>, this)" title="Bihar RTPS Portal se 1-Click Download & Attach PDF">
-                                                    <i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Attach
-                                                </button>
+                                                <?php if ($isSmartPdsRow): ?>
+                                                    <button type="button" class="btn btn-xs btn-warning text-dark fw-bold rounded-2 px-2 py-1 shadow-2xs text-nowrap" onclick="checkSmartPdsStatus(<?= $app['id'] ?>, this, '/admin/applications/smartpds-track')" title="SmartPDS br.smartpds.nic.in se Live Ration Card Status Check &amp; Sync karein">
+                                                        <i class="bi bi-arrow-repeat me-1"></i> Live RC Status
+                                                    </button>
+                                                <?php else: ?>
+                                                    <button type="button" class="btn btn-xs btn-primary fw-bold rounded-2 px-2 py-1 shadow-2xs text-nowrap" onclick="autoFetchAndAttachRtps(<?= $app['id'] ?>, this)" title="Bihar RTPS Portal se 1-Click Download & Attach PDF">
+                                                        <i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Attach
+                                                    </button>
+                                                <?php endif; ?>
                                                 <button type="button" class="btn btn-xs btn-outline-primary fw-semibold rounded-2 px-1.5 py-1" onclick="openUploadApproveModal(<?= $app['id'] ?>)" title="Upload Certificate Manually">
                                                     <i class="bi bi-cloud-arrow-up"></i>
                                                 </button>
@@ -478,6 +498,11 @@
                                                 </button>
 
                                             <?php elseif ($status === 'APPROVED' || $status === 'COMPLETED'): ?>
+                                                <?php if ($isSmartPdsRow): ?>
+                                                    <button type="button" class="btn btn-xs btn-outline-primary fw-bold rounded-2 px-2 py-1 text-nowrap" onclick="checkSmartPdsStatus(<?= $app['id'] ?>, this, '/admin/applications/smartpds-track')" title="Refresh Live SmartPDS Timeline">
+                                                        <i class="bi bi-arrow-repeat me-0.5"></i> RC Timeline
+                                                    </button>
+                                                <?php endif; ?>
                                                 <?php if (!empty($app['result_file'])): ?>
                                                     <button type="button" class="btn btn-xs btn-outline-success fw-bold rounded-2 px-2 py-1" onclick="openResultLightbox('<?= e($app['result_file']) ?>')" title="View Output File">
                                                         <i class="bi bi-file-earmark-check me-0.5"></i> Result
@@ -488,6 +513,11 @@
                                                 </button>
 
                                             <?php elseif ($status === 'REJECTED'): ?>
+                                                <?php if ($isSmartPdsRow): ?>
+                                                    <button type="button" class="btn btn-xs btn-outline-primary fw-bold rounded-2 px-2 py-1 text-nowrap" onclick="checkSmartPdsStatus(<?= $app['id'] ?>, this, '/admin/applications/smartpds-track')" title="Refresh Live SmartPDS Timeline">
+                                                        <i class="bi bi-arrow-repeat me-0.5"></i> RC Timeline
+                                                    </button>
+                                                <?php endif; ?>
                                                 <button type="button" class="btn btn-xs btn-outline-danger fw-semibold rounded-2 px-2 py-1" onclick="openDetailsModal(<?= $app['id'] ?>)" title="<?= e('Official portal rejection remarks: ' . ($prog['rejection_reason'] ?: 'Rejected')) ?>">
                                                     Reason
                                                 </button>

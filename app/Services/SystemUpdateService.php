@@ -512,7 +512,16 @@ class SystemUpdateService
                 ");
             }
 
-            // Auto-heal existing applications and RTPS queue entries where application_code was empty or service_type was 'OTHER' for RTPS application numbers
+            // Auto-heal applications.portal_tracking_json column for SmartPDS Ration Card tracking
+            if (in_array('applications', $tables, true)) {
+                $appCols = $db->query("SHOW COLUMNS FROM `applications`")->fetchAll(PDO::FETCH_COLUMN);
+                $appCols = array_map('strtolower', $appCols);
+                if (!in_array('portal_tracking_json', $appCols, true)) {
+                    $db->exec("ALTER TABLE `applications` ADD COLUMN `portal_tracking_json` LONGTEXT DEFAULT NULL AFTER `result_file`");
+                }
+            }
+
+            // Auto-heal existing applications and RTPS queue entries where application_code was empty or service_type was 'OTHER' for RTPS / SmartPDS application numbers
             try {
                 $db->exec("
                     UPDATE `applications` 
@@ -523,10 +532,11 @@ class SystemUpdateService
                         WHEN `applicant_identifier` LIKE 'BOBC%' THEN 'BOBC'
                         WHEN `applicant_identifier` LIKE 'NCLCO%' THEN 'NCLCO'
                         WHEN `applicant_identifier` LIKE 'EWS%' THEN 'EWSCO'
+                        WHEN `applicant_identifier` REGEXP '^RC[0-9]{8,}' THEN 'EPDS'
                         ELSE `application_code`
                     END
                     WHERE (`application_code` IS NULL OR `application_code` = '' OR `application_code` = 'OTHER')
-                      AND (`applicant_identifier` LIKE 'BCC%' OR `applicant_identifier` LIKE 'BRC%' OR `applicant_identifier` LIKE 'BIC%' OR `applicant_identifier` LIKE 'BOBC%' OR `applicant_identifier` LIKE 'NCL%' OR `applicant_identifier` LIKE 'EWS%')
+                      AND (`applicant_identifier` LIKE 'BCC%' OR `applicant_identifier` LIKE 'BRC%' OR `applicant_identifier` LIKE 'BIC%' OR `applicant_identifier` LIKE 'BOBC%' OR `applicant_identifier` LIKE 'NCL%' OR `applicant_identifier` LIKE 'EWS%' OR `applicant_identifier` REGEXP '^RC[0-9]{8,}')
                 ");
                 $db->exec("
                     UPDATE `rtps_certificate_queue` 
@@ -542,6 +552,17 @@ class SystemUpdateService
                         END
                     WHERE (`service_type` = 'OTHER' OR `application_code` IS NULL OR `application_code` = '' OR `application_code` = 'OTHER')
                       AND (`application_number` LIKE 'BCC%' OR `application_number` LIKE 'BRC%' OR `application_number` LIKE 'BIC%' OR `application_number` LIKE 'BOBC%' OR `application_number` LIKE 'NCL%' OR `application_number` LIKE 'EWS%')
+                ");
+                $db->exec("
+                    UPDATE `rtps_certificate_queue`
+                    SET `service_type` = 'SMARTPDS',
+                        `portal_url` = 'https://br.smartpds.nic.in/track',
+                        `application_code` = CASE
+                            WHEN (`application_code` IS NULL OR `application_code` = '' OR `application_code` = 'OTHER') THEN 'EPDS'
+                            ELSE `application_code`
+                        END
+                    WHERE `application_number` REGEXP '^RC[0-9]{8,}'
+                      AND `service_type` != 'SMARTPDS'
                 ");
             } catch (Exception $e) {
                 // Ignore if tables not yet populated

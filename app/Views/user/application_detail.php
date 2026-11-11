@@ -28,6 +28,10 @@
 <!-- 4-Step RTPS Tracking Stepper Card -->
 <?= render_status_stepper_bar($app) ?>
 
+<?php if (\App\Services\SmartPdsService::isRationCardApplication((string)($app['applicant_identifier'] ?? ''), (string)($app['application_code'] ?? ''))): ?>
+    <div id="appDetailSmartPdsContainer" class="mb-4"></div>
+<?php endif; ?>
+
 <!-- Completed / Result File Banner for User -->
 <?php if (in_array($app['status'], ['COMPLETED', 'APPROVED'], true) || !empty($app['result_file'])): ?>
     <div class="alert alert-success p-3 mb-4 rounded-3 shadow-sm border-success">
@@ -361,4 +365,19 @@ function handleStatusChange(status) {
 </script>
 
 
+<?php require dirname(__DIR__) . '/layouts/smartpds_status_widget.php'; ?>
+<?php if (\App\Services\SmartPdsService::isRationCardApplication((string)($app['applicant_identifier'] ?? ''), (string)($app['application_code'] ?? ''))): ?>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const el = document.getElementById('appDetailSmartPdsContainer');
+    if (el && typeof window.renderSmartPdsPanel === 'function') {
+        window.renderSmartPdsPanel(el, <?= json_encode($app['portal_tracking_json'] ?? null) ?>, {
+            appId: <?= (int)$app['id'] ?>,
+            rcNo: <?= json_encode((string)($app['applicant_identifier'] ?? '')) ?>,
+            endpoint: '<?= \App\Services\AuthService::isStaffOrAdmin() ? '/admin/applications/smartpds-track' : '/applications/smartpds-track' ?>'
+        });
+    }
+});
+</script>
+<?php endif; ?>
 <?php require dirname(__DIR__) . '/layouts/footer.php'; ?>

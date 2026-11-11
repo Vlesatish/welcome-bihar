@@ -93,6 +93,8 @@ if (!function_exists('get_application_progress')) {
                 str_contains($blob, 'field verification: forwarded') ||
                 str_contains($blob, 'field verification') ||
                 str_contains($blob, 'forwarded') ||
+                str_contains($blob, 'processed by sdo') ||
+                str_contains($blob, 'processed by dfso') ||
                 str_contains($blob, 'digital signature pending') ||
                 str_contains($blob, 'sign baki hai')
             ) {

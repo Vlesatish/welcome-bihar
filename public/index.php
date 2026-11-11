@@ -338,6 +338,11 @@ try {
             $ctrl->pollApplicationStatus();
             break;
 
+        case '/admin/applications/smartpds-track':
+            $ctrl = new \App\Controllers\AdminController();
+            $ctrl->smartPdsTrack();
+            break;
+
         case '/admin/applications/rtps-captcha':
             $ctrl = new \App\Controllers\AdminController();
             $ctrl->getRtpsCaptcha();
@@ -736,6 +741,11 @@ try {
         case '/applications/poll-status':
             $ctrl = new \App\Controllers\ApplicationController();
             $ctrl->pollApplicationStatus();
+            break;
+
+        case '/applications/smartpds-track':
+            $ctrl = new \App\Controllers\ApplicationController();
+            $ctrl->smartPdsTrack();
             break;
 
         case '/applications/rtps-captcha':

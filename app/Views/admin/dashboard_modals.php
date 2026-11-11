@@ -13,6 +13,7 @@
                     <div><strong>Fee Charged:</strong> <span id="detailsModalFee" class="fw-bold text-primary">₹0.00</span></div>
                     <div><strong>Status:</strong> <span id="detailsModalStatus" class="badge">--</span></div>
                 </div>
+                <div id="adminDashSmartPdsContainer" class="mb-3 d-none"></div>
                 <div class="table-responsive border rounded-2">
                     <table class="table table-sm table-striped mb-0 small">
                         <tbody id="detailsModalTableBody"></tbody>

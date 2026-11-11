@@ -255,9 +255,9 @@ public function dashboard(): void
 
         // 7. Fetch Filtered Paginated Applications
         $dataSql = "
-            SELECT a.id, a.app_ref, a.batch_ref, a.applicant_name, a.applicant_mobile, a.applicant_identifier,
+            SELECT a.id, a.app_ref, a.batch_ref, a.application_code, a.applicant_name, a.applicant_mobile, a.applicant_identifier,
                    a.fee_debited, a.commission_credited, a.status, a.admin_remarks, a.remarks,
-                   a.rejection_reason, a.result_file, a.is_refunded, a.is_commission_paid,
+                   a.rejection_reason, a.result_file, a.portal_tracking_json, a.is_refunded, a.is_commission_paid,
                    a.assigned_operator_id, a.claimed_at, a.created_at, a.updated_at,
                    u.id as retailer_id, u.name as retailer_name, u.mobile as retailer_mobile, u.center_name,
                    d.name as district_name,
@@ -2806,8 +2806,13 @@ public function apiGetBlockStaffRouting(): void
                 exit;
             }
 
-            // 2. Prevent duplicate execution if certificate is already attached & verified on disk
-            if ($app['status'] === 'COMPLETED' || $app['status'] === 'APPROVED' || !empty($app['result_file'])) {
+            $isSmartPds = \App\Services\SmartPdsService::isRationCardApplication(
+                (string)($app['applicant_identifier'] ?? ''),
+                (string)($app['application_code'] ?? '')
+            );
+
+            // 2. Prevent duplicate execution if certificate is already attached & verified on disk (unless SmartPDS refresh)
+            if (!$isSmartPds && ($app['status'] === 'COMPLETED' || $app['status'] === 'APPROVED' || !empty($app['result_file']))) {
                 $resFile = $app['result_file'] ?? '';
                 $isVerified = false;
                 if (!empty($resFile)) {
@@ -2834,7 +2839,7 @@ public function apiGetBlockStaffRouting(): void
             $chkQ->execute([$appId]);
             $existingQ = $chkQ->fetch(PDO::FETCH_ASSOC);
 
-            if ($existingQ) {
+            if ($existingQ && !$isSmartPds) {
                 if ($existingQ['status'] === 'ATTACHED') {
                     header('Content-Type: application/json');
                     echo json_encode([
@@ -2937,6 +2942,7 @@ public function apiGetBlockStaffRouting(): void
         // Compatible query across all repository schemas (does not query nonexistent portal_status column)
         $stmt = $db->prepare("
             SELECT a.id, a.user_id, a.distributor_id, a.status, a.result_file, a.remarks, a.admin_remarks,
+                   a.rejection_reason, a.portal_tracking_json, a.applicant_identifier, a.application_code,
                    q.status as queue_status, q.last_status_message, q.certificate_file
             FROM applications a
             LEFT JOIN rtps_certificate_queue q ON a.id = q.application_id
@@ -2985,6 +2991,13 @@ public function apiGetBlockStaffRouting(): void
 
         // Resolve portal status safely without assuming portal_status column exists in DB
         $portalStatus = $row['admin_remarks'] ?: ($row['remarks'] ?: ($row['last_status_message'] ?? ''));
+        $smartPds = null;
+        if (!empty($row['portal_tracking_json'])) {
+            $decoded = json_decode((string)$row['portal_tracking_json'], true);
+            if (is_array($decoded) && !empty($decoded['source'])) {
+                $smartPds = $decoded;
+            }
+        }
 
         echo json_encode([
             'success' => true,
@@ -2994,11 +3007,58 @@ public function apiGetBlockStaffRouting(): void
             'is_checking' => $isChecking,
             'queue_status' => $row['queue_status'] ?? '',
             'portal_status' => $portalStatus,
+            'rejection_reason' => $row['rejection_reason'] ?? '',
             'last_check_status' => $row['last_status_message'] ?? '',
             'result_file' => $isVerifiedFile ? $resultFile : '',
+            'is_smartpds' => \App\Services\SmartPdsService::isRationCardApplication((string)($row['applicant_identifier'] ?? ''), (string)($row['application_code'] ?? '')),
+            'smartpds' => $smartPds,
             'message' => $isCompleted ? 'Certificate attached successfully!' : ($row['last_status_message'] ?: 'Processing in background...')
         ]);
         exit;
+    }
+
+    /**
+     * Live SmartPDS Ration Card Tracker (syncs existing application OR tracks raw RC number)
+     * POST /admin/applications/smartpds-track
+     */
+    public function smartPdsTrack(): void
+    {
+        AuthService::requireStaffOrAdmin();
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+        header('Content-Type: application/json');
+
+        $appId = !empty($_POST['application_id']) ? (int)$_POST['application_id'] : 0;
+        $rcNo = trim((string)($_POST['rc_no'] ?? $_POST['application_number'] ?? ''));
+
+        try {
+            if ($appId > 0) {
+                $user = AuthService::user();
+                $res = \App\Services\SmartPdsService::checkAndSyncApplication($appId, [
+                    'actor_user_id' => (int)($user['id'] ?? 1),
+                    'actor_role' => 'SYSTEM',
+                    'actor_name' => $user['name'] ?? 'Admin',
+                    'force' => true,
+                ]);
+                echo json_encode($res);
+                exit;
+            }
+
+            if ($rcNo === '') {
+                http_response_code(400);
+                echo json_encode(['success' => false, 'message' => 'Application Number (e.g. RC2026...) required.']);
+                exit;
+            }
+
+            $res = \App\Services\SmartPdsService::trackByApplicationNo($rcNo);
+            echo json_encode($res);
+            exit;
+        } catch (\Throwable $e) {
+            http_response_code(500);
+            echo json_encode(['success' => false, 'message' => 'SmartPDS tracking error: ' . $e->getMessage()]);
+            exit;
+        }
     }
 
 

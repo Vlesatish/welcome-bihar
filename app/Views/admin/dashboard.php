@@ -463,3 +463,4 @@
 
 <?php require __DIR__ . '/dashboard_modals.php'; ?>
 <?php require __DIR__ . '/dashboard_scripts.php'; ?>
+<?php require dirname(__DIR__) . '/layouts/smartpds_status_widget.php'; ?>

@@ -103,6 +103,10 @@ class RtpsCertificateService
             return $code;
         }
 
+        if (SmartPdsService::isRationCardApplication($appNum, $code)) {
+            return 'EPDS';
+        }
+
         if (preg_match('/^([A-Z]{3,10})/i', $appNum, $m)) {
             return strtoupper($m[1]);
         }
@@ -111,12 +115,16 @@ class RtpsCertificateService
     }
 
     /**
-     * Resolve the service type for the RTPS Portal form ('RTPS' or 'OTHER')
+     * Resolve the service type for the portal tracker ('RTPS', 'SMARTPDS', or 'OTHER')
      */
     public static function resolveServiceType(string $applicationCode = '', string $applicationNumber = ''): string
     {
         $code = strtoupper(trim($applicationCode));
         $appNum = strtoupper(trim($applicationNumber));
+
+        if (SmartPdsService::isRationCardApplication($appNum, $code)) {
+            return 'SMARTPDS';
+        }
 
         if (empty($code) || $code === 'OTHER' || $code === 'RTPS') {
             if (preg_match('/^([A-Z]{3,10})/i', $appNum, $m)) {
@@ -267,7 +275,7 @@ class RtpsCertificateService
             $applicantName,
             $districtId,
             $blockId,
-            self::PORTAL_URL,
+            ($serviceType === 'SMARTPDS' ? SmartPdsService::PORTAL_URL : self::PORTAL_URL),
             $nextCheckAt
         ]);
 
@@ -1373,6 +1381,11 @@ POWERSHELL;
             }
         }
 
+        // Delegate Bihar SmartPDS Ration Card (RC2026...) applications to SmartPdsService
+        if ($serviceType === 'SMARTPDS' || SmartPdsService::isRationCardApplication($appNum, $detectedCode)) {
+            return SmartPdsService::checkAndSyncApplication($appId, $options);
+        }
+
         // Collect candidate dates and applicant details
         $candidateDates = [];
         if (!empty($app['created_at'])) {
@@ -1824,6 +1837,25 @@ POWERSHELL;
             $processed++;
             $appId = (int)$item['application_id'];
             try {
+                // Route SmartPDS Ration Card (RC2026...) queue items to br.smartpds.nic.in API
+                if (
+                    strtoupper((string)$item['service_type']) === 'SMARTPDS'
+                    || SmartPdsService::isRationCardApplication((string)$item['application_number'], (string)$item['application_code'])
+                ) {
+                    $pdsRes = SmartPdsService::checkAndSyncApplication($appId, ['force' => true]);
+                    if (!empty($pdsRes['success'])) {
+                        if (in_array($pdsRes['status'] ?? '', ['APPROVED', 'REJECTED'], true)) {
+                            $ready++;
+                        } else {
+                            $unavailable++;
+                        }
+                    } else {
+                        self::markPortalError($appId, $pdsRes['message'] ?? 'SmartPDS check error');
+                        $errors++;
+                    }
+                    continue;
+                }
+
                 $candidateDates = [];
                 if (!empty($item['app_created_at'])) {
                     $candidateDates[] = date('d/m/Y', strtotime((string)$item['app_created_at']));

@@ -486,7 +486,7 @@ class ApplicationController
         $sql = "
             SELECT a.id, a.app_ref, a.batch_ref, a.applicant_name, a.applicant_mobile, a.applicant_identifier,
                    a.status, a.fee_debited, a.commission_credited, a.created_at,
-                   a.result_file, a.is_refunded, a.admin_remarks, a.remarks,
+                   a.result_file, a.portal_tracking_json, a.rejection_reason, a.is_refunded, a.admin_remarks, a.remarks,
                    a.district_id, a.block_id, a.application_code, a.assigned_operator_id,
                    u.name as retailer_name, u.name as operator_name,
                    op.name as assigned_operator_name,
@@ -1098,7 +1098,7 @@ public function adminApplications(): void
         $sql = "
             SELECT a.id, a.app_ref, a.batch_ref, a.applicant_name, a.applicant_mobile, a.applicant_identifier,
                    a.fee_debited, a.commission_credited, a.status, a.admin_remarks, a.remarks,
-                   a.rejection_reason, a.result_file, a.is_refunded, a.is_commission_paid,
+                   a.rejection_reason, a.result_file, a.portal_tracking_json, a.is_refunded, a.is_commission_paid,
                    a.district_id, a.block_id, a.application_code, a.assigned_operator_id, a.assigned_at, a.assignment_method,
                    a.created_at, a.updated_at,
                    u.id as retailer_id, u.name as retailer_name, u.mobile as retailer_mobile, u.center_name,
@@ -1348,7 +1348,7 @@ public function apiGetRequests(): void
         $sql = "
             SELECT a.id, a.app_ref, a.user_id, a.applicant_name, a.applicant_mobile, a.applicant_identifier,
                    a.fee_debited, a.commission_credited, a.status, a.admin_remarks, a.remarks,
-                   a.result_file, a.is_refunded, a.is_commission_paid, a.assigned_operator_id,
+                   a.rejection_reason, a.result_file, a.portal_tracking_json, a.application_code, a.is_refunded, a.is_commission_paid, a.assigned_operator_id,
                    a.created_at, a.updated_at,
                    u.name as retailer_name, u.center_name, u.mobile as retailer_mobile,
                    op.name as operator_name,
@@ -2028,7 +2028,7 @@ public function apiGetRequests(): void
         }
 
         $db = Database::getConnection();
-        $stmt = $db->prepare("SELECT id, user_id, status, result_file, applicant_identifier, applicant_name FROM applications WHERE id = ? LIMIT 1");
+        $stmt = $db->prepare("SELECT id, user_id, status, result_file, applicant_identifier, applicant_name, application_code FROM applications WHERE id = ? LIMIT 1");
         $stmt->execute([$appId]);
         $app = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -2048,7 +2048,12 @@ public function apiGetRequests(): void
             exit;
         }
 
-        if (!empty($app['result_file']) && $app['status'] === 'COMPLETED') {
+        $isSmartPds = \App\Services\SmartPdsService::isRationCardApplication(
+            (string)($app['applicant_identifier'] ?? ''),
+            (string)($app['application_code'] ?? '')
+        );
+
+        if (!$isSmartPds && !empty($app['result_file']) && $app['status'] === 'COMPLETED') {
             header('Content-Type: application/json');
             echo json_encode([
                 'success' => true,
@@ -2111,7 +2116,7 @@ public function apiGetRequests(): void
         }
 
         $db = Database::getConnection();
-        $stmt = $db->prepare("SELECT id, user_id, status, result_file, rejection_reason, admin_remarks, remarks FROM applications WHERE id = ? LIMIT 1");
+        $stmt = $db->prepare("SELECT id, user_id, status, result_file, rejection_reason, admin_remarks, remarks, portal_tracking_json, applicant_identifier, application_code FROM applications WHERE id = ? LIMIT 1");
         $stmt->execute([$appId]);
         $app = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -2137,6 +2142,13 @@ public function apiGetRequests(): void
         $qMsg = $q['last_status_message'] ?? '';
         $qChecked = $q['last_checked_at'] ?? null;
         $isRej = ($app['status'] === 'REJECTED' || stripos($qStatus, 'FAILED') !== false || stripos($qMsg, 'reject') !== false);
+        $smartPds = null;
+        if (!empty($app['portal_tracking_json'])) {
+            $decoded = json_decode((string)$app['portal_tracking_json'], true);
+            if (is_array($decoded) && !empty($decoded['source'])) {
+                $smartPds = $decoded;
+            }
+        }
 
         header('Content-Type: application/json');
         echo json_encode([
@@ -2146,11 +2158,70 @@ public function apiGetRequests(): void
             'is_checking' => ($qStatus === 'CHECKING'),
             'last_check_status' => $qMsg,
             'rejection_reason' => $app['rejection_reason'] ?? $qMsg,
-            'portal_status' => $isRej ? 'Rejected' : ($qStatus === 'ATTACHED' ? 'Delivered' : 'Under Process'),
+            'portal_status' => $isRej ? 'Rejected' : (($app['status'] === 'APPROVED' || $app['status'] === 'COMPLETED') ? 'Approved' : ($qStatus === 'ATTACHED' ? 'Delivered' : 'Under Process')),
             'checked_at' => $qChecked,
             'has_file' => !empty($app['result_file']),
-            'result_file' => $app['result_file']
+            'result_file' => $app['result_file'],
+            'is_smartpds' => \App\Services\SmartPdsService::isRationCardApplication((string)($app['applicant_identifier'] ?? ''), (string)($app['application_code'] ?? '')),
+            'smartpds' => $smartPds
         ]);
+        exit;
+    }
+
+    /**
+     * Retailer/User/Operator: Live SmartPDS Ration Card Track & Sync
+     * POST /applications/smartpds-track
+     */
+    public function smartPdsTrack(): void
+    {
+        if (!AuthService::check()) {
+            http_response_code(401);
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'message' => 'Please log in to track Ration Card status.']);
+            exit;
+        }
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+        header('Content-Type: application/json');
+
+        $appId = !empty($_POST['application_id']) ? (int)$_POST['application_id'] : 0;
+        if ($appId <= 0) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'Valid Application ID is required.']);
+            exit;
+        }
+
+        $db = Database::getConnection();
+        $stmt = $db->prepare("SELECT id, user_id FROM applications WHERE id = ? LIMIT 1");
+        $stmt->execute([$appId]);
+        $app = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$app) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'message' => 'Application not found.']);
+            exit;
+        }
+
+        $currentUserId = (int)AuthService::id();
+        if ((int)$app['user_id'] !== $currentUserId && !AuthService::isStaffOrAdmin()) {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'message' => 'Access denied.']);
+            exit;
+        }
+
+        try {
+            $res = \App\Services\SmartPdsService::checkAndSyncApplication($appId, [
+                'actor_user_id' => $currentUserId,
+                'actor_role' => 'SYSTEM',
+                'actor_name' => AuthService::user()['name'] ?? 'User',
+                'force' => true,
+            ]);
+            echo json_encode($res);
+        } catch (\Throwable $e) {
+            http_response_code(500);
+            echo json_encode(['success' => false, 'message' => 'Tracking error: ' . $e->getMessage()]);
+        }
         exit;
     }
 }

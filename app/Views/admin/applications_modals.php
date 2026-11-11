@@ -158,6 +158,9 @@ async function openReassignModal(appId, districtId, blockId, appRef, currentOpId
                     </div>
                 </div>
 
+                <!-- Live SmartPDS Ration Card Status & Timeline -->
+                <div id="detailSmartPdsContainer" class="mb-3 d-none"></div>
+
                 <!-- Attached Citizen Documents & Extra Fields -->
                 <div class="mb-3">
                     <h6 class="small fw-bold text-dark text-uppercase border-bottom pb-1 mb-2">
@@ -673,6 +676,12 @@ document.addEventListener('DOMContentLoaded', function () {
                     showToast('danger', 'Application Rejected: ' + (data.rejection_reason || data.message || ''));
                 }
                 setTimeout(() => window.location.reload(), 1200);
+            } else if (data.is_smartpds && data.success) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Fetch & Attach';
+                const spStatus = (data.smartpds && data.smartpds.application_status) ? data.smartpds.application_status : data.status;
+                setModalAlertContent(alertBox, data.status === 'APPROVED' ? 'success' : 'info', 'bi bi-card-checklist', 'SmartPDS Status: ' + spStatus + ' — ' + (data.message || ''));
+                setTimeout(() => window.location.reload(), 1500);
             } else if (data.success) {
                 btn.disabled = false;
                 btn.innerHTML = '<i class="bi bi-cloud-arrow-down-fill me-1"></i> Auto Fetch & Attach';
@@ -819,6 +828,25 @@ document.addEventListener('DOMContentLoaded', function () {
                     showToast('danger', 'Application Rejected: ' + (data.rejection_reason || data.message || ''));
                 }
                 setTimeout(() => window.location.reload(), 1200);
+            } else if (data.is_smartpds && data.success) {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
+                }
+                const spStatus = (data.smartpds && data.smartpds.application_status) ? data.smartpds.application_status : data.status;
+                if (typeof Swal !== 'undefined') {
+                    Swal.fire({
+                        icon: data.status === 'APPROVED' ? 'success' : 'info',
+                        title: 'SmartPDS Status: ' + spStatus,
+                        text: data.message || 'Status synced from br.smartpds.nic.in.',
+                        confirmButtonColor: '#2563eb'
+                    }).then(() => window.location.reload());
+                } else {
+                    if (typeof showToast === 'function') {
+                        showToast(data.status === 'APPROVED' ? 'success' : 'info', 'SmartPDS: ' + spStatus);
+                    }
+                    setTimeout(() => window.location.reload(), 1200);
+                }
             } else if (data.success) {
                 if (typeof Swal !== 'undefined') {
                     Swal.fire({
@@ -992,6 +1020,21 @@ document.addEventListener('DOMContentLoaded', function () {
                     <i class="bi bi-x-circle me-1"></i> Reject
                 </button>
             `;
+        }
+
+        // Live SmartPDS Ration Card Panel (if RC2026... application)
+        const spdsBox = document.getElementById('detailSmartPdsContainer');
+        if (spdsBox) {
+            if (typeof window.isSmartPdsApp === 'function' && window.isSmartPdsApp(app.applicant_identifier, app.application_code)) {
+                window.renderSmartPdsPanel(spdsBox, app.portal_tracking_json, {
+                    appId: app.id,
+                    rcNo: app.applicant_identifier,
+                    endpoint: '/admin/applications/smartpds-track'
+                });
+            } else {
+                spdsBox.classList.add('d-none');
+                spdsBox.innerHTML = '';
+            }
         }
 
         // Dynamic Submitted Fields
@@ -1248,4 +1291,8 @@ document.addEventListener('DOMContentLoaded', function () {
 });
 </script>
 
+<?php
+$includeSmartPdsQuickModal = true;
+require dirname(__DIR__) . '/layouts/smartpds_status_widget.php';
+?>
 <?php require dirname(__DIR__) . '/layouts/footer.php'; ?>

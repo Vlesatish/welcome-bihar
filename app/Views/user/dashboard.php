@@ -396,7 +396,20 @@ window.filterByStatus = function (st) {
                             <!-- 7. Action -->
                             <td class="text-end pe-3">
                                 <div class="d-inline-flex align-items-center justify-content-end gap-1.5 flex-nowrap">
-                                    <?php if (!empty($app['result_file'])): ?>
+                                    <?php
+                                        $isSmartPdsDashRow = \App\Services\SmartPdsService::isRationCardApplication(
+                                            (string)($app['applicant_identifier'] ?? ''),
+                                            (string)($app['application_code'] ?? '')
+                                        );
+                                    ?>
+                                    <?php if ($isSmartPdsDashRow): ?>
+                                        <button type="button"
+                                                class="btn btn-xs btn-warning text-dark fw-bold rounded-2 px-2 shadow-2xs text-nowrap"
+                                                onclick="checkSmartPdsStatus(<?= $app['id'] ?>, this, '/applications/smartpds-track')"
+                                                title="SmartPDS br.smartpds.nic.in se Live Ration Card Status Check karein">
+                                            <i class="bi bi-search me-1"></i>RC Status
+                                        </button>
+                                    <?php elseif (!empty($app['result_file'])): ?>
                                         <a href="<?= e($app['result_file']) ?>" target="_blank" download
                                            class="btn btn-xs btn-success fw-bold rounded-2 px-2 shadow-2xs text-nowrap"
                                            title="Download RTPS Certificate">
@@ -486,6 +499,7 @@ window.filterByStatus = function (st) {
                 </div>
                 <!-- 4-Step Stepper Progress Bar -->
                 <div id="modalDetailsStepperContainer" class="mb-3"></div>
+                <div id="modalDetailsSmartPdsContainer" class="mb-3 d-none"></div>
                 <div class="table-responsive border rounded-3">
                     <table class="table table-sm table-striped mb-0 small">
                         <tbody id="modalDetailsTableBody"></tbody>
@@ -697,6 +711,21 @@ document.addEventListener('DOMContentLoaded', function () {
             if (dotsEl) dotsEl.innerHTML = stepper.dotsHtml;
             const contEl = document.getElementById('modalDetailsStepperContainer');
             if (contEl) contEl.innerHTML = stepper.cardHtml;
+        }
+
+        // Render SmartPDS Live Ration Card Panel inside modal if RC2026... app
+        const spdsBox = document.getElementById('modalDetailsSmartPdsContainer');
+        if (spdsBox) {
+            if (typeof window.isSmartPdsApp === 'function' && window.isSmartPdsApp(app.applicant_identifier, app.application_code || f.application_code)) {
+                window.renderSmartPdsPanel(spdsBox, app.portal_tracking_json, {
+                    appId: app.id,
+                    rcNo: app.applicant_identifier,
+                    endpoint: '/applications/smartpds-track'
+                });
+            } else {
+                spdsBox.classList.add('d-none');
+                spdsBox.innerHTML = '';
+            }
         }
 
         const tbody = document.getElementById('modalDetailsTableBody');
@@ -942,4 +971,5 @@ document.addEventListener('DOMContentLoaded', function () {
 </script>
 
 
+<?php require dirname(__DIR__) . '/layouts/smartpds_status_widget.php'; ?>
 <?php require dirname(__DIR__) . '/layouts/footer.php'; ?>

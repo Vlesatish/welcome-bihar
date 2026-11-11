@@ -126,7 +126,7 @@ class UserController
         $sql = "
             SELECT a.id, a.app_ref, a.batch_ref, a.applicant_name, a.applicant_mobile, a.applicant_identifier,
                    a.status, a.fee_debited, a.commission_credited, a.created_at,
-                   a.result_file, a.is_refunded, a.admin_remarks, a.remarks,
+                   a.result_file, a.portal_tracking_json, a.rejection_reason, a.is_refunded, a.admin_remarks, a.remarks,
                    a.district_id, a.block_id, a.application_code, a.assigned_operator_id,
                    dt.name_en as dt_name_en, dt.name_hi as dt_name_hi, dt.enable_chat,
                    d.name as district_name, d.name_hi as district_name_hi,
