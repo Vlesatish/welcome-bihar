@@ -3023,7 +3023,12 @@ public function apiGetBlockStaffRouting(): void
      */
     public function smartPdsTrack(): void
     {
-        AuthService::requireStaffOrAdmin();
+        if (!AuthService::isStaffOrAdmin()) {
+            http_response_code(403);
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'message' => 'Unauthorized: Staff or Admin privilege required.']);
+            exit;
+        }
         if (session_status() === PHP_SESSION_ACTIVE) {
             session_write_close();
         }
