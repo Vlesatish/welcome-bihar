@@ -339,6 +339,9 @@ class ApplicationService
             // Auto-enqueue application into RTPS Certificate Queue if eligible
             try {
                 \App\Services\RtpsCertificateService::enqueueApplication($appId);
+                if (\App\Services\SmartPdsService::isRationCardApplication((string)$applicantIdentifier, (string)$submittedAppCode)) {
+                    \App\Services\SmartPdsService::checkAndSyncApplication($appId, ['force' => true]);
+                }
             } catch (\Throwable $re) {
                 error_log("Failed to enqueue RTPS: " . $re->getMessage());
             }
@@ -848,7 +851,13 @@ class ApplicationService
             // Auto-enqueue batch applications into RTPS Certificate Queue if eligible
             foreach ($createdApplications as $cApp) {
                 try {
-                    \App\Services\RtpsCertificateService::enqueueApplication((int)$cApp['id']);
+                    $cId = (int)$cApp['id'];
+                    \App\Services\RtpsCertificateService::enqueueApplication($cId);
+                    $cAppNum = (string)($cApp['formData']['application_number'] ?? '');
+                    $cAppCode = (string)($cApp['formData']['application_code'] ?? '');
+                    if (\App\Services\SmartPdsService::isRationCardApplication($cAppNum, $cAppCode)) {
+                        \App\Services\SmartPdsService::checkAndSyncApplication($cId, ['force' => true]);
+                    }
                 } catch (\Throwable $re) {
                     // Ignore individual queue error
                 }

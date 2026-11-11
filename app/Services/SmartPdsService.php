@@ -58,7 +58,7 @@ class SmartPdsService
             return true;
         }
 
-        if (in_array($code, ['EPDS', 'RATION', 'RATION_CARD', 'RC', 'SMARTPDS'], true) && str_starts_with($num, 'RC')) {
+        if (in_array($code, ['EPDS', 'RATION', 'RATION_CARD', 'RATIONCARD', 'RATIONCARDCOREETION', 'RATIONCARDCORRECTION', 'RC', 'SMARTPDS'], true) && str_starts_with($num, 'RC')) {
             return true;
         }
 
@@ -598,3 +598,4 @@ class SmartPdsService
         ];
     }
 }
+

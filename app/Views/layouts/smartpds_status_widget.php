@@ -84,7 +84,7 @@ if (!defined('SMARTPDS_WIDGET_LOADED')) :
         const num = String(appNum || '').trim().toUpperCase();
         const code = String(appCode || '').trim().toUpperCase();
         if (/^RC\d{6,}/i.test(num)) return true;
-        if (['EPDS', 'RATION', 'RATION_CARD', 'RC', 'SMARTPDS'].includes(code) && num.startsWith('RC')) return true;
+        if (['EPDS', 'RATION', 'RATION_CARD', 'RATIONCARD', 'RATIONCARDCOREETION', 'RATIONCARDCORRECTION', 'RC', 'SMARTPDS'].includes(code) && num.startsWith('RC')) return true;
         return false;
     };
 
@@ -398,3 +398,4 @@ if (!defined('SMARTPDS_WIDGET_LOADED')) :
 </div>
 <?php endif; ?>
 <?php endif; ?>
+

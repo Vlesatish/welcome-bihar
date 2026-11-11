@@ -1809,6 +1809,21 @@ POWERSHELL;
     {
         $db = Database::getConnection();
 
+        // Auto-enqueue any unqueued SmartPDS (RC2026...) applications so existing records sync automatically
+        try {
+            $missingRcIds = $db->query("
+                SELECT a.id FROM applications a
+                LEFT JOIN rtps_certificate_queue q ON q.application_id = a.id
+                WHERE q.id IS NULL
+                  AND a.status IN ('IN_PROCESS', 'PENDING', 'UNDER_REVIEW')
+                  AND a.applicant_identifier REGEXP '^RC[0-9]{8,}'
+                LIMIT 25
+            ")->fetchAll(PDO::FETCH_COLUMN);
+            foreach ($missingRcIds as $mId) {
+                self::enqueueApplication((int)$mId);
+            }
+        } catch (\Throwable $e) {}
+
         $sql = "
             SELECT q.*, a.status as app_status, a.app_ref, a.result_file, a.created_at as app_created_at,
                    d.name as district_name, b.name as block_name
