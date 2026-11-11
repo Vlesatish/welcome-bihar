@@ -2994,7 +2994,7 @@ public function apiGetBlockStaffRouting(): void
         $smartPds = null;
         if (!empty($row['portal_tracking_json'])) {
             $decoded = json_decode((string)$row['portal_tracking_json'], true);
-            if (is_array($decoded) && !empty($decoded['source'])) {
+            if (is_array($decoded) && (!empty($decoded['portal']) || !empty($decoded['application_number']) || !empty($decoded['source']))) {
                 $smartPds = $decoded;
             }
         }

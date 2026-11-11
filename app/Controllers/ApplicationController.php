@@ -2145,7 +2145,7 @@ public function apiGetRequests(): void
         $smartPds = null;
         if (!empty($app['portal_tracking_json'])) {
             $decoded = json_decode((string)$app['portal_tracking_json'], true);
-            if (is_array($decoded) && !empty($decoded['source'])) {
+            if (is_array($decoded) && (!empty($decoded['portal']) || !empty($decoded['application_number']) || !empty($decoded['source']))) {
                 $smartPds = $decoded;
             }
         }

@@ -104,7 +104,7 @@ if (!defined('SMARTPDS_WIDGET_LOADED')) :
         opts = opts || {};
         const data = window.parseSmartPdsJson(rawData);
         const appId = opts.appId ? Number(opts.appId) : 0;
-        const rcNo = opts.rcNo || (data && data.rc_id) || '';
+        const rcNo = opts.rcNo || (data && (data.application_number || data.rc_id)) || '';
         const endpoint = opts.endpoint || '/applications/smartpds-track';
 
         if (!data) {
@@ -153,16 +153,20 @@ if (!defined('SMARTPDS_WIDGET_LOADED')) :
         let timelineHtml = '<div class="text-muted small py-2">Timeline abhi SmartPDS portal par available nahi hai.</div>';
         if (timeline.length > 0) {
             timelineHtml = `<div class="spds-timeline-wrap">` + timeline.map(step => {
-                const stText = String(step.status || '').toUpperCase();
-                const isDone = (stText === 'COMPLETED' || stText === 'APPROVED');
-                const stepTitle = String(step.step_name || '');
+                const stepTitle = String(step.status || step.step_name || 'Step');
+                const stepState = String(step.state || 'Completed');
+                const stUpper = stepState.toUpperCase();
+                const isDone = (stUpper === 'COMPLETED' || stUpper === 'APPROVED');
                 const isRejStep = stepTitle.toLowerCase().includes('reject');
                 const pillClass = isRejStep
                     ? 'bg-danger-subtle text-danger border-danger-subtle'
                     : (isDone ? 'bg-success-subtle text-success border-success-subtle' : 'bg-warning-subtle text-warning-emphasis border-warning-subtle');
-                const pillText = isRejStep ? 'Rejected' : (step.status || 'Completed');
+                const pillText = isRejStep ? 'Rejected' : stepState;
                 const nodeClass = isRejStep ? 'spds-step-node-rej' : (isDone ? 'spds-step-node-done' : 'spds-step-node-wait');
                 const nodeIcon = isRejStep ? '<i class="bi bi-x"></i>' : (isDone ? '<i class="bi bi-check-lg"></i>' : '<i class="bi bi-clock"></i>');
+                const officeVal = step.office || step.office_name || '';
+                const codeVal = step.code || step.office_code || '';
+                const byVal = step.by || step.by_user || '';
 
                 return `
                     <div class="spds-step-card">
@@ -170,15 +174,18 @@ if (!defined('SMARTPDS_WIDGET_LOADED')) :
                             <span class="spds-step-node ${nodeClass}">${nodeIcon}</span>
                             <span class="badge border ${pillClass}" style="font-size: 0.68rem;">${spdsEsc(pillText)}</span>
                         </div>
-                        <div class="fw-bold text-dark" style="font-size: 0.85rem;">${spdsEsc(step.step_name || 'Step')}</div>
+                        <div class="fw-bold text-dark" style="font-size: 0.85rem;">${spdsEsc(stepTitle)}</div>
                         <div class="text-muted mb-1" style="font-size: 0.72rem;">${spdsEsc(step.date || '')}</div>
-                        ${step.office_name ? `<div style="font-size: 0.73rem;"><span class="text-muted">Office:</span> <span class="text-dark fw-medium">${spdsEsc(step.office_name)}</span></div>` : ''}
-                        ${step.office_code ? `<div style="font-size: 0.73rem;"><span class="text-muted">Code:</span> <span class="text-dark fw-medium">${spdsEsc(step.office_code)}</span></div>` : ''}
-                        ${step.by_user ? `<div style="font-size: 0.73rem;"><span class="text-muted">By:</span> <span class="text-dark fw-semibold">${spdsEsc(step.by_user)}</span></div>` : ''}
+                        ${officeVal ? `<div style="font-size: 0.73rem;"><span class="text-muted">Office:</span> <span class="text-dark fw-medium">${spdsEsc(officeVal)}</span></div>` : ''}
+                        ${codeVal ? `<div style="font-size: 0.73rem;"><span class="text-muted">Code:</span> <span class="text-dark fw-medium">${spdsEsc(codeVal)}</span></div>` : ''}
+                        ${byVal ? `<div style="font-size: 0.73rem;"><span class="text-muted">By:</span> <span class="text-dark fw-semibold">${spdsEsc(byVal)}</span></div>` : ''}
                     </div>
                 `;
             }).join('') + `</div>`;
         }
+
+        const noteText = data.rejection_reason || data.note || (data.application_date && data.application_date !== 'NA' ? ('Application Submitted on ' + data.application_date) : '');
+        const appNumDisplay = data.application_number || data.rc_id || rcNo || '--';
 
         container.classList.remove('d-none');
         container.innerHTML = `
@@ -202,12 +209,12 @@ if (!defined('SMARTPDS_WIDGET_LOADED')) :
                 </div>
 
                 <div class="p-3">
-                    ${data.note ? `<div class="alert ${norm === 'REJECTED' ? 'alert-danger' : 'alert-light border'} py-1.5 px-2.5 small mb-3"><strong>Note:</strong> ${spdsEsc(data.note)}</div>` : ''}
+                    ${noteText ? `<div class="alert ${norm === 'REJECTED' ? 'alert-danger' : 'alert-light border'} py-1.5 px-2.5 small mb-3"><strong>Note:</strong> ${spdsEsc(noteText)}</div>` : ''}
 
                     <div class="row g-3 pb-3 border-bottom">
                         <div class="col-6 col-md-4">
                             <div class="spds-meta-label">Application Number</div>
-                            <div class="spds-meta-val font-monospace">${spdsEsc(data.rc_id || '--')}</div>
+                            <div class="spds-meta-val font-monospace">${spdsEsc(appNumDisplay)}</div>
                         </div>
                         <div class="col-6 col-md-4">
                             <div class="spds-meta-label">Acknowledgement Number</div>
@@ -337,10 +344,11 @@ if (!defined('SMARTPDS_WIDGET_LOADED')) :
             const res = await fetch('/admin/applications/smartpds-track', { method: 'POST', body: fd });
             const data = await res.json();
 
-            if (!data.success || !data.data) {
+            const pdsObj = data.smartpds || data.data;
+            if (!data.success || !pdsObj) {
                 out.innerHTML = `<div class="alert alert-danger small py-2 mb-0"><i class="bi bi-exclamation-triangle me-1"></i>${spdsEsc(data.message || 'Application not found on SmartPDS.')}</div>`;
             } else {
-                window.renderSmartPdsPanel(out, data.data, { appId: 0 });
+                window.renderSmartPdsPanel(out, pdsObj, { appId: 0 });
             }
         } catch (e) {
             out.innerHTML = `<div class="alert alert-danger small py-2 mb-0">Error: ${spdsEsc(e.message)}</div>`;
