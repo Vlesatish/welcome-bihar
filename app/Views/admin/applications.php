@@ -225,7 +225,7 @@
                 <div class="filter-col filter-col-code">
                     <label for="filter_app_code" class="filter-label">App Code</label>
                     <select name="app_code" id="filter_app_code" class="form-select form-select-sm filter-select filter-ctrl w-100">
-                        <option value="">All Codes</option>
+                        <option value=""><?= $isOperator ? 'All Assigned Services' : 'All Codes' ?></option>
                         <?php foreach ($appCodes as $cVal => $cLabel): ?>
                             <option value="<?= e($cVal) ?>" <?= $appCode === $cVal ? 'selected' : '' ?>><?= e($cVal) ?></option>
                         <?php endforeach; ?>

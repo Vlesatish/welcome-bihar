@@ -600,6 +600,22 @@
                         </div>
                     </div>
 
+                    <div class="mb-3">
+                        <label class="form-label fw-bold small d-flex justify-content-between align-items-center">
+                            <span>Assigned Services / Application Codes</span>
+                            <span class="badge bg-primary-subtle text-primary small">Select at least one</span>
+                        </label>
+                        <div class="p-2.5 bg-light border rounded-3 d-flex flex-wrap gap-2" style="max-height: 160px; overflow-y: auto;">
+                            <?php foreach ($allApplicationCodes as $ac): ?>
+                                <label class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1.5 py-1 px-2.5" style="font-size: 0.8rem;">
+                                    <input type="checkbox" name="codes[]" value="<?= e($ac) ?>" class="form-check-input mt-0" checked>
+                                    <span><?= e($ac) ?></span>
+                                </label>
+                            <?php endforeach; ?>
+                        </div>
+                        <div class="form-text small text-muted">The operator will only see and process applications for the selected services.</div>
+                    </div>
+
                     <div class="mb-2">
                         <label class="form-label fw-bold small">Account Status</label>
                         <select name="status" class="form-select">

@@ -33,6 +33,16 @@
 
 <?php require __DIR__ . '/dashboard_styles.php'; ?>
 
+<?php if (!empty($unassignedOperator)): ?>
+    <div class="alert alert-warning border border-warning shadow-xs rounded-3 p-3 mb-3 d-flex align-items-center gap-3">
+        <i class="bi bi-exclamation-triangle-fill fs-3 text-warning"></i>
+        <div>
+            <h6 class="fw-bold mb-0 text-dark">Staff Assignment Required</h6>
+            <div class="small text-secondary">Your operator account has not been assigned to an active District/Block or Service Code yet. Please contact the Super Admin to configure your assignments.</div>
+        </div>
+    </div>
+<?php endif; ?>
+
 
 <!-- 2. Modern Executive Clickable Status Cards (Click filters the table) -->
 <div class="row g-3 mb-3" id="statusCardsRow">
@@ -199,7 +209,7 @@
                 <div class="filter-col filter-col-code">
                     <label for="filterCode" class="filter-label">App Code</label>
                     <select name="app_code" id="filterCode" class="form-select form-select-sm filter-select filter-ctrl w-100">
-                        <option value="">All Codes</option>
+                        <option value=""><?= !empty($isOperator) ? 'All Assigned Services' : 'All Codes' ?></option>
                         <?php foreach ($codeOptions as $cCode): ?>
                             <option value="<?= e($cCode) ?>" <?= $appCode === $cCode ? 'selected' : '' ?>><?= e($cCode) ?></option>
                         <?php endforeach; ?>

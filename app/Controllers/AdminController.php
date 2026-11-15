@@ -107,46 +107,93 @@ public function dashboard(): void
     {
         $db = Database::getConnection();
 
-        // 1. Metric Counters for Top Cards (Global dataset totals)
-        $reqStats = $db->query("
-            SELECT
-                COUNT(*) as total,
-                SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) as pending,
-                SUM(CASE WHEN status = 'IN_PROCESS' OR status = 'UNDER_REVIEW' THEN 1 ELSE 0 END) as in_process,
-                SUM(CASE WHEN status = 'COMPLETED' OR status = 'APPROVED' THEN 1 ELSE 0 END) as completed,
-                SUM(CASE WHEN status = 'REJECTED' THEN 1 ELSE 0 END) as rejected,
-                COALESCE(SUM(fee_debited), 0) as total_fees,
-                COALESCE(SUM(commission_credited), 0) as total_commissions
-            FROM applications
-        ")->fetch(PDO::FETCH_ASSOC);
-        $reqStats['approved'] = (int)($reqStats['completed'] ?? 0);
+        $role = AuthService::role();
+        $userId = (int)AuthService::id();
+        $activeMode = AuthService::activePortalMode();
+        $isOperator = ($role === 'OPERATOR' || ($activeMode === 'OPERATOR' && AuthService::canAccessOperatorMode($userId)));
 
-        // 2. Load Active Districts from DB
-        $districts = $db->query("SELECT id, name FROM districts WHERE is_active = 1 ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+        // If operator, auto-sync legacy users table district/block to operator_block_assignments
+        if ($isOperator) {
+            try {
+                $db->exec("
+                    INSERT IGNORE INTO operator_block_assignments (operator_user_id, district_id, block_id, is_active, assigned_by, created_at, updated_at)
+                    SELECT id, assigned_district_id, assigned_block_id, 1, 1, NOW(), NOW()
+                    FROM users
+                    WHERE id = {$userId}
+                      AND assigned_district_id IS NOT NULL AND assigned_district_id > 0
+                      AND assigned_block_id IS NOT NULL AND assigned_block_id > 0
+                ");
+                // Background unassigned routing for this operator's block
+                \App\Services\StaffRoutingService::routeUnassignedApplications(null, null, $userId);
+            } catch (\Throwable $e) {}
+        }
 
-        // 3. Load Configured Application Codes from DB (data_type_fields + service_rate_rules)
+        $assignedBlocks = $isOperator ? AuthService::getOperatorAssignedBlocks($userId) : [];
+        $assignedCodes = $isOperator ? AuthService::getOperatorAssignedCodes($userId) : [];
+        $unassignedOperator = ($isOperator && (empty($assignedBlocks) || empty($assignedCodes)));
+
+        // 1. Metric Counters for Top Cards
+        if ($isOperator) {
+            if ($unassignedOperator) {
+                $reqStats = [
+                    'ALL' => 0, 'PENDING' => 0, 'IN_PROCESS' => 0, 'APPROVED' => 0, 'REJECTED' => 0,
+                    'total' => 0, 'pending' => 0, 'in_process' => 0, 'completed' => 0, 'approved' => 0, 'rejected' => 0,
+                    'total_fees' => 0.0, 'total_commissions' => 0.0
+                ];
+            } else {
+                $reqStats = OperatorAuthorizationService::getStatusCounts($userId);
+            }
+        } else {
+            $reqStats = $db->query("
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) as pending,
+                    SUM(CASE WHEN status = 'IN_PROCESS' OR status = 'UNDER_REVIEW' THEN 1 ELSE 0 END) as in_process,
+                    SUM(CASE WHEN status = 'COMPLETED' OR status = 'APPROVED' THEN 1 ELSE 0 END) as completed,
+                    SUM(CASE WHEN status = 'REJECTED' THEN 1 ELSE 0 END) as rejected,
+                    COALESCE(SUM(fee_debited), 0) as total_fees,
+                    COALESCE(SUM(commission_credited), 0) as total_commissions
+                FROM applications
+            ")->fetch(PDO::FETCH_ASSOC);
+            $reqStats['approved'] = (int)($reqStats['completed'] ?? 0);
+        }
+
+        // 2. Load Active Districts from DB (Strictly operator-assigned if operator)
+        if ($isOperator) {
+            $districts = AuthService::getOperatorAssignedDistricts($userId);
+        } else {
+            $districts = $db->query("SELECT id, name FROM districts WHERE is_active = 1 ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+        }
+
+        // 3. Load Application Codes / Services (Strictly operator-assigned if operator)
         $codeOptions = [];
-        try {
-            $dtfRow = $db->query("SELECT options_json FROM data_type_fields WHERE field_name = 'application_code' AND options_json IS NOT NULL LIMIT 1")->fetch(PDO::FETCH_ASSOC);
-            if ($dtfRow && !empty($dtfRow['options_json'])) {
-                $decoded = json_decode($dtfRow['options_json'], true);
-                if (is_array($decoded)) {
-                    foreach ($decoded as $opt) {
-                        if (!empty($opt['value'])) {
-                            $codeOptions[$opt['value']] = $opt['value'];
+        if ($isOperator) {
+            foreach ($assignedCodes as $ac) {
+                $codeOptions[$ac] = $ac;
+            }
+        } else {
+            try {
+                $dtfRow = $db->query("SELECT options_json FROM data_type_fields WHERE field_name = 'application_code' AND options_json IS NOT NULL LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+                if ($dtfRow && !empty($dtfRow['options_json'])) {
+                    $decoded = json_decode($dtfRow['options_json'], true);
+                    if (is_array($decoded)) {
+                        foreach ($decoded as $opt) {
+                            if (!empty($opt['value'])) {
+                                $codeOptions[$opt['value']] = $opt['value'];
+                            }
                         }
                     }
                 }
+            } catch (\Throwable $e) {}
+            try {
+                $ruleCodes = $db->query("SELECT DISTINCT application_code FROM service_rate_rules WHERE application_code IS NOT NULL AND application_code != ''")->fetchAll(PDO::FETCH_COLUMN);
+                foreach ($ruleCodes as $rc) {
+                    $codeOptions[$rc] = $rc;
+                }
+            } catch (\Throwable $e) {}
+            if (empty($codeOptions)) {
+                $codeOptions = ['BICCO' => 'BICCO', 'BCCCO' => 'BCCCO', 'BRCCO' => 'BRCCO', 'BOBC' => 'BOBC', 'NCLCO' => 'NCLCO', 'RTPS' => 'RTPS', 'OTHER' => 'OTHER'];
             }
-        } catch (\Throwable $e) {}
-        try {
-            $ruleCodes = $db->query("SELECT DISTINCT application_code FROM service_rate_rules WHERE application_code IS NOT NULL AND application_code != ''")->fetchAll(PDO::FETCH_COLUMN);
-            foreach ($ruleCodes as $rc) {
-                $codeOptions[$rc] = $rc;
-            }
-        } catch (\Throwable $e) {}
-        if (empty($codeOptions)) {
-            $codeOptions = ['BICCO' => 'BICCO', 'BCCCO' => 'BCCCO', 'BRCCO' => 'BRCCO', 'BOBC' => 'BOBC', 'NCLCO' => 'NCLCO', 'RTPS' => 'RTPS', 'OTHER' => 'OTHER'];
         }
 
         // 4. Parse Filters from GET
@@ -161,27 +208,60 @@ public function dashboard(): void
         $blockId = !empty($_GET['block_id']) ? (int)$_GET['block_id'] : 0;
         $appCode = strtoupper(trim($_GET['app_code'] ?? ''));
 
-        // Load Blocks for selected district if districtId > 0
-        $availableBlocks = [];
-        if ($districtId > 0) {
-            $bStmt = $db->prepare("SELECT id, name, district_id FROM blocks WHERE district_id = ? AND is_active = 1 ORDER BY name ASC");
-            $bStmt->execute([$districtId]);
-            $availableBlocks = $bStmt->fetchAll(PDO::FETCH_ASSOC);
+        // Operator boundary validation: requested district, block and app_code must be in operator assignments
+        if ($isOperator) {
+            $allowedDistIds = array_map('intval', array_column($districts, 'id'));
+            if ($districtId > 0 && !in_array($districtId, $allowedDistIds, true)) {
+                $districtId = 0;
+            }
+            $allowedBlockIds = array_map('intval', array_column($assignedBlocks, 'block_id'));
+            if ($blockId > 0 && !in_array($blockId, $allowedBlockIds, true)) {
+                $blockId = 0;
+            }
+            if (!empty($appCode) && !isset($codeOptions[$appCode])) {
+                $appCode = '';
+            }
         }
 
-        // Also fetch all blocks grouped by district for instant JS switching
+        // Load Blocks for selected district if districtId > 0
+        $availableBlocks = [];
         $allBlocksGrouped = [];
-        $allBlocksRows = $db->query("SELECT id, name, district_id FROM blocks WHERE is_active = 1 ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
-        foreach ($allBlocksRows as $abr) {
-            $allBlocksGrouped[$abr['district_id']][] = [
-                'id' => (int)$abr['id'],
-                'name' => $abr['name']
-            ];
+        if ($isOperator) {
+            $availableBlocks = AuthService::getOperatorAssignedBlocks($userId, $districtId > 0 ? $districtId : null);
+            foreach ($assignedBlocks as $abr) {
+                $allBlocksGrouped[$abr['district_id']][] = [
+                    'id' => (int)($abr['block_id'] ?? $abr['id']),
+                    'name' => $abr['block_name'] ?? $abr['name']
+                ];
+            }
+        } else {
+            if ($districtId > 0) {
+                $bStmt = $db->prepare("SELECT id, name, district_id FROM blocks WHERE district_id = ? AND is_active = 1 ORDER BY name ASC");
+                $bStmt->execute([$districtId]);
+                $availableBlocks = $bStmt->fetchAll(PDO::FETCH_ASSOC);
+            }
+            $allBlocksRows = $db->query("SELECT id, name, district_id FROM blocks WHERE is_active = 1 ORDER BY name ASC")->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($allBlocksRows as $abr) {
+                $allBlocksGrouped[$abr['district_id']][] = [
+                    'id' => (int)$abr['id'],
+                    'name' => $abr['name']
+                ];
+            }
         }
 
         // 5. Build Backend SQL WHERE Clause
-        $where = ["1=1"];
+        $where = [];
         $params = [];
+
+        if ($isOperator) {
+            if ($unassignedOperator) {
+                $where[] = "1=0";
+            } else {
+                $where[] = OperatorAuthorizationService::getAuthorizedSqlCondition($userId, 'a');
+            }
+        } else {
+            $where[] = "1=1";
+        }
 
         if ($currentTab === 'PENDING') {
             $where[] = "a.status = 'PENDING'";
@@ -224,9 +304,19 @@ public function dashboard(): void
         }
 
         if (!empty($appCode)) {
-            $where[] = "(a.applicant_identifier LIKE :app_code_like OR EXISTS (SELECT 1 FROM application_field_values afv WHERE afv.application_id = a.id AND afv.field_name = 'application_code' AND UPPER(afv.field_value) = :app_code))";
-            $params[':app_code_like'] = $appCode . '%';
-            $params[':app_code'] = $appCode;
+            $where[] = "(
+                UPPER(TRIM(a.application_code)) = :flt_app_code_exact
+                OR a.applicant_identifier LIKE :flt_app_code_like
+                OR EXISTS (
+                    SELECT 1 FROM application_field_values afv
+                    WHERE afv.application_id = a.id
+                      AND afv.field_name = 'application_code'
+                      AND UPPER(TRIM(afv.field_value)) = :flt_app_code_val
+                )
+            )";
+            $params[':flt_app_code_exact'] = $appCode;
+            $params[':flt_app_code_like'] = $appCode . '%';
+            $params[':flt_app_code_val'] = $appCode;
         }
 
         $whereSql = implode(' AND ', $where);
@@ -459,6 +549,30 @@ public function createOperator(): void
             ]);
             $newOpId = (int)$db->lastInsertId();
 
+            // Insert into operator_block_assignments
+            \App\Services\StaffRoutingService::saveOperatorBlockAssignment(
+                $newOpId,
+                $districtId,
+                $blockId,
+                ($status === 'ACTIVE' ? 1 : 0),
+                AuthService::id(),
+                $db
+            );
+
+            // Ensure OPERATOR role assignment exists
+            $insOpRole = $db->prepare("
+                INSERT INTO user_role_assignments (user_id, role_code, is_active, granted_by, granted_at, created_at, updated_at)
+                VALUES (?, 'OPERATOR', ?, ?, NOW(), NOW(), NOW())
+                ON DUPLICATE KEY UPDATE is_active = VALUES(is_active), updated_at = NOW()
+            ");
+            $insOpRole->execute([$newOpId, ($status === 'ACTIVE' ? 1 : 0), AuthService::id()]);
+
+            // If service codes were provided, assign them
+            $submittedCodes = $_POST['codes'] ?? ($_POST['application_codes'] ?? []);
+            if (!empty($submittedCodes) && is_array($submittedCodes)) {
+                \App\Services\StaffRoutingService::saveOperatorCodeAssignments($newOpId, $districtId, $blockId, $submittedCodes, AuthService::id());
+            }
+
             // Initialize operator wallet
             WalletService::getOrCreateWallet($newOpId);
 
@@ -577,6 +691,15 @@ public function reassignOperator(): void
 
         $upd = $db->prepare("UPDATE users SET assigned_district_id = ?, assigned_block_id = ?, assigned_all_districts = 0, updated_at = NOW() WHERE id = ?");
         $upd->execute([$districtId, $blockId, $userId]);
+
+        \App\Services\StaffRoutingService::saveOperatorBlockAssignment(
+            $userId,
+            $districtId,
+            $blockId,
+            1,
+            AuthService::id(),
+            $db
+        );
 
         AuditService::log('OPERATOR_REASSIGNED', 'USER', (string)$userId, [
             'district_id' => $districtId,
@@ -2249,6 +2372,16 @@ public function apiGetBlockStaffRouting(): void
         foreach ($opCodesRows as $ocr) {
             $key = (int)$ocr['operator_user_id'] . '_' . (int)$ocr['district_id'] . '_' . (int)$ocr['block_id'];
             $userBlockCodes[$key][] = $ocr['application_code'];
+        }
+
+        $allApplicationCodes = $db->query("
+            SELECT DISTINCT application_code
+            FROM service_rate_rules
+            WHERE application_code IS NOT NULL AND application_code != '' AND application_code != '*' AND is_active = 1
+            ORDER BY application_code ASC
+        ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+        if (empty($allApplicationCodes)) {
+            $allApplicationCodes = ['BICCO', 'BCCCO', 'BRCCO', 'BOBC', 'NCLCO', 'RTPS', 'PAN', 'OTHER'];
         }
 
         // Preserve filters for pagination and CSV export

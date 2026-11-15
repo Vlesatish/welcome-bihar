@@ -18,25 +18,49 @@ class OperatorAuthorizationService
     public static function getAuthorizedSqlCondition(int $operatorId, string $tableAlias = 'a'): string
     {
         $opId = (int)$operatorId;
+        if ($opId <= 0) {
+            return "1=0";
+        }
         $alias = preg_replace('/[^a-zA-Z0-9_]/', '', $tableAlias);
 
         return "{$alias}.assigned_operator_id = {$opId}
             AND {$alias}.user_id != {$opId}
-            AND EXISTS (
-                SELECT 1
-                FROM operator_block_assignments oba
-                WHERE oba.operator_user_id = {$opId}
-                  AND oba.district_id = {$alias}.district_id
-                  AND oba.block_id = {$alias}.block_id
-                  AND oba.is_active = 1
+            AND (
+                EXISTS (
+                    SELECT 1
+                    FROM operator_block_assignments oba
+                    WHERE oba.operator_user_id = {$opId}
+                      AND oba.district_id = {$alias}.district_id
+                      AND oba.block_id = {$alias}.block_id
+                      AND oba.is_active = 1
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM users u_op
+                    WHERE u_op.id = {$opId}
+                      AND u_op.assigned_district_id = {$alias}.district_id
+                      AND u_op.assigned_block_id = {$alias}.block_id
+                      AND u_op.status = 'ACTIVE'
+                )
             )
             AND EXISTS (
                 SELECT 1
                 FROM operator_application_code_assignments oaca
                 WHERE oaca.operator_user_id = {$opId}
-                  AND oaca.district_id = {$alias}.district_id
-                  AND oaca.block_id = {$alias}.block_id
-                  AND UPPER(TRIM(oaca.application_code)) = UPPER(TRIM({$alias}.application_code))
+                  AND (
+                      (oaca.district_id = {$alias}.district_id AND oaca.block_id = {$alias}.block_id)
+                      OR (oaca.district_id = 0 AND oaca.block_id = 0)
+                  )
+                  AND (
+                      UPPER(TRIM(oaca.application_code)) = UPPER(TRIM(COALESCE({$alias}.application_code, '')))
+                      OR {$alias}.applicant_identifier LIKE CONCAT(UPPER(TRIM(oaca.application_code)), '/%')
+                      OR EXISTS (
+                          SELECT 1 FROM application_field_values afv
+                          WHERE afv.application_id = {$alias}.id
+                            AND afv.field_name = 'application_code'
+                            AND UPPER(TRIM(afv.field_value)) = UPPER(TRIM(oaca.application_code))
+                      )
+                  )
                   AND oaca.is_active = 1
             )";
     }
@@ -51,29 +75,55 @@ class OperatorAuthorizationService
      */
     public static function getAuthorizedParameterizedCondition(int $operatorId, string $tableAlias = 'a', string $prefix = 'op_auth_'): array
     {
+        $opId = (int)$operatorId;
+        if ($opId <= 0) {
+            return ['sql' => '1=0', 'params' => []];
+        }
         $alias = preg_replace('/[^a-zA-Z0-9_]/', '', $tableAlias);
         $p1 = ":{$prefix}op1";
         $p2 = ":{$prefix}op2";
         $p3 = ":{$prefix}op3";
         $p4 = ":{$prefix}op4";
+        $p5 = ":{$prefix}op5";
 
         $sql = "{$alias}.assigned_operator_id = {$p1}
             AND {$alias}.user_id != {$p2}
-            AND EXISTS (
-                SELECT 1
-                FROM operator_block_assignments oba
-                WHERE oba.operator_user_id = {$p3}
-                  AND oba.district_id = {$alias}.district_id
-                  AND oba.block_id = {$alias}.block_id
-                  AND oba.is_active = 1
+            AND (
+                EXISTS (
+                    SELECT 1
+                    FROM operator_block_assignments oba
+                    WHERE oba.operator_user_id = {$p3}
+                      AND oba.district_id = {$alias}.district_id
+                      AND oba.block_id = {$alias}.block_id
+                      AND oba.is_active = 1
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM users u_op
+                    WHERE u_op.id = {$p4}
+                      AND u_op.assigned_district_id = {$alias}.district_id
+                      AND u_op.assigned_block_id = {$alias}.block_id
+                      AND u_op.status = 'ACTIVE'
+                )
             )
             AND EXISTS (
                 SELECT 1
                 FROM operator_application_code_assignments oaca
-                WHERE oaca.operator_user_id = {$p4}
-                  AND oaca.district_id = {$alias}.district_id
-                  AND oaca.block_id = {$alias}.block_id
-                  AND UPPER(TRIM(oaca.application_code)) = UPPER(TRIM({$alias}.application_code))
+                WHERE oaca.operator_user_id = {$p5}
+                  AND (
+                      (oaca.district_id = {$alias}.district_id AND oaca.block_id = {$alias}.block_id)
+                      OR (oaca.district_id = 0 AND oaca.block_id = 0)
+                  )
+                  AND (
+                      UPPER(TRIM(oaca.application_code)) = UPPER(TRIM(COALESCE({$alias}.application_code, '')))
+                      OR {$alias}.applicant_identifier LIKE CONCAT(UPPER(TRIM(oaca.application_code)), '/%')
+                      OR EXISTS (
+                          SELECT 1 FROM application_field_values afv
+                          WHERE afv.application_id = {$alias}.id
+                            AND afv.field_name = 'application_code'
+                            AND UPPER(TRIM(afv.field_value)) = UPPER(TRIM(oaca.application_code))
+                      )
+                  )
                   AND oaca.is_active = 1
             )";
 
@@ -84,6 +134,7 @@ class OperatorAuthorizationService
                 $p2 => $operatorId,
                 $p3 => $operatorId,
                 $p4 => $operatorId,
+                $p5 => $operatorId,
             ]
         ];
     }

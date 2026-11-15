@@ -168,6 +168,11 @@ class AuthService
             $chk->execute([$uid]);
             if ($chk->fetchColumn()) {
                 $hasBlock = true;
+            } elseif (!empty($u['assigned_district_id']) && !empty($u['assigned_block_id'])) {
+                // Auto-sync legacy users table assignment
+                $insSync = $db->prepare("INSERT IGNORE INTO operator_block_assignments (operator_user_id, district_id, block_id, is_active, assigned_by, created_at, updated_at) VALUES (?, ?, ?, 1, 1, NOW(), NOW())");
+                $insSync->execute([$uid, (int)$u['assigned_district_id'], (int)$u['assigned_block_id']]);
+                $hasBlock = true;
             }
         } catch (\Throwable $e) {}
 
@@ -447,6 +452,21 @@ class AuthService
     public static function getOperatorAssignedBlocks(int $operatorId, ?int $districtId = null): array
     {
         $db = Database::getConnection();
+
+        // 1. Ensure any legacy/direct users table assigned_district_id & assigned_block_id are synced
+        try {
+            $syncStmt = $db->prepare("
+                INSERT IGNORE INTO operator_block_assignments (operator_user_id, district_id, block_id, is_active, assigned_by, created_at, updated_at)
+                SELECT id, assigned_district_id, assigned_block_id, 1, 1, NOW(), NOW()
+                FROM users
+                WHERE id = ? 
+                  AND assigned_district_id IS NOT NULL AND assigned_district_id > 0
+                  AND assigned_block_id IS NOT NULL AND assigned_block_id > 0
+                  AND status = 'ACTIVE'
+            ");
+            $syncStmt->execute([$operatorId]);
+        } catch (\Throwable $e) {}
+
         $params = [$operatorId];
         $distSql = "";
         if ($districtId !== null && $districtId > 0) {
@@ -466,7 +486,63 @@ class AuthService
         $stmt->execute($params);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+        // Fallback: Check users table directly if operator_block_assignments has no active rows
+        if (empty($rows)) {
+            try {
+                $uStmt = $db->prepare("
+                    SELECT u.assigned_district_id as district_id, u.assigned_block_id as id, u.assigned_block_id as block_id, 1 as is_active,
+                           d.name as district_name, b.name as block_name, b.name as name
+                    FROM users u
+                    JOIN districts d ON u.assigned_district_id = d.id
+                    JOIN blocks b ON u.assigned_block_id = b.id
+                    WHERE u.id = ? AND u.status = 'ACTIVE'
+                      AND u.assigned_district_id IS NOT NULL AND u.assigned_district_id > 0
+                      AND u.assigned_block_id IS NOT NULL AND u.assigned_block_id > 0
+                      " . ($districtId !== null && $districtId > 0 ? " AND u.assigned_district_id = " . (int)$districtId : "") . "
+                    LIMIT 1
+                ");
+                $uStmt->execute([$operatorId]);
+                $uRow = $uStmt->fetch(PDO::FETCH_ASSOC);
+                if ($uRow) {
+                    $rows = [$uRow];
+                }
+            } catch (\Throwable $e) {}
+        }
+
         return $rows ?: [];
+    }
+
+    /**
+     * Get distinct assigned application codes (services) for an operator,
+     * optionally filtered by district_id and block_id.
+     */
+    public static function getOperatorAssignedCodes(int $operatorId, ?int $districtId = null, ?int $blockId = null): array
+    {
+        if ($operatorId <= 0) {
+            return [];
+        }
+        $db = Database::getConnection();
+        $params = [$operatorId];
+        $where = ["operator_user_id = ?", "is_active = 1"];
+        if ($districtId !== null && $districtId > 0) {
+            $where[] = "(district_id = ? OR (district_id = 0 AND block_id = 0))";
+            $params[] = $districtId;
+        }
+        if ($blockId !== null && $blockId > 0) {
+            $where[] = "(block_id = ? OR (district_id = 0 AND block_id = 0))";
+            $params[] = $blockId;
+        }
+        $whereSql = implode(' AND ', $where);
+        $stmt = $db->prepare("
+            SELECT DISTINCT application_code
+            FROM operator_application_code_assignments
+            WHERE {$whereSql}
+            ORDER BY application_code ASC
+        ");
+        $stmt->execute($params);
+        $codes = $stmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+
+        return array_values(array_unique(array_filter(array_map('strtoupper', array_map('trim', $codes)))));
     }
 
     public static function isOperatorAssignedToBlock(int $operatorId, int $districtId, int $blockId): bool

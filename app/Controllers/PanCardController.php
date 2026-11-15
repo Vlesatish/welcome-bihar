@@ -105,11 +105,15 @@ class PanCardController
         if ($isAdmin) {
             // Admin sees all applications
         } elseif ($isOperator) {
+            $assignedCodes = AuthService::getOperatorAssignedCodes($userId);
+            $hasPanAssigned = in_array('PAN', $assignedCodes, true) || in_array('PAN_CARD', $assignedCodes, true);
             $assignedBlocks = AuthService::getOperatorAssignedBlocks($userId);
-            if (!empty($assignedBlocks)) {
+            if (!$hasPanAssigned || empty($assignedBlocks)) {
+                $where[] = "1=0";
+            } else {
                 $bIds = array_column($assignedBlocks, 'block_id');
                 $placeholders = implode(',', array_map('intval', $bIds));
-                $where[] = "(a.block_id IN ({$placeholders}) OR a.assigned_operator_id = {$userId} OR a.assigned_operator_id IS NULL)";
+                $where[] = "(a.block_id IN ({$placeholders}) AND (a.assigned_operator_id = {$userId} OR a.assigned_operator_id IS NULL))";
             }
         } elseif ($role === 'DISTRIBUTOR') {
             $where[] = "a.distributor_id = :dist_id";
@@ -177,11 +181,15 @@ class PanCardController
         if ($isAdmin) {
             // No restriction
         } elseif ($isOperator) {
+            $assignedCodes = AuthService::getOperatorAssignedCodes($userId);
+            $hasPanAssigned = in_array('PAN', $assignedCodes, true) || in_array('PAN_CARD', $assignedCodes, true);
             $assignedBlocks = AuthService::getOperatorAssignedBlocks($userId);
-            if (!empty($assignedBlocks)) {
+            if (!$hasPanAssigned || empty($assignedBlocks)) {
+                $countUserWhere = " AND 1=0";
+            } else {
                 $bIds = array_column($assignedBlocks, 'block_id');
                 $placeholders = implode(',', array_map('intval', $bIds));
-                $countUserWhere = " AND (a.block_id IN ({$placeholders}) OR a.assigned_operator_id = {$userId} OR a.assigned_operator_id IS NULL)";
+                $countUserWhere = " AND (a.block_id IN ({$placeholders}) AND (a.assigned_operator_id = {$userId} OR a.assigned_operator_id IS NULL))";
             }
         } elseif ($role === 'DISTRIBUTOR') {
             $countUserWhere = " AND a.distributor_id = :dist_id";

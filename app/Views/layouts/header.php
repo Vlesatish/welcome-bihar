@@ -205,10 +205,16 @@ $currentUri = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '/';
                     <i class="bi bi-folder2-open"></i>
                     <span>Assigned Applications</span>
                 </a>
+                <?php
+                    $headerOpAssignedCodes = $currentUser ? \App\Services\AuthService::getOperatorAssignedCodes((int)$currentUser['id']) : [];
+                    $headerHasPanAssigned = in_array('PAN', $headerOpAssignedCodes, true) || in_array('PAN_CARD', $headerOpAssignedCodes, true);
+                ?>
+                <?php if ($headerHasPanAssigned): ?>
                 <a class="wb-sidebar-link <?= (strpos($currentUri, '/services/pan-card') === 0 || strpos($currentUri, '/pan-card') === 0) ? 'active' : '' ?>" href="/services/pan-card/list">
                     <i class="bi bi-card-checklist text-primary"></i>
                     <span>New Pan Card List</span>
                 </a>
+                <?php endif; ?>
                 <a class="wb-sidebar-link <?= ($currentUri === '/admin/applications' && ($_GET['status'] ?? '') === 'PENDING') ? 'active' : '' ?>" href="/admin/applications?status=PENDING">
                     <i class="bi bi-hourglass-split text-warning"></i>
                     <span>Pending</span>

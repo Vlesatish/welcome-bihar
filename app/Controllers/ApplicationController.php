@@ -992,7 +992,8 @@ public function adminApplications(): void
         $operatorDistrictId = $isOperator ? (int)($user['assigned_district_id'] ?? 0) : 0;
         $operatorBlockId = $isOperator ? (int)($user['assigned_block_id'] ?? 0) : 0;
         $assignedBlocks = $isOperator ? AuthService::getOperatorAssignedBlocks($userId) : [];
-        $unassignedOperator = ($isOperator && empty($assignedBlocks));
+        $assignedCodes = $isOperator ? AuthService::getOperatorAssignedCodes($userId) : [];
+        $unassignedOperator = ($isOperator && (empty($assignedBlocks) || empty($assignedCodes)));
 
         if ($unassignedOperator) {
             $tabCounts = ['ALL' => 0, 'PENDING' => 0, 'IN_PROCESS' => 0, 'APPROVED' => 0, 'REJECTED' => 0];
@@ -1007,7 +1008,7 @@ public function adminApplications(): void
             $districts = [];
             $blocks = [];
             $retailers = [];
-            $appCodes = $this->getApplicationCodes();
+            $appCodes = [];
             $page = 1;
             $totalPages = 1;
             $totalRecords = 0;
@@ -1050,6 +1051,20 @@ public function adminApplications(): void
         $appCode = strtoupper(trim($_GET['app_code'] ?? ''));
         $retailerId = !empty($_GET['retailer_id']) ? (int)$_GET['retailer_id'] : 0;
         $assignmentStatus = strtoupper(trim($_GET['assignment_status'] ?? 'ALL'));
+
+        if ($isOperator) {
+            $allowedDistIds = array_map('intval', array_column(AuthService::getOperatorAssignedDistricts($userId), 'id'));
+            if ($districtId > 0 && !in_array($districtId, $allowedDistIds, true)) {
+                $districtId = 0;
+            }
+            $allowedBlockIds = array_map('intval', array_column($assignedBlocks, 'block_id'));
+            if ($blockId > 0 && !in_array($blockId, $allowedBlockIds, true)) {
+                $blockId = 0;
+            }
+            if (!empty($appCode) && !in_array($appCode, $assignedCodes, true)) {
+                $appCode = '';
+            }
+        }
 
         $filterParams = [
             'status' => $currentTab,
@@ -1201,7 +1216,15 @@ public function adminApplications(): void
         }
         $retailers = $db->query($retailersQuery)->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
-        $appCodes = $this->getApplicationCodes();
+        $allSystemCodes = $this->getApplicationCodes();
+        if ($isOperator) {
+            $appCodes = [];
+            foreach ($assignedCodes as $c) {
+                $appCodes[$c] = $allSystemCodes[$c] ?? $c;
+            }
+        } else {
+            $appCodes = $allSystemCodes;
+        }
 
         require dirname(__DIR__) . '/Views/admin/applications.php';
     }
@@ -2039,13 +2062,22 @@ public function apiGetRequests(): void
             exit;
         }
 
-        // Strict Ownership Enforcement: Users can only check their own submitted applications
+        // Strict Ownership & Operator Scope Enforcement
         $currentUserId = (int)AuthService::id();
-        if ((int)$app['user_id'] !== $currentUserId && !AuthService::isStaffOrAdmin()) {
-            http_response_code(403);
-            header('Content-Type: application/json');
-            echo json_encode(['success' => false, 'message' => 'Access denied: You can only check applications submitted by your account.']);
-            exit;
+        if (!AuthService::isAdmin()) {
+            if (AuthService::isOperator()) {
+                if (!AuthService::canOperatorAccessApplication($currentUserId, $appId)) {
+                    http_response_code(403);
+                    header('Content-Type: application/json');
+                    echo json_encode(['success' => false, 'message' => 'Access denied: You are not authorized to check this application.']);
+                    exit;
+                }
+            } elseif ((int)$app['user_id'] !== $currentUserId) {
+                http_response_code(403);
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'message' => 'Access denied: You can only check applications submitted by your account.']);
+                exit;
+            }
         }
 
         $isSmartPds = \App\Services\SmartPdsService::isRationCardApplication(
@@ -2127,11 +2159,21 @@ public function apiGetRequests(): void
             exit;
         }
 
-        if ((int)$app['user_id'] !== (int)AuthService::id() && !AuthService::isStaffOrAdmin()) {
-            http_response_code(403);
-            header('Content-Type: application/json');
-            echo json_encode(['success' => false, 'message' => 'Access denied']);
-            exit;
+        $currentUserId = (int)AuthService::id();
+        if (!AuthService::isAdmin()) {
+            if (AuthService::isOperator()) {
+                if (!AuthService::canOperatorAccessApplication($currentUserId, $appId)) {
+                    http_response_code(403);
+                    header('Content-Type: application/json');
+                    echo json_encode(['success' => false, 'message' => 'Access denied']);
+                    exit;
+                }
+            } elseif ((int)$app['user_id'] !== $currentUserId) {
+                http_response_code(403);
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'message' => 'Access denied']);
+                exit;
+            }
         }
 
         $qStmt = $db->prepare("SELECT status, last_status_message, last_checked_at FROM rtps_certificate_queue WHERE application_id = ? LIMIT 1");
