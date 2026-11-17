@@ -488,3 +488,32 @@ window.renderStepperHtml = function(app) {
 
     return { dotsHtml, cardHtml, curr, isRej, rejReason };
 };
+
+// ========================================================
+// GLOBAL TABLE ROW CLICK -> OPEN FULL DETAILS MODAL
+// ========================================================
+document.addEventListener('click', function (e) {
+    const row = e.target.closest('tr.app-clickable-row, tr[id^="row-app-"], tr[id^="app-row-"]');
+    if (!row) return;
+
+    // Ignore if clicked on any interactive control: buttons, links, inputs, dropdowns, etc.
+    if (e.target.closest('button, a, input, select, textarea, .btn, .dropdown, [data-no-row-click], .no-row-click')) {
+        return;
+    }
+
+    // Ignore if user is actively highlighting/selecting text on the row
+    const sel = window.getSelection();
+    if (sel && sel.toString().trim().length > 0) {
+        return;
+    }
+
+    let appId = row.getAttribute('data-app-id');
+    if (!appId && row.id) {
+        const m = row.id.match(/(?:row-app-|app-row-)(\d+)/);
+        if (m) appId = m[1];
+    }
+
+    if (appId && typeof window.openDetailsModal === 'function') {
+        window.openDetailsModal(Number(appId));
+    }
+});

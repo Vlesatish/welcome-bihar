@@ -393,6 +393,21 @@ body {
     font-size: 0.9rem;
 }
 
+/* Clickable Table Rows with hover feedback */
+tr.app-clickable-row {
+    cursor: pointer !important;
+    transition: background-color 0.15s ease-in-out;
+}
+tr.app-clickable-row:hover td {
+    background-color: #f1f5f9 !important;
+}
+tr.app-clickable-row button,
+tr.app-clickable-row a,
+tr.app-clickable-row input,
+tr.app-clickable-row select {
+    cursor: auto;
+}
+
 .card-single-header {
     display: flex;
     align-items: center;

@@ -350,7 +350,7 @@
                                     }
                                     $appJson = htmlspecialchars(json_encode($safeApp), ENT_QUOTES, 'UTF-8');
                                 ?>
-                                <tr id="row-app-<?= $app['id'] ?>" data-app='<?= $appJson ?>'>
+                                <tr id="row-app-<?= $app['id'] ?>" class="app-clickable-row" data-app-id="<?= $app['id'] ?>" data-app='<?= $appJson ?>'>
                                     <!-- 1. Application No. (bold and selectable/copyable) -->
                                     <td class="ps-3">
                                         <div class="d-flex align-items-center gap-1 font-monospace fw-bold text-dark" style="font-size: 0.85rem;">

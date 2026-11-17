@@ -321,9 +321,10 @@ window.filterByStatus = function (st) {
                             $appNum = $f['application_number'] ?? $app['applicant_identifier'] ?? 'N/A';
                             $appJson = htmlspecialchars(json_encode($app), ENT_QUOTES, 'UTF-8');
                         ?>
-                        <tr class="admin-req-row"
+                        <tr class="admin-req-row app-clickable-row"
                             id="app-row-<?= $app['id'] ?>"
                             data-id="<?= $app['id'] ?>"
+                            data-app-id="<?= $app['id'] ?>"
                             data-status="<?= $st ?>"
                             data-app='<?= $appJson ?>'>
 

@@ -365,7 +365,7 @@ document.addEventListener('DOMContentLoaded', function () {
                                 }
                                 $jsonEscaped = htmlspecialchars(json_encode($app), ENT_QUOTES, 'UTF-8');
                             ?>
-                            <tr id="app-row-<?= $app['id'] ?>" data-app='<?= $jsonEscaped ?>'>
+                            <tr id="app-row-<?= $app['id'] ?>" class="app-clickable-row" data-app-id="<?= $app['id'] ?>" data-app='<?= $jsonEscaped ?>'>
                                 <td class="ps-3 font-monospace small fw-bold text-dark">
                                     #<?= e($app['app_ref']) ?>
                                 </td>
