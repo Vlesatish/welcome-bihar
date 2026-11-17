@@ -99,6 +99,7 @@ public function systemUpdate(): void
         $result = \App\Services\SystemUpdateService::runFullUpdate();
 
         $_SESSION['flash_success'] = '1-Click System Update Completed Successfully! ' . implode(' | ', $result['log']);
+        header('X-LiteSpeed-Purge: *');
         header('Location: ' . ($_SERVER['HTTP_REFERER'] ?? '/admin/dashboard'));
         exit;
     }

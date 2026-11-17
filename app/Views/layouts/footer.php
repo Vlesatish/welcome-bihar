@@ -19,9 +19,9 @@
 <!-- Bootstrap 5.3 JS Bundle -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <!-- Custom Application JS -->
-<script src="/assets/js/app.js"></script>
+<script src="/assets/js/app.js?v=<?= @filemtime(dirname(__DIR__, 2) . '/public/assets/js/app.js') ?: time() ?>"></script>
 <!-- UTI PSA Photo & Signature Cropping Engine -->
-<script src="/assets/js/uti_crop_tool.js"></script>
+<script src="/assets/js/uti_crop_tool.js?v=<?= @filemtime(dirname(__DIR__, 2) . '/public/assets/js/uti_crop_tool.js') ?: time() ?>"></script>
 <?php require __DIR__ . '/uti_crop_modal.php'; ?>
 
 </body>

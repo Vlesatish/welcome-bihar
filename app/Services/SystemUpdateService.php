@@ -683,6 +683,17 @@ class SystemUpdateService
         self::$schemaChecked = false;
         self::ensureSchema();
 
+        // Bust OPcache and web caches
+        if (function_exists('opcache_reset')) {
+            @opcache_reset();
+            $log[] = "PHP OPcache cleared.";
+        }
+
+        $appJsPath = $repoDir . '/public/assets/js/app.js';
+        if (file_exists($appJsPath)) {
+            @touch($appJsPath);
+        }
+
         $log[] = "Database schema, columns, indexes, and master tables are 100% synchronized.";
 
         return [
