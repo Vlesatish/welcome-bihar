@@ -84,7 +84,7 @@ if (!defined('SMARTPDS_WIDGET_LOADED')) :
         const num = String(appNum || '').trim().toUpperCase();
         const code = String(appCode || '').trim().toUpperCase();
         if (/^RC\d{6,}/i.test(num)) return true;
-        if (['EPDS', 'RATION', 'RATION_CARD', 'RATIONCARD', 'RATIONCARDCOREETION', 'RATIONCARDCORRECTION', 'RC', 'SMARTPDS'].includes(code) && num.startsWith('RC')) return true;
+        if (['EPDS', 'RATION', 'RATION_CARD', 'RATIONCARD', 'RATIONCARDCOREETION', 'RATIONCARDCORRECTION', 'RC', 'SMARTPDS'].includes(code)) return true;
         return false;
     };
 
@@ -114,14 +114,12 @@ if (!defined('SMARTPDS_WIDGET_LOADED')) :
                     <div class="spds-header d-flex align-items-center justify-content-between flex-wrap gap-2">
                         <div class="d-flex align-items-center gap-2">
                             <i class="bi bi-card-checklist text-primary fs-5"></i>
-                            <div>
-                                <div class="fw-bold text-dark small">Bihar SmartPDS Ration Card Live Status</div>
-                                <div class="text-muted" style="font-size: 0.72rem;">Application No: <span class="font-monospace fw-bold">${spdsEsc(rcNo || '--')}</span> &bull; Status abhi sync nahi hua hai</div>
-                            </div>
+                            <span class="fw-bold text-dark small">Ration Card Status</span>
+                            <span class="badge bg-secondary-subtle text-secondary border px-2 py-0.5" style="font-size: 0.7rem;">Not Synced</span>
                         </div>
                         ${appId > 0 ? `
                             <button type="button" class="btn btn-sm btn-primary fw-bold rounded-pill px-3" onclick="checkSmartPdsStatus(${appId}, this, '${spdsEsc(endpoint)}', true)">
-                                <i class="bi bi-arrow-repeat me-1"></i> Check Live Status (SmartPDS)
+                                <i class="bi bi-arrow-repeat me-1"></i> Check Status
                             </button>
                         ` : ''}
                     </div>
@@ -150,14 +148,21 @@ if (!defined('SMARTPDS_WIDGET_LOADED')) :
         }
 
         const timeline = Array.isArray(data.timeline) ? data.timeline : [];
-        let timelineHtml = '<div class="text-muted small py-2">Timeline abhi SmartPDS portal par available nahi hai.</div>';
+        let timelineHtml = '<div class="text-muted small py-2">Timeline abhi portal par available nahi hai.</div>';
         if (timeline.length > 0) {
             timelineHtml = `<div class="spds-timeline-wrap">` + timeline.map(step => {
-                const stepTitle = String(step.status || step.step_name || 'Step');
+                let stepTitle = String(step.status || step.step_name || 'Step');
+                const low = stepTitle.toLowerCase();
+                if (low.includes('inspector')) stepTitle = 'MO / Inspector';
+                else if (low.includes('sdo')) stepTitle = 'SDO';
+                else if (low.includes('submit')) stepTitle = 'Submitted';
+                else if (low.includes('approv')) stepTitle = 'Approved';
+                else if (low.includes('reject')) stepTitle = 'Rejected';
+
                 const stepState = String(step.state || 'Completed');
                 const stUpper = stepState.toUpperCase();
                 const isDone = (stUpper === 'COMPLETED' || stUpper === 'APPROVED');
-                const isRejStep = stepTitle.toLowerCase().includes('reject');
+                const isRejStep = stepTitle.toLowerCase().includes('reject') || low.includes('reject');
                 const pillClass = isRejStep
                     ? 'bg-danger-subtle text-danger border-danger-subtle'
                     : (isDone ? 'bg-success-subtle text-success border-success-subtle' : 'bg-warning-subtle text-warning-emphasis border-warning-subtle');
@@ -170,15 +175,14 @@ if (!defined('SMARTPDS_WIDGET_LOADED')) :
 
                 return `
                     <div class="spds-step-card">
-                        <div class="d-flex align-items-center justify-content-between mb-2">
+                        <div class="d-flex align-items-center justify-content-between mb-1.5">
                             <span class="spds-step-node ${nodeClass}">${nodeIcon}</span>
                             <span class="badge border ${pillClass}" style="font-size: 0.68rem;">${spdsEsc(pillText)}</span>
                         </div>
-                        <div class="fw-bold text-dark" style="font-size: 0.85rem;">${spdsEsc(stepTitle)}</div>
-                        <div class="text-muted mb-1" style="font-size: 0.72rem;">${spdsEsc(step.date || '')}</div>
-                        ${officeVal ? `<div style="font-size: 0.73rem;"><span class="text-muted">Office:</span> <span class="text-dark fw-medium">${spdsEsc(officeVal)}</span></div>` : ''}
-                        ${codeVal ? `<div style="font-size: 0.73rem;"><span class="text-muted">Code:</span> <span class="text-dark fw-medium">${spdsEsc(codeVal)}</span></div>` : ''}
-                        ${byVal ? `<div style="font-size: 0.73rem;"><span class="text-muted">By:</span> <span class="text-dark fw-semibold">${spdsEsc(byVal)}</span></div>` : ''}
+                        <div class="fw-bold text-dark" style="font-size: 0.82rem;">${spdsEsc(stepTitle)}</div>
+                        <div class="text-muted mb-1" style="font-size: 0.7rem;">${spdsEsc(step.date || '')}</div>
+                        ${officeVal ? `<div style="font-size: 0.72rem;"><span class="text-muted">Office:</span> <span class="text-dark fw-medium">${spdsEsc(officeVal)}</span></div>` : ''}
+                        ${byVal ? `<div style="font-size: 0.72rem;"><span class="text-muted">By:</span> <span class="text-dark fw-semibold">${spdsEsc(byVal)}</span></div>` : ''}
                     </div>
                 `;
             }).join('') + `</div>`;
@@ -194,16 +198,16 @@ if (!defined('SMARTPDS_WIDGET_LOADED')) :
                     <div class="d-flex align-items-center gap-2.5">
                         ${iconHtml}
                         <div>
-                            <div class="spds-meta-label">SmartPDS Application Status <a href="https://br.smartpds.nic.in/track" target="_blank" class="text-primary text-decoration-none ms-1">(br.smartpds.nic.in)</a></div>
+                            <div class="spds-meta-label">Ration Card Status <a href="https://br.smartpds.nic.in/track" target="_blank" class="text-primary text-decoration-none ms-1">(br.smartpds.nic.in)</a></div>
                             <div class="d-flex align-items-center gap-2 flex-wrap mt-0.5">
                                 ${badgeHtml}
-                                ${data.checked_at ? `<span class="text-muted" style="font-size: 0.7rem;">Synced: ${spdsEsc(data.checked_at)}</span>` : ''}
+                                ${data.checked_at ? `<span class="text-muted" style="font-size: 0.7rem;">(${spdsEsc(data.checked_at)})</span>` : ''}
                             </div>
                         </div>
                     </div>
                     ${appId > 0 ? `
                         <button type="button" class="btn btn-sm btn-outline-primary fw-bold rounded-pill px-3 bg-white" onclick="checkSmartPdsStatus(${appId}, this, '${spdsEsc(endpoint)}', true)">
-                            <i class="bi bi-arrow-clockwise me-1"></i> Refresh Live Status
+                            <i class="bi bi-arrow-clockwise me-1"></i> Refresh
                         </button>
                     ` : ''}
                 </div>

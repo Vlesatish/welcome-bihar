@@ -49,8 +49,17 @@ if (!function_exists('get_application_progress')) {
         $hasResult = !empty($app['result_file']);
 
         $blob = strtolower($status . ' ' . $rawRejectionReason . ' ' . $remarks . ' ' . $portalStatus . ' ' . $lastMsg);
-
         $isRejected = ($status === 'REJECTED' || str_contains($blob, 'reject') || str_contains($blob, 'अस्वीकृत'));
+
+        // Detect Ration Card / SmartPDS
+        $appNum = (string)($app['applicant_identifier'] ?? ($app['application_number'] ?? ''));
+        $appCode = (string)($app['application_code'] ?? '');
+        $isRation = false;
+        if (class_exists('\App\Services\SmartPdsService')) {
+            $isRation = \App\Services\SmartPdsService::isRationCardApplication($appNum, $appCode);
+        } else {
+            $isRation = (bool)preg_match('/^RC\d{6,}/i', $appNum) || in_array(strtoupper($appCode), ['EPDS', 'RATION', 'RATION_CARD', 'RATIONCARD', 'RATIONCARDCOREETION', 'RATIONCARDCORRECTION', 'RC', 'SMARTPDS'], true);
+        }
 
         // Extract clean rejection reason
         $rejectionReason = '';
@@ -77,73 +86,66 @@ if (!function_exists('get_application_progress')) {
         }
 
         $step = 1;
-        $rejectedStep = 3; // Standard Bihar RTPS: Step 1 (Submission: Done), Step 2 (Form Details: Done), Step 3 (Field Verification: Rejected), Step 4 (Approval: Rejected/Not Issued)
+        $rejectedStep = 3;
 
         if ($status === 'COMPLETED' || $status === 'APPROVED' || $status === 'ATTACHED' || $hasResult || !empty($app['certificate_path']) || !empty($app['certificate_file']) || (str_contains($blob, 'delivered') && !str_contains($blob, 'not available'))) {
             $step = 4;
         } elseif ($isRejected) {
-            $step = 3;
-            $rejectedStep = 3;
-        } elseif ($status === 'IN_PROCESS' || $status === 'UNDER_REVIEW' || $status === 'UNAVAILABLE' || $status === 'CHECKING' || !empty($portalStatus)) {
-            if (
-                str_contains($blob, 'sign pending') ||
-                str_contains($blob, 'forwarded to ro/co') ||
-                str_contains($blob, 'forwarded to ro') ||
-                str_contains($blob, 'forwarded to co') ||
-                str_contains($blob, 'field verification: forwarded') ||
-                str_contains($blob, 'field verification') ||
-                str_contains($blob, 'forwarded') ||
-                str_contains($blob, 'processed by sdo') ||
-                str_contains($blob, 'processed by dfso') ||
-                str_contains($blob, 'digital signature pending') ||
-                str_contains($blob, 'sign baki hai')
-            ) {
-                $step = 3;
-            } elseif (
-                str_contains($blob, 'verification') ||
-                str_contains($blob, 'inquiry') ||
-                str_contains($blob, 'under process') ||
-                str_contains($blob, 'processing')
-            ) {
-                $step = 2;
+            if ($isRation) {
+                $rejectedStep = (str_contains($blob, 'sdo') || str_contains($blob, 'dfso')) ? 3 : 2;
             } else {
-                $step = 2;
+                $rejectedStep = 3;
+            }
+            $step = $rejectedStep;
+        } elseif ($status === 'IN_PROCESS' || $status === 'UNDER_REVIEW' || $status === 'UNAVAILABLE' || $status === 'CHECKING' || !empty($portalStatus)) {
+            if ($isRation) {
+                $step = (str_contains($blob, 'sdo') || str_contains($blob, 'dfso')) ? 3 : 2;
+            } else {
+                if (
+                    str_contains($blob, 'sign pending') ||
+                    str_contains($blob, 'forwarded to ro/co') ||
+                    str_contains($blob, 'forwarded to ro') ||
+                    str_contains($blob, 'forwarded to co') ||
+                    str_contains($blob, 'field verification: forwarded') ||
+                    str_contains($blob, 'field verification') ||
+                    str_contains($blob, 'forwarded') ||
+                    str_contains($blob, 'digital signature pending') ||
+                    str_contains($blob, 'sign baki hai')
+                ) {
+                    $step = 3;
+                } else {
+                    $step = 2;
+                }
             }
         } else { // PENDING
             $step = 1;
         }
 
-        $stepNames = [
-            1 => [
-                'en' => 'Application Submission',
-                'hi' => 'आवेदन जमा',
-                'desc' => 'Online application submitted'
-            ],
-            2 => [
-                'en' => 'Form Details Verification',
-                'hi' => 'प्रपत्र सत्यापन',
-                'desc' => 'Online form verified & forwarded'
-            ],
-            3 => [
-                'en' => 'Field Verification',
-                'hi' => 'क्षेत्रीय जांच (Field Inquiry)',
-                'desc' => 'RI / CI inquiry & verification'
-            ],
-            4 => [
-                'en' => 'Approval & Certificate',
-                'hi' => 'स्वीकृति एवं प्रमाण पत्र',
-                'desc' => 'RO/CO digital signature & delivery'
-            ]
-        ];
+        if ($isRation) {
+            $stepNames = [
+                1 => ['en' => 'Submitted', 'hi' => 'जमा'],
+                2 => ['en' => 'MO / Inspector', 'hi' => 'निरीक्षक'],
+                3 => ['en' => 'SDO', 'hi' => 'अनुमंडल'],
+                4 => ['en' => 'Approved', 'hi' => 'स्वीकृत']
+            ];
+        } else {
+            $stepNames = [
+                1 => ['en' => 'Submitted', 'hi' => 'जमा'],
+                2 => ['en' => 'Verification', 'hi' => 'सत्यापन'],
+                3 => ['en' => 'Inquiry', 'hi' => 'जांच'],
+                4 => ['en' => 'Approval', 'hi' => 'स्वीकृति']
+            ];
+        }
 
         return [
+            'is_ration' => $isRation,
             'current_step' => $step,
             'is_completed' => ($step === 4 && !$isRejected),
             'is_rejected' => $isRejected,
             'rejected_step' => $rejectedStep,
             'rejection_reason' => $rejectionReason,
             'step_names' => $stepNames,
-            'summary' => $isRejected ? 'Application Rejected' : ($step === 4 ? '4/4 Steps Completed' : "{$step}/4 Steps Completed")
+            'summary' => $isRejected ? 'Rejected' : ($step === 4 ? 'Completed' : "{$step}/4 In Progress")
         ];
     }
 }
@@ -151,7 +153,7 @@ if (!function_exists('get_application_progress')) {
 if (!function_exists('render_status_stepper_dots')) {
     /**
      * Renders 4 round points (circular dots) next to the status badge.
-     * Completed steps are vibrant green; rejected steps are red; pending steps are gray.
+     * Minimal text and clean status indicator.
      */
     function render_status_stepper_dots(array $app, bool $showText = true, string $extraClass = ''): string
     {
@@ -162,28 +164,24 @@ if (!function_exists('render_status_stepper_dots')) {
         $rejStep = $prog['rejected_step'] ?? 3;
 
         $summaryTitle = $isRej
-            ? ('Application Rejected: ' . $rejReason)
+            ? ('Rejected: ' . $rejReason)
             : $prog['summary'];
 
         $html = '<div class="rtps-step-dots ' . e($extraClass) . '" title="' . e($summaryTitle) . '">';
         for ($i = 1; $i <= 4; $i++) {
             if ($isRej) {
-                if ($i === 1) {
+                if ($i < $rejStep) {
                     $dotClass = 'done';
-                    $lineClass = 'done';
-                    $stepTitle = 'Step 1: Application Submission (Completed)';
-                } elseif ($i === 2) {
-                    $dotClass = 'done';
-                    $lineClass = 'rejected';
-                    $stepTitle = 'Step 2: Form Details Verification (Completed)';
-                } elseif ($i === 3) {
+                    $lineClass = ($i < $rejStep - 1) ? 'done' : 'rejected';
+                    $stepTitle = 'Step ' . $i . ': ' . $prog['step_names'][$i]['en'] . ' (Completed)';
+                } elseif ($i === $rejStep) {
                     $dotClass = 'rejected';
                     $lineClass = 'rejected';
-                    $stepTitle = 'Step 3: Field Verification (REJECTED: ' . $rejReason . ')';
+                    $stepTitle = 'Step ' . $i . ': ' . $prog['step_names'][$i]['en'] . ' (Rejected: ' . $rejReason . ')';
                 } else {
                     $dotClass = 'rejected';
                     $lineClass = 'rejected';
-                    $stepTitle = 'Step 4: Approval & Certificate (Rejected - Certificate Not Generated)';
+                    $stepTitle = 'Step ' . $i . ': ' . $prog['step_names'][$i]['en'] . ' (Rejected)';
                 }
             } else {
                 $isDone = ($i <= $curr);
@@ -201,7 +199,7 @@ if (!function_exists('render_status_stepper_dots')) {
         }
         if ($showText) {
             if ($isRej) {
-                $html .= '<span class="rtps-step-text text-danger" title="' . e('Rejected: ' . $rejReason) . '">3/4 Rej</span>';
+                $html .= '<span class="rtps-step-text text-danger" title="' . e('Rejected: ' . $rejReason) . '">' . $rejStep . '/4 Rej</span>';
             } else {
                 $colorClass = $curr === 4 ? 'text-success' : 'text-muted';
                 $html .= '<span class="rtps-step-text ' . $colorClass . '">' . ($curr . '/4') . '</span>';
@@ -214,7 +212,7 @@ if (!function_exists('render_status_stepper_dots')) {
 
 if (!function_exists('render_status_stepper_bar')) {
     /**
-     * Renders an expanded 4-step progress stepper card for detailed views.
+     * Renders an expanded 4-step progress stepper card for detailed views with minimal text.
      */
     function render_status_stepper_bar(array $app): string
     {
@@ -222,19 +220,26 @@ if (!function_exists('render_status_stepper_bar')) {
         $curr = $prog['current_step'];
         $isRej = $prog['is_rejected'];
         $rejReason = $prog['rejection_reason'] ?? '';
+        $rejStep = $prog['rejected_step'] ?? 3;
+        $isRation = !empty($prog['is_ration']);
+
+        $cardTitle = $isRation ? 'Ration Card Tracking' : 'Application Tracking';
+        $iconClass = $isRation ? 'bi-card-checklist' : 'bi-diagram-3-fill';
 
         $progressPercent = ($curr - 1) / 3 * 100;
         if ($curr === 4 && !$isRej) $progressPercent = 100;
-        if ($isRej) $progressPercent = 66; // reaches step 3
+        if ($isRej) {
+            $progressPercent = $rejStep === 2 ? 33 : 66;
+        }
 
         $badgeClass = $isRej ? 'bg-danger' : ($curr === 4 ? 'bg-success' : 'bg-primary');
-        $badgeText = $isRej ? 'Rejected (3/4 Rej)' : ($curr === 4 ? '4/4 Completed' : ($curr . '/4 In Progress'));
+        $badgeText = $isRej ? 'Rejected' : ($curr === 4 ? 'Completed' : ($curr . '/4'));
 
         $html = '<div class="card border rounded-3 p-3 bg-white shadow-2xs mb-4">';
         $html .= '<div class="d-flex align-items-center justify-content-between mb-3 border-bottom pb-2">';
-        $html .= '<div>';
-        $html .= '<h6 class="fw-bold mb-0 text-dark"><i class="bi bi-diagram-3-fill text-primary me-2"></i>RTPS ServicePlus 4-Step Tracking</h6>';
-        $html .= '<div class="text-muted small">Status: <strong class="' . ($isRej ? 'text-danger' : '') . '">' . e($isRej ? 'Application Rejected on Portal' : $prog['summary']) . '</strong></div>';
+        $html .= '<div class="d-flex align-items-center gap-2">';
+        $html .= '<i class="bi ' . $iconClass . ' text-primary fs-5"></i>';
+        $html .= '<h6 class="fw-bold mb-0 text-dark">' . e($cardTitle) . '</h6>';
         $html .= '</div>';
         $html .= '<span class="badge ' . $badgeClass . ' px-2.5 py-1 rounded-pill">' . e($badgeText) . '</span>';
         $html .= '</div>';
@@ -244,22 +249,18 @@ if (!function_exists('render_status_stepper_bar')) {
 
         for ($i = 1; $i <= 4; $i++) {
             if ($isRej) {
-                if ($i === 1) {
+                if ($i < $rejStep) {
                     $circleClass = 'done';
                     $icon = '<i class="bi bi-check-lg"></i>';
                     $statusText = '<span class="text-success fw-bold">Completed</span>';
-                } elseif ($i === 2) {
-                    $circleClass = 'done';
-                    $icon = '<i class="bi bi-check-lg"></i>';
-                    $statusText = '<span class="text-success fw-bold">Completed</span>';
-                } elseif ($i === 3) {
+                } elseif ($i === $rejStep) {
                     $circleClass = 'rejected';
                     $icon = '<i class="bi bi-x-lg"></i>';
                     $statusText = '<span class="text-danger fw-bold">Rejected</span>';
                 } else {
                     $circleClass = 'rejected';
                     $icon = '<i class="bi bi-x-lg"></i>';
-                    $statusText = '<span class="text-danger fw-bold">Not Issued</span>';
+                    $statusText = '<span class="text-danger fw-bold">Rejected</span>';
                 }
             } else {
                 $isDone = ($i <= $curr);
@@ -280,11 +281,10 @@ if (!function_exists('render_status_stepper_bar')) {
         $html .= '</div>'; // .rtps-stepper-lg
 
         if ($isRej && !empty($rejReason)) {
-            $html .= '<div class="alert alert-danger border border-danger-subtle d-flex align-items-start gap-2 py-2 px-3 mt-3 mb-0 rounded-3" style="font-size: 0.8rem;">';
-            $html .= '<i class="bi bi-exclamation-octagon-fill text-danger fs-5 mt-0.5 flex-shrink-0"></i>';
+            $html .= '<div class="alert alert-danger border border-danger-subtle d-flex align-items-center gap-2 py-2 px-3 mt-3 mb-0 rounded-3" style="font-size: 0.8rem;">';
+            $html .= '<i class="bi bi-x-circle-fill text-danger fs-6 flex-shrink-0"></i>';
             $html .= '<div>';
-            $html .= '<div class="fw-bold text-danger">Rejection Reason (अस्वीकृति का कारण):</div>';
-            $html .= '<div class="text-dark mt-0.5">' . e($rejReason) . '</div>';
+            $html .= '<span class="fw-bold text-danger">Rejected: </span><span class="text-dark">' . e($rejReason) . '</span>';
             $html .= '</div>';
             $html .= '</div>';
         }

@@ -54,11 +54,11 @@ class SmartPdsService
         $num = strtoupper(trim($appNumber));
         $code = strtoupper(trim($appCode));
 
-        if ($num !== '' && preg_match('/^RC\d{8,}/i', $num)) {
+        if ($num !== '' && preg_match('/^RC\d{6,}/i', $num)) {
             return true;
         }
 
-        if (in_array($code, ['EPDS', 'RATION', 'RATION_CARD', 'RATIONCARD', 'RATIONCARDCOREETION', 'RATIONCARDCORRECTION', 'RC', 'SMARTPDS'], true) && str_starts_with($num, 'RC')) {
+        if (in_array($code, ['EPDS', 'RATION', 'RATION_CARD', 'RATIONCARD', 'RATIONCARDCOREETION', 'RATIONCARDCORRECTION', 'RC', 'SMARTPDS'], true)) {
             return true;
         }
 
