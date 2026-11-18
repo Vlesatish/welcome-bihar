@@ -487,8 +487,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'fetchGmailOtp') {
     (async () => {
       try {
+        const triggerTime = Number(msg.triggerTime) || Date.now();
         activeOtpUtiTabId = sender.tab ? sender.tab.id : null;
-        await chrome.storage.local.set({ isWaitingForOtp: true, otpRequestedAt: Date.now() });
+        await chrome.storage.local.set({ isWaitingForOtp: true, otpRequestedAt: triggerTime });
 
         const allTabs = await new Promise((r) => chrome.tabs.query({}, r));
         const gmailTabs = (allTabs || []).filter((t) => {
@@ -503,7 +504,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const gTab = gmailTabs[0];
           await chrome.tabs.update(gTab.id, { url: targetGmailUrl, active: true });
           setTimeout(() => {
-            chrome.tabs.sendMessage(gTab.id, { action: 'readOtpNow' }, () => {
+            chrome.tabs.sendMessage(gTab.id, { action: 'readOtpNow', triggerTime }, () => {
               void chrome.runtime.lastError;
             });
           }, 1200);
@@ -512,6 +513,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             chrome.tabs.create({ url: targetGmailUrl, active: true }, r);
           });
           createdGmailTabId = newTab ? newTab.id : null;
+          setTimeout(() => {
+            if (createdGmailTabId) {
+              chrome.tabs.sendMessage(createdGmailTabId, { action: 'readOtpNow', triggerTime }, () => {
+                void chrome.runtime.lastError;
+              });
+            }
+          }, 1800);
         }
 
         sendResponse({ success: true });

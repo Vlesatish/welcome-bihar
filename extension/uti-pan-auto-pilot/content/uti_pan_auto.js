@@ -2711,15 +2711,16 @@
     if (otpFetchInitiated) return;
     otpFetchInitiated = true;
 
-    updateBadge('📧 OTP Verification Screen • Fetching latest code from Gmail...', '#f59e0b');
+    const triggerTime = Date.now();
+    updateBadge('📧 OTP Verification Screen • Fetching current-time code from Gmail...', '#f59e0b');
 
-    chrome.runtime.sendMessage({ action: 'fetchGmailOtp' }, () => {
+    chrome.runtime.sendMessage({ action: 'fetchGmailOtp', triggerTime }, () => {
       void chrome.runtime.lastError;
     });
 
     setTimeout(() => {
       otpFetchInitiated = false;
-    }, 35000);
+    }, 45000);
   }
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
