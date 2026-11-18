@@ -59,6 +59,49 @@
     }
   }
 
+  function selectOption(selectEl, expectedValue, fallbackKeywords = []) {
+    if (!selectEl) return false;
+    const strVal = String(expectedValue || '').trim().toLowerCase();
+    const keywords = Array.isArray(fallbackKeywords)
+      ? fallbackKeywords.map((k) => String(k).toLowerCase())
+      : [String(fallbackKeywords).toLowerCase()];
+
+    // 1. Try exact option value match
+    if (strVal) {
+      for (let i = 0; i < selectEl.options.length; i++) {
+        if ((selectEl.options[i].value || '').trim().toLowerCase() === strVal) {
+          if (selectEl.selectedIndex !== i) {
+            selectEl.selectedIndex = i;
+            selectEl.value = selectEl.options[i].value;
+            selectEl.options[i].selected = true;
+            selectEl.dispatchEvent(new Event('input', { bubbles: true }));
+            selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+          return true;
+        }
+      }
+    }
+
+    // 2. Try keywords in option text
+    for (const kw of keywords) {
+      if (!kw) continue;
+      for (let i = 0; i < selectEl.options.length; i++) {
+        const txt = (selectEl.options[i].text || '').toLowerCase();
+        if (txt.includes(kw)) {
+          if (selectEl.selectedIndex !== i) {
+            selectEl.selectedIndex = i;
+            selectEl.value = selectEl.options[i].value;
+            selectEl.options[i].selected = true;
+            selectEl.dispatchEvent(new Event('input', { bubbles: true }));
+            selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   function selectOptionByText(selectEl, targetText, exactOnly = false) {
     if (!selectEl || !targetText) return false;
     const target = String(targetText).trim().toLowerCase();
@@ -99,6 +142,32 @@
       }
     }
     return false;
+  }
+
+  function calculateAge(dobStr) {
+    if (!dobStr) return 25;
+    const clean = String(dobStr).trim().replace(/-/g, '/');
+    const parts = clean.split('/');
+    let day = 1, month = 1, year = 2000;
+    if (parts.length === 3) {
+      if (parts[0].length === 4) {
+        year = parseInt(parts[0], 10);
+        month = parseInt(parts[1], 10);
+        day = parseInt(parts[2], 10);
+      } else {
+        day = parseInt(parts[0], 10);
+        month = parseInt(parts[1], 10);
+        year = parseInt(parts[2], 10);
+      }
+    }
+    const birthDate = new Date(year, month - 1, day);
+    const today = new Date();
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const m = today.getMonth() - birthDate.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+      age--;
+    }
+    return isNaN(age) ? 25 : age;
   }
 
   function splitFullName(fullName) {
@@ -501,6 +570,63 @@
   }
 
   // -----------------------------------------------------------------------
+  // STEP 2: Documents & Payment Tab (identityProofDoc, addressProofDoc, dobProofDoc)
+  // -----------------------------------------------------------------------
+  function handleDocumentsTab(force = false) {
+    let filled = false;
+
+    // 1. Proof of Identity (POI) -> AADHAAR (value="16")
+    const poiEl = document.getElementById('identityProofDoc');
+    if (poiEl && (!poiEl.value || poiEl.value === '' || force)) {
+      if (selectOption(poiEl, '16', ['aadhaar', 'uidai'])) {
+        filled = true;
+      }
+    }
+
+    // 2. Proof of Address (POA) -> AADHAAR (value="21")
+    const poaEl = document.getElementById('addressProofDoc');
+    if (poaEl && (!poaEl.value || poaEl.value === '' || force)) {
+      if (selectOption(poaEl, '21', ['aadhaar', 'uidai'])) {
+        filled = true;
+      }
+    }
+
+    // 3. Proof of Date of Birth (PoDOB):
+    // If age 10 to 22 -> Marksheet / Matriculation (value="14")
+    // If age > 22 -> Voter ID (value="3")
+    const podobEl = document.getElementById('dobProofDoc');
+    if (podobEl && (!podobEl.value || podobEl.value === '' || force)) {
+      const age = calculateAge(currentCandidate?.dob);
+      let selected = false;
+      if (age >= 10 && age <= 22) {
+        selected = selectOption(podobEl, '14', ['matriculation', 'mark sheet', 'recognised board']);
+      } else {
+        selected = selectOption(podobEl, '3', ['voter', 'electoral']);
+      }
+      if (selected) {
+        filled = true;
+      }
+    }
+
+    // Representative Assessee documents (in minor case)
+    const repPoiEl = document.getElementById('repIdentityProofDoc');
+    if (repPoiEl && isVisible(repPoiEl) && (!repPoiEl.value || force)) {
+      selectOption(repPoiEl, '16', ['aadhaar', 'uidai']);
+    }
+    const repPoaEl = document.getElementById('repAddressProofDoc');
+    if (repPoaEl && isVisible(repPoaEl) && (!repPoaEl.value || force)) {
+      selectOption(repPoaEl, '21', ['aadhaar', 'uidai']);
+    }
+
+    if (filled) {
+      const age = calculateAge(currentCandidate?.dob);
+      const dobDocText = (age >= 10 && age <= 22) ? `Marksheet (Age: ${age})` : `Voter ID (Age: ${age})`;
+      updateBadge(`📑 Documents Set: Aadhaar + Aadhaar + ${dobDocText}`, '#10b981');
+    }
+    return filled;
+  }
+
+  // -----------------------------------------------------------------------
   // PAGE 2: IndmainForm (Form No. 93)
   // -----------------------------------------------------------------------
   function handleIndMainForm(force = false) {
@@ -511,6 +637,7 @@
       return;
     }
 
+    // Step 1: Personal Information (First Name, Middle Name, Last Name, Gender)
     const { first, middle, last } = splitFullName(currentCandidate.full_name);
 
     let filledAny = false;
@@ -616,7 +743,6 @@
     const aadhaarNoEl = document.getElementById('aadhaarNo');
     if (aadhaarNoEl && currentCandidate.aadhaar_no) {
       const cleanAadhaar = String(currentCandidate.aadhaar_no).replace(/\D/g, '');
-      // Only set if field is empty or force
       if (!aadhaarNoEl.value || (force && aadhaarNoEl.value !== cleanAadhaar)) {
         setInputValue(aadhaarNoEl, cleanAadhaar);
         filledAny = true;
@@ -630,10 +756,14 @@
       filledAny = true;
     }
 
-    if (filledAny) {
+    // Step 2: Documents & Payment Tab
+    const docsFilled = handleDocumentsTab(force);
+    if (docsFilled) {
+      filledAny = true;
+    }
+
+    if (filledAny && !docsFilled) {
       updateBadge(`✍️ Personal Info Auto-Filled: ${currentCandidate.full_name}`, '#10b981');
-    } else if (!aadhaarConfirmed) {
-      updateBadge(`Form 93 Ready: ${currentCandidate.full_name}`, '#38bdf8');
     }
   }
 
@@ -700,7 +830,14 @@
     const url = (window.location.href || '').toLowerCase();
 
     // 1. Form No. 93 / IndmainForm (Highest Priority)
-    if (url.includes('indmainform') || url.includes('panind.html') || document.getElementById('firstName') || document.getElementById('refNo') || document.getElementById('reEnterUid')) {
+    if (
+      url.includes('indmainform') ||
+      url.includes('panind.html') ||
+      document.getElementById('firstName') ||
+      document.getElementById('identityProofDoc') ||
+      document.getElementById('refNo') ||
+      document.getElementById('reEnterUid')
+    ) {
       handleIndMainForm(force);
       return;
     }
@@ -750,7 +887,7 @@
     }
   });
 
-  // Re-check periodically for dynamic DOM & modals
+  // Re-check periodically for dynamic DOM & wizard step transitions
   setInterval(() => {
     runAutoFill(false);
   }, 700);
