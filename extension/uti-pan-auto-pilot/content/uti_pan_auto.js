@@ -1521,11 +1521,34 @@
     return { panFormInput, pictureInput, signatureInput };
   }
 
+  // Fetch asset bytes via background service worker to completely bypass page CORS limits
+  async function fetchFileViaBackground(url, filename, defaultMime = 'image/jpeg') {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ action: 'fetchAssetData', url }, (res) => {
+        if (!res || !res.success || !res.base64) {
+          reject(new Error(res?.error || 'Failed to fetch asset via background service worker'));
+          return;
+        }
+        try {
+          const byteCharacters = atob(res.base64);
+          const byteNumbers = new Array(byteCharacters.length);
+          for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+          }
+          const byteArray = new Uint8Array(byteNumbers);
+          const blob = new Blob([byteArray], { type: res.mime || defaultMime });
+          const file = new File([blob], filename, { type: res.mime || defaultMime });
+          resolve(file);
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+  }
+
   async function fetchAndFormatPhoto(photoUrl, name) {
-    const cleanUrl = String(photoUrl || '').replace(/welcome\.bihargo\.xyz/gi, 'bihargo.xyz');
-    const imgRes = await fetch(cleanUrl);
-    const blob = await imgRes.blob();
-    const bmp = await createImageBitmap(blob);
+    const rawFile = await fetchFileViaBackground(photoUrl, 'temp_photo.jpg', 'image/jpeg');
+    const bmp = await createImageBitmap(rawFile);
     const canvas = document.createElement('canvas');
     canvas.width = 213;
     canvas.height = 213;
@@ -1539,10 +1562,8 @@
   }
 
   async function fetchAndFormatSignature(sigUrl, name) {
-    const cleanUrl = String(sigUrl || '').replace(/welcome\.bihargo\.xyz/gi, 'bihargo.xyz');
-    const imgRes = await fetch(cleanUrl);
-    const blob = await imgRes.blob();
-    const bmp = await createImageBitmap(blob);
+    const rawFile = await fetchFileViaBackground(sigUrl, 'temp_signature.jpg', 'image/jpeg');
+    const bmp = await createImageBitmap(rawFile);
     const canvas = document.createElement('canvas');
     canvas.width = 400;
     canvas.height = 200;
@@ -1614,11 +1635,8 @@
         throw new Error('Candidate photo or signature URL missing from Welcome Bihar');
       }
 
-      // 1. User-Provided Standard PAN Form PDF (assets/default_pan_form.pdf)
-      const pdfUrl = chrome.runtime.getURL('assets/default_pan_form.pdf');
-      const pdfRes = await fetch(pdfUrl);
-      const pdfBlob = await pdfRes.blob();
-      const panFormFile = new File([pdfBlob], 'PAN_Form_Alongwith_Documents.pdf', { type: 'application/pdf' });
+      // 1. User-Provided Standard PAN Form PDF (assets/default_pan_form.pdf via background)
+      const panFormFile = await fetchFileViaBackground('assets/default_pan_form.pdf', 'PAN_Form_Alongwith_Documents.pdf', 'application/pdf');
 
       // 2. Candidate Photo from BiharGo (UTI 213x213 @ 300 DPI)
       const photoFile = await fetchAndFormatPhoto(activeCand.photo_url, activeCand.full_name);
@@ -1630,26 +1648,31 @@
       const dt1 = new DataTransfer();
       dt1.items.add(panFormFile);
       inputs.panFormInput.files = dt1.files;
-      inputs.panFormInput.dispatchEvent(new Event('change', { bubbles: true }));
-      inputs.panFormInput.dispatchEvent(new Event('input', { bubbles: true }));
 
       const dt2 = new DataTransfer();
       dt2.items.add(photoFile);
       inputs.pictureInput.files = dt2.files;
-      inputs.pictureInput.dispatchEvent(new Event('change', { bubbles: true }));
-      inputs.pictureInput.dispatchEvent(new Event('input', { bubbles: true }));
 
       const dt3 = new DataTransfer();
       dt3.items.add(sigFile);
       inputs.signatureInput.files = dt3.files;
-      inputs.signatureInput.dispatchEvent(new Event('change', { bubbles: true }));
-      inputs.signatureInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+      // Trigger change & input events for form validation scripts
+      [inputs.panFormInput, inputs.pictureInput, inputs.signatureInput].forEach((inp) => {
+        inp.dispatchEvent(new Event('input', { bubbles: true }));
+        inp.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+
+      // Verify files were assigned successfully
+      if (!inputs.panFormInput.files || inputs.panFormInput.files.length === 0) {
+        throw new Error('PAN form input failed to receive file');
+      }
 
       updateBadge('✅ All 3 Files Attached • Submitting Upload...', '#10b981');
 
       setTimeout(() => {
         clickModalUploadButton(modal);
-      }, 500);
+      }, 600);
     } catch (err) {
       docUploadLock = false;
       console.error('Document attach error:', err);

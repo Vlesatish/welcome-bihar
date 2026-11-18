@@ -308,6 +308,37 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.action === 'fetchAssetData') {
+    (async () => {
+      try {
+        let cleanUrl = String(msg.url || '');
+        if (cleanUrl.startsWith('assets/')) {
+          cleanUrl = chrome.runtime.getURL(cleanUrl);
+        } else {
+          cleanUrl = cleanUrl.replace(/welcome\.bihargo\.xyz/gi, 'bihargo.xyz');
+        }
+
+        const res = await fetch(cleanUrl, { cache: 'no-cache' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const buf = await res.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        let binary = '';
+        const len = bytes.byteLength;
+        const chunkSize = 8192;
+        for (let i = 0; i < len; i += chunkSize) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + chunkSize, len)));
+        }
+        const b64 = btoa(binary);
+        const mime = res.headers.get('content-type') || (cleanUrl.endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
+        sendResponse({ success: true, base64: b64, mime });
+      } catch (e) {
+        sendResponse({ success: false, error: e.message });
+      }
+    })();
+    return true;
+  }
+
   if (msg.action === 'openDocUploadPage') {
     const tabId = sender && sender.tab ? sender.tab.id : null;
     openDocUploadAndCloseSuccess(tabId);
