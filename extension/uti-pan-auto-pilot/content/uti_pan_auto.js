@@ -627,6 +627,114 @@
   }
 
   // -----------------------------------------------------------------------
+  // STEP 3: Contact & Parent Details Tab
+  // -----------------------------------------------------------------------
+  function handleContactAndParentsTab(force = false) {
+    let filled = false;
+
+    // 1. Mobile ISD Code -> INDIA ( 91 ) (value="91")
+    const mobileCountryCdEl = document.getElementById('mobileCountryCd') || document.getElementById('telCountryCd');
+    if (mobileCountryCdEl && (!mobileCountryCdEl.value || mobileCountryCdEl.value !== '91' || force)) {
+      if (selectOption(mobileCountryCdEl, '91', ['india ( 91 )', 'india'])) {
+        filled = true;
+      }
+    }
+
+    // 2. Mobile Number (10 digits)
+    const mobileNoEl = document.getElementById('mobileNo');
+    if (mobileNoEl && currentCandidate?.mobile_no) {
+      const cleanMobile = String(currentCandidate.mobile_no).replace(/\D/g, '').slice(-10);
+      if (!mobileNoEl.value || (force && mobileNoEl.value !== cleanMobile)) {
+        setInputValue(mobileNoEl, cleanMobile);
+        filled = true;
+      }
+    }
+
+    // 3. Email ID
+    const emailIdEl = document.getElementById('emailId');
+    const candEmail = currentCandidate?.email_id || currentCandidate?.email;
+    if (emailIdEl && candEmail) {
+      const cleanEmail = String(candEmail).trim();
+      if (!emailIdEl.value || (force && emailIdEl.value !== cleanEmail)) {
+        setInputValue(emailIdEl, cleanEmail);
+        filled = true;
+      }
+    }
+
+    // 4. Details of Parents -> Single Parent No (mthNo checkbox)
+    const mthNoEl = document.getElementById('mthNo');
+    const mthYesEl = document.getElementById('mthYes');
+    if (mthNoEl && !mthNoEl.checked) {
+      mthNoEl.checked = true;
+      if (mthYesEl) mthYesEl.checked = false;
+      mthNoEl.dispatchEvent(new Event('input', { bubbles: true }));
+      mthNoEl.dispatchEvent(new Event('change', { bubbles: true }));
+      try {
+        if (typeof window.selectParant === 'function') window.selectParant('N');
+      } catch (e) {}
+      filled = true;
+    }
+
+    // 5. Name of Parent on Card -> FATHER'S NAME (value="F")
+    const parentNameOnCardEl = document.getElementById('parentNameOnCard');
+    if (parentNameOnCardEl && (parentNameOnCardEl.value !== 'F' || force)) {
+      if (selectOption(parentNameOnCardEl, 'F', ["father's name", 'father'])) {
+        try {
+          if (typeof window.handleParentChange === 'function') window.handleParentChange();
+        } catch (e) {}
+        filled = true;
+      }
+    }
+
+    // 6. Father's Name (fthFirst, fthMiddle, fthLast)
+    if (currentCandidate?.father_name) {
+      const { first, middle, last } = splitFullName(currentCandidate.father_name);
+      const fthFirstEl = document.getElementById('fthFirst');
+      const fthMiddleEl = document.getElementById('fthMiddle');
+      const fthLastEl = document.getElementById('fthLast');
+
+      if (fthFirstEl && (!fthFirstEl.value || force)) {
+        setInputValue(fthFirstEl, first);
+        filled = true;
+      }
+      if (fthMiddleEl && (!fthMiddleEl.value || force)) {
+        setInputValue(fthMiddleEl, middle);
+        filled = true;
+      }
+      if (fthLastEl && (!fthLastEl.value || force)) {
+        setInputValue(fthLastEl, last);
+        filled = true;
+      }
+    }
+
+    // 7. Mother's Name (mthFirst, mthMiddle, mthLast)
+    if (currentCandidate?.mother_name) {
+      const { first, middle, last } = splitFullName(currentCandidate.mother_name);
+      const mthFirstEl = document.getElementById('mthFirst');
+      const mthMiddleEl = document.getElementById('mthMiddle');
+      const mthLastEl = document.getElementById('mthLast');
+
+      if (mthFirstEl && (!mthFirstEl.value || force)) {
+        setInputValue(mthFirstEl, first);
+        filled = true;
+      }
+      if (mthMiddleEl && (!mthMiddleEl.value || force)) {
+        setInputValue(mthMiddleEl, middle);
+        filled = true;
+      }
+      if (mthLastEl && (!mthLastEl.value || force)) {
+        setInputValue(mthLastEl, last);
+        filled = true;
+      }
+    }
+
+    if (filled) {
+      updateBadge(`👨‍👩‍👧 Contact & Parents Set: ${currentCandidate.father_name || currentCandidate.full_name}`, '#10b981');
+    }
+    return filled;
+  }
+
+  // -----------------------------------------------------------------------
   // PAGE 2: IndmainForm (Form No. 93)
   // -----------------------------------------------------------------------
   function handleIndMainForm(force = false) {
@@ -762,7 +870,13 @@
       filledAny = true;
     }
 
-    if (filledAny && !docsFilled) {
+    // Step 3: Contact & Parent Details Tab
+    const contactFilled = handleContactAndParentsTab(force);
+    if (contactFilled) {
+      filledAny = true;
+    }
+
+    if (filledAny && !docsFilled && !contactFilled) {
       updateBadge(`✍️ Personal Info Auto-Filled: ${currentCandidate.full_name}`, '#10b981');
     }
   }
