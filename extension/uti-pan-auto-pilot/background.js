@@ -104,14 +104,6 @@ async function checkQueueAndLaunch(forceRestart = false) {
     return { success: false, reason: 'paused' };
   }
 
-  // Hold queue if current candidate is awaiting Photo / Signature / PDF upload
-  const storedState = await new Promise((resolve) => {
-    chrome.storage.local.get(['awaitingDocUpload', 'currentCandidate'], resolve);
-  });
-  if (storedState && storedState.awaitingDocUpload && !forceRestart) {
-    return { success: false, reason: 'awaiting_doc_upload' };
-  }
-
   try {
     const res = await fetch(`${cfg.portalUrl}/api/pan-card/queue`, {
       method: 'GET',

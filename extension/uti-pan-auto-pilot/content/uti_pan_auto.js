@@ -1262,11 +1262,18 @@
 
   // -----------------------------------------------------------------------
   // PAGE 7: redirectSuccess -> Receipt Capture & Candidate Complete
-  // "jaise hi ye page aata hai 2 image me jitna screen shot hai utna screen shot
-  //  karke welcome bihar wale me attach karke complete kar do"
   // -----------------------------------------------------------------------
   let receiptHandling = false;
-  let receiptCompleted = false;
+  let lastCompletedCoupon = '';
+
+  function isReceiptPage() {
+    const url = (window.location.href || '').toLowerCase();
+    if (url.includes('redirectsuccess') || url.includes('acknowledg') || url.includes('receipt')) return true;
+    const bodyText = (document.body?.innerText || '').toLowerCase();
+    if (bodyText.includes('pan application acknowledgment receipt') || bodyText.includes('pan application acknowledgement receipt')) return true;
+    if (bodyText.includes('coupon no') && (bodyText.includes('received rs.') || bodyText.includes('mode of pan card') || bodyText.includes('aadhaar matched'))) return true;
+    return false;
+  }
 
   function findReceiptElement() {
     // 1. Check for specific table that has the receipt rows and parent with header
@@ -1276,7 +1283,7 @@
       const t = (tbl.innerText || tbl.textContent || '');
       if (t.includes('Received Rs.') && (t.includes('Coupon No') || t.includes('Application No'))) {
         const p = tbl.closest('div.card, div.container, div#printArea, div[id*="receipt" i], div[class*="receipt" i], table, div');
-        if (p && isVisible(p) && (p.innerText || '').includes('PAN Application Acknowledgment Receipt')) {
+        if (p && isVisible(p) && (p.innerText || '').toLowerCase().includes('acknowledg')) {
           const pr = p.getBoundingClientRect();
           if (pr.width > 300 && pr.height > 200) {
             return p;
@@ -1290,9 +1297,8 @@
     const allContainers = Array.from(document.querySelectorAll('div, table, section, form'));
     const matches = allContainers.filter((el) => {
       if (!isVisible(el)) return false;
-      const txt = (el.innerText || el.textContent || '');
-      return txt.includes('PAN Application Acknowledgment Receipt') &&
-             (txt.includes('Application No./Coupon No') || txt.includes('Received Rs.'));
+      const txt = (el.innerText || el.textContent || '').toLowerCase();
+      return txt.includes('acknowledg') && (txt.includes('coupon no') || txt.includes('received rs.'));
     });
 
     if (matches.length > 0) {
@@ -1307,13 +1313,49 @@
     return null;
   }
 
+  function sendCompletionPayload(croppedBase64, couponNo, applicantName, mobileNo, aadhaarLast4) {
+    chrome.storage.local.get(['currentCandidate', 'queueList'], (stored) => {
+      const cand = stored?.currentCandidate || (Array.isArray(stored?.queueList) && stored?.queueList[0]) || null;
+      const appId = cand ? (cand.id || cand.app_id) : null;
+      const appRef = cand ? String(cand.app_ref || '').replace(/^#+/, '').trim() : null;
+
+      updateBadge(`📤 Updating Welcome Bihar (Coupon: ${couponNo || 'Saved'})...`, '#38bdf8');
+
+      chrome.runtime.sendMessage({
+        action: 'candidateCompleted',
+        appId: appId,
+        appRef: appRef,
+        applicantName: applicantName || cand?.full_name || '',
+        mobileNo: mobileNo || cand?.mobile_no || '',
+        aadhaarNo: aadhaarLast4 || cand?.aadhaar_no || '',
+        utiRefNo: couponNo || currentUtiRefNo,
+        remarks: `UTI PAN Form 93 Completed. Coupon: ${couponNo || 'Attached'}`,
+        screenshot: croppedBase64 || '',
+        result_file_base64: croppedBase64 || ''
+      }, (resp) => {
+        receiptHandling = false;
+        if (resp && resp.success) {
+          lastCompletedCoupon = couponNo;
+          updateBadge(`🎉 Application COMPLETED on Welcome Bihar! (${couponNo})`, '#10b981');
+        } else {
+          updateBadge(`⚠️ Complete update: ${resp?.error || 'Pending retry'}`, '#f59e0b');
+        }
+      });
+    });
+  }
+
   function handleReceiptSuccessPage() {
-    if (receiptCompleted || receiptHandling) return;
+    if (receiptHandling) return;
 
     const pageText = document.body?.innerText || '';
     const couponMatch = pageText.match(/(?:Application\s*No\.?\s*\/?\s*Coupon\s*No\.?|Coupon\s*No\.?)\s*[:\s]*([Uu]-[A-Za-z0-9]+|[A-Za-z0-9]{8,})/i) ||
                         pageText.match(/\b(U-[A-Za-z0-9]{8,})\b/i);
     const couponNo = couponMatch ? couponMatch[1].trim() : (currentUtiRefNo || '');
+
+    // If already completed for this specific coupon, avoid duplicate API calls
+    if (couponNo && couponNo === lastCompletedCoupon) {
+      return;
+    }
 
     // Extract demographic details directly from the on-screen receipt table
     const nameMatch = pageText.match(/Received\s*Rs\.[^\n]*from\s*([A-Za-z\s]+)/i) || pageText.match(/Name\s*as\s*per\s*Aadhaar\s*([A-Za-z\s]+)/i);
@@ -1326,41 +1368,39 @@
     const aadhaarLast4 = aadhMatch ? aadhMatch[1].replace(/\D/g, '').slice(-4) : '';
 
     const receiptEl = findReceiptElement();
-    if (!receiptEl) {
-      updateBadge('📄 Receipt Page Detected • Locating Receipt Box...', '#38bdf8');
-      return;
-    }
-
     receiptHandling = true;
-    // Auto-unlock after 7 seconds to prevent any permanent lock
+
+    // Auto-unlock after 6 seconds to prevent any permanent lock
     const safetyTimer = setTimeout(() => {
       receiptHandling = false;
-    }, 7000);
+    }, 6000);
 
-    updateBadge(`📸 Capturing Receipt (${couponNo || 'Form 93'})...`, '#38bdf8');
+    updateBadge(`📸 Processing Receipt (${couponNo || 'Form 93'})...`, '#38bdf8');
 
     // Scroll receipt smoothly into view
-    try {
-      receiptEl.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
-    } catch (e) {}
+    if (receiptEl) {
+      try {
+        receiptEl.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
+      } catch (e) {}
+    }
 
     setTimeout(() => {
-      const rect = receiptEl.getBoundingClientRect();
+      const rect = receiptEl ? receiptEl.getBoundingClientRect() : null;
       const dpr = window.devicePixelRatio || 1;
 
-      const crop = {
+      const crop = rect ? {
         x: Math.max(0, Math.floor((rect.left - 4) * dpr)),
         y: Math.max(0, Math.floor((rect.top - 4) * dpr)),
         width: Math.min(window.innerWidth * dpr, Math.ceil((rect.width + 8) * dpr)),
         height: Math.min(window.innerHeight * dpr, Math.ceil((rect.height + 8) * dpr))
-      };
+      } : null;
 
       // Request tab screenshot from background
       chrome.runtime.sendMessage({ action: 'captureTab' }, (res) => {
         clearTimeout(safetyTimer);
-        if (!res || !res.dataUrl) {
-          receiptHandling = false;
-          updateBadge(`⚠️ Screenshot error: ${res?.error || 'Retrying...'}`, '#f59e0b');
+        // Even if captureTab returns no dataUrl, ALWAYS complete the candidate!
+        if (!res || !res.dataUrl || !crop) {
+          sendCompletionPayload('', couponNo, applicantName, mobileNo, aadhaarLast4);
           return;
         }
 
@@ -1392,40 +1432,16 @@
             croppedBase64 = res.dataUrl;
           }
 
-          const appId = currentCandidate ? (currentCandidate.id || currentCandidate.app_id) : null;
-          const appRef = currentCandidate ? String(currentCandidate.app_ref || '').replace(/^#+/, '').trim() : null;
-
-          updateBadge(`📤 Attaching Receipt to Welcome Bihar...`, '#38bdf8');
-
-          chrome.runtime.sendMessage({
-            action: 'candidateCompleted',
-            appId: appId,
-            appRef: appRef,
-            applicantName: applicantName,
-            mobileNo: mobileNo,
-            aadhaarNo: aadhaarLast4,
-            utiRefNo: couponNo || currentUtiRefNo,
-            remarks: `UTI PAN Form 93 Completed. Coupon: ${couponNo || 'Attached'}`,
-            screenshot: croppedBase64,
-            result_file_base64: croppedBase64
-          }, (resp) => {
-            receiptHandling = false;
-            if (resp && resp.success) {
-              receiptCompleted = true;
-              updateBadge(`🎉 Candidate COMPLETED! Receipt Uploaded (${couponNo})`, '#10b981');
-            } else {
-              updateBadge(`⚠️ Complete update: ${resp?.error || 'Retrying...'}`, '#f59e0b');
-            }
-          });
+          sendCompletionPayload(croppedBase64, couponNo, applicantName, mobileNo, aadhaarLast4);
         };
 
         img.onerror = () => {
-          receiptHandling = false;
+          sendCompletionPayload('', couponNo, applicantName, mobileNo, aadhaarLast4);
         };
 
         img.src = res.dataUrl;
       });
-    }, 600);
+    }, 500);
   }
 
   // -----------------------------------------------------------------------
@@ -1435,10 +1451,7 @@
     const url = (window.location.href || '').toLowerCase();
 
     // 0. Receipt / redirectSuccess page (Success Screen)
-    if (
-      url.includes('redirectsuccess') ||
-      (document.body?.innerText || '').includes('PAN Application Acknowledgment Receipt')
-    ) {
+    if (isReceiptPage()) {
       handleReceiptSuccessPage();
       return;
     }
