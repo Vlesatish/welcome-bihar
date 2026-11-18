@@ -154,9 +154,9 @@ async function checkQueueAndLaunch(forceRestart = false) {
     });
 
     if (queue.length === 0) {
-      // If a candidate is actively in progress or awaiting document upload, DO NOT wipe storage!
-      const stored = await new Promise((r) => chrome.storage.local.get(['currentCandidate', 'awaitingDocUpload'], r));
-      if (stored.currentCandidate || stored.awaitingDocUpload) {
+      // Only keep candidate if actively awaiting immediate document upload right after form submission
+      const stored = await new Promise((r) => chrome.storage.local.get(['awaitingDocUpload'], r));
+      if (stored && stored.awaitingDocUpload) {
         return { success: true, count: 0, inFlight: true };
       }
       activeCandidateKey = null;
@@ -353,8 +353,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       try {
         let cleanUrl = String(msg.url || '').trim();
+        let isAsset = false;
         if (cleanUrl.startsWith('assets/')) {
           cleanUrl = chrome.runtime.getURL(cleanUrl);
+          isAsset = true;
         } else {
           cleanUrl = cleanUrl.replace(/^https?:\/\/welcome\.bihargo\.xyz/i, 'https://www.bihargo.xyz');
           cleanUrl = cleanUrl.replace(/^https?:\/\/localhost(:\d+)?/i, 'https://www.bihargo.xyz');
@@ -365,7 +367,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
         }
 
-        const res = await fetch(cleanUrl, { cache: 'no-cache' });
+        const fetchOpts = isAsset ? {} : { cache: 'no-cache' };
+        const res = await fetch(cleanUrl, fetchOpts);
         if (!res.ok) throw new Error(`HTTP ${res.status} when fetching ${cleanUrl}`);
 
         const buf = await res.arrayBuffer();

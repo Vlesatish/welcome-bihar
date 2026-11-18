@@ -964,7 +964,7 @@ class PanCardController
 
             $stmt = $this->db->prepare("
                 SELECT a.id, a.app_ref, a.user_id, a.applicant_name, a.applicant_mobile,
-                       a.applicant_identifier, a.status, a.created_at, a.remarks,
+                       a.applicant_identifier, a.status, a.created_at, a.remarks, a.result_file,
                        d.name as district_name, b.name as block_name
                 FROM applications a
                 LEFT JOIN districts d ON d.id = a.district_id
@@ -1034,6 +1034,7 @@ class PanCardController
                     'signature_url' => $toAbsUrl($f['signature'] ?? null),
                     'aadhar_card_url' => $toAbsUrl($f['aadhar_card'] ?? null),
                     'pan_form_url' => $toAbsUrl($f['pan_form'] ?? null),
+                    'result_file_url' => $toAbsUrl($r['result_file'] ?? null),
                 ];
             }
 
@@ -1199,7 +1200,11 @@ class PanCardController
                 $remarks,
                 $resultFileUrl !== '' ? $resultFileUrl : null
             );
-            echo json_encode(['success' => true, 'message' => $res['message'] ?? 'Marked as COMPLETED']);
+            echo json_encode([
+                'success' => true,
+                'message' => $res['message'] ?? 'Marked as COMPLETED',
+                'result_file_url' => $resultFileUrl
+            ]);
         } catch (\Throwable $e) {
             http_response_code(400);
             echo json_encode(['success' => false, 'error' => $e->getMessage()]);

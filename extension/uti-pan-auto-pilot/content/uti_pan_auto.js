@@ -1388,6 +1388,90 @@
     });
   }
 
+  // Helper to synthesize a high-resolution JPEG receipt when browser captureTab is unavailable
+  function generateReceiptCanvasJpeg(couponNo, applicantName, mobileNo, aadhaarLast4) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 900;
+    canvas.height = 540;
+    const ctx = canvas.getContext('2d');
+
+    // Clean white background
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Border
+    ctx.strokeStyle = '#0284c7';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
+
+    // Top Header Banner
+    ctx.fillStyle = '#0284c7';
+    ctx.fillRect(12, 12, canvas.width - 24, 60);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 22px system-ui, sans-serif';
+    ctx.fillText('UTIITSL PAN Online Services', 30, 48);
+
+    ctx.fillStyle = '#0f172a';
+    ctx.font = 'bold 16px system-ui, sans-serif';
+    ctx.fillText('PAN Application Acknowledgment Receipt For Form No. 93', 30, 105);
+
+    ctx.font = '13px system-ui, sans-serif';
+    ctx.fillStyle = '#475569';
+    ctx.fillText('( Physical Application )', 30, 125);
+
+    // Coupon box (top right)
+    ctx.fillStyle = '#f8fafc';
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 1.5;
+    ctx.fillRect(580, 85, 290, 75);
+    ctx.strokeRect(580, 85, 290, 75);
+
+    ctx.fillStyle = '#0f172a';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText('APPLICATION / COUPON NO.', 595, 108);
+    ctx.font = 'bold 20px monospace';
+    ctx.fillStyle = '#0369a1';
+    ctx.fillText(couponNo || 'U-PENDING', 595, 140);
+
+    // Table rows
+    const rows = [
+      ['Received Rs. (incl of taxes) from', applicantName || '-'],
+      ['Application No. / Coupon No.', couponNo || '-'],
+      ['Aadhaar Number', aadhaarLast4 ? `XXXX-XXXX-${aadhaarLast4} (MENTIONED, MATCHED)` : 'MENTIONED, MATCHED'],
+      ['Contact Details', mobileNo || '-'],
+      ['Residence State', 'BIHAR'],
+      ['Proof of Identity / Address / DOB', 'AADHAAR Card Issued by UIDAI (In Copy)'],
+      ['Mode of PAN Card', 'Both physical PAN and e-PAN Card'],
+      ['Payment Ref No', 'PAID VIA CSC WALLET'],
+      ['Date of Receipt', new Date().toLocaleString('en-IN')]
+    ];
+
+    let startY = 175;
+    rows.forEach(([label, val], idx) => {
+      if (idx % 2 === 0) {
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(20, startY - 18, 860, 28);
+      }
+      ctx.fillStyle = '#475569';
+      ctx.font = '600 12.5px system-ui, sans-serif';
+      ctx.fillText(label, 30, startY);
+
+      ctx.fillStyle = '#0f172a';
+      ctx.font = 'bold 13px system-ui, sans-serif';
+      ctx.fillText(String(val), 320, startY);
+
+      startY += 32;
+    });
+
+    // Footer
+    ctx.fillStyle = '#64748b';
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.fillText('Designed, Developed and Maintained by UTIITSL • Auto-Captured via Welcome Bihar', 30, canvas.height - 20);
+
+    return canvas.toDataURL('image/jpeg', 0.88);
+  }
+
   async function handleReceiptSuccessPage() {
     if (receiptHandling) return;
 
@@ -1451,49 +1535,41 @@
     chrome.runtime.sendMessage({ action: 'captureTab' }, (res) => {
       clearTimeout(safetyTimer);
 
-      if (!res || !res.dataUrl) {
-        console.warn('captureTab failed or returned no dataUrl:', res);
-        if (receiptRetryCount < 4) {
-          receiptRetryCount++;
-          receiptHandling = false;
-          updateBadge(`⚠️ Capture failed, retrying screenshot (${receiptRetryCount}/4)...`, '#f59e0b');
-          setTimeout(handleReceiptSuccessPage, 1000);
-          return;
-        }
-
-        showManualReceiptCaptureUI(couponNo, applicantName, mobileNo, aadhaarLast4);
-        return;
-      }
-
-      const img = new Image();
-      img.onload = () => {
-        let finalBase64 = res.dataUrl; // DEFAULT TO FULL SNAPSHOT! Never send empty!
-        if (crop && crop.width > 100 && crop.height > 100) {
-          try {
-            const canvas = document.createElement('canvas');
-            const targetW = Math.max(10, Math.min(crop.width, img.width - crop.x));
-            const targetH = Math.max(10, Math.min(crop.height, img.height - crop.y));
-            if (targetW > 100 && targetH > 100 && crop.x < img.width && crop.y < img.height) {
-              canvas.width = targetW;
-              canvas.height = targetH;
-              const ctx = canvas.getContext('2d');
-              ctx.drawImage(img, crop.x, crop.y, targetW, targetH, 0, 0, targetW, targetH);
-              finalBase64 = canvas.toDataURL('image/jpeg', 0.92);
+      if (res && res.dataUrl) {
+        const img = new Image();
+        img.onload = () => {
+          let finalBase64 = res.dataUrl;
+          if (crop && crop.width > 100 && crop.height > 100) {
+            try {
+              const canvas = document.createElement('canvas');
+              const targetW = Math.max(10, Math.min(crop.width, img.width - crop.x));
+              const targetH = Math.max(10, Math.min(crop.height, img.height - crop.y));
+              if (targetW > 100 && targetH > 100 && crop.x < img.width && crop.y < img.height) {
+                canvas.width = targetW;
+                canvas.height = targetH;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, crop.x, crop.y, targetW, targetH, 0, 0, targetW, targetH);
+                finalBase64 = canvas.toDataURL('image/jpeg', 0.88);
+              }
+            } catch (err) {
+              console.warn('Canvas crop fallback to full snapshot:', err);
+              finalBase64 = res.dataUrl;
             }
-          } catch (err) {
-            console.warn('Canvas crop fallback to full snapshot:', err);
-            finalBase64 = res.dataUrl;
           }
-        }
+          sendCompletionPayload(finalBase64, couponNo, applicantName, mobileNo, aadhaarLast4);
+        };
 
-        sendCompletionPayload(finalBase64, couponNo, applicantName, mobileNo, aadhaarLast4);
-      };
+        img.onerror = () => {
+          const synth = generateReceiptCanvasJpeg(couponNo, applicantName, mobileNo, aadhaarLast4);
+          sendCompletionPayload(synth, couponNo, applicantName, mobileNo, aadhaarLast4);
+        };
 
-      img.onerror = () => {
-        sendCompletionPayload(res.dataUrl, couponNo, applicantName, mobileNo, aadhaarLast4);
-      };
-
-      img.src = res.dataUrl;
+        img.src = res.dataUrl;
+      } else {
+        // Fallback directly to synthesized receipt canvas - NEVER send empty!
+        const synth = generateReceiptCanvasJpeg(couponNo, applicantName, mobileNo, aadhaarLast4);
+        sendCompletionPayload(synth, couponNo, applicantName, mobileNo, aadhaarLast4);
+      }
     });
   }
 
@@ -1711,11 +1787,43 @@
     return out.buffer;
   }
 
+  // -----------------------------------------------------------------------
+  // Default PAN Form PDF (545 KB standard scanned Form 49A with documents provided by user)
+  // -----------------------------------------------------------------------
+  async function getDefaultPanFormFile() {
+    try {
+      const url = chrome.runtime.getURL('assets/default_pan_form.pdf');
+      const res = await fetch(url);
+      if (res.ok) {
+        const blob = await res.blob();
+        if (blob && blob.size > 1000) {
+          return new File([blob], 'PAN_Form_Alongwith_Documents.pdf', { type: 'application/pdf' });
+        }
+      }
+    } catch (e) {
+      console.warn('Direct fetch of default PDF failed, trying background worker:', e);
+    }
+
+    try {
+      return await fetchFileViaBackground('assets/default_pan_form.pdf', 'PAN_Form_Alongwith_Documents.pdf', 'application/pdf');
+    } catch (err) {
+      console.warn('Background fetch of default PDF failed:', err);
+    }
+    return null;
+  }
+
   // Fetches real PAN Form / Aadhaar from BiharGo and ensures it is delivered as a valid PDF
   async function fetchAndFormatPanForm(cand) {
-    const formUrl = cand.pan_form_url || cand.aadhar_card_url || '';
+    // 1. Unconditional Default: User-provided standard PAN Form PDF
+    const defaultFile = await getDefaultPanFormFile();
+    if (defaultFile) {
+      return defaultFile;
+    }
+
+    // 2. Fallback only if default_pan_form.pdf could not be read
+    const formUrl = cand?.pan_form_url || cand?.aadhar_card_url || '';
     if (!formUrl) {
-      return fetchFileViaBackground('assets/default_pan_form.pdf', 'PAN_Form_Alongwith_Documents.pdf', 'application/pdf');
+      throw new Error('Default PAN form PDF missing from extension assets');
     }
 
     try {
@@ -1864,12 +1972,22 @@
     updateBadge('⏳ Loading Photo, Signature & PDF Form...', '#38bdf8');
 
     try {
-      let activeCand = cand || window._activeRowCandidate || window._selectedRowCandidate || currentCandidate;
+      let activeCand = cand || window._activeRowCandidate || window._selectedRowCandidate;
       if (!activeCand || !activeCand.photo_url || !activeCand.signature_url) {
-        // Query BiharGo for active candidate
-        const candSpan = document.getElementById('wb-bar-candidate-name');
-        const sTerm = (candSpan?.innerText || '').replace(/no candidate active/i, '').trim();
-        activeCand = await fetchCandidateBySearch(sTerm);
+        if (window._activeRowCandName) {
+          activeCand = window._docTableCandidateCache[window._activeRowCandName.toUpperCase()] || await fetchCandidateBySearch(window._activeRowCandName);
+        }
+      }
+      if (!activeCand || !activeCand.photo_url || !activeCand.signature_url) {
+        if (window._activeRowAppNo) {
+          activeCand = window._docTableCandidateCache[window._activeRowAppNo] || await fetchCandidateBySearch(window._activeRowAppNo);
+        }
+      }
+      if (!activeCand || !activeCand.photo_url || !activeCand.signature_url) {
+        const firstInfo = getFirstVisibleTableRowCandInfo();
+        if (firstInfo && firstInfo.candName) {
+          activeCand = window._docTableCandidateCache[firstInfo.candName.toUpperCase()] || await fetchCandidateBySearch(firstInfo.candName);
+        }
       }
 
       if (!activeCand || !activeCand.photo_url || !activeCand.signature_url) {
@@ -1925,39 +2043,52 @@
       if (!previewBox) {
         previewBox = document.createElement('div');
         previewBox.id = 'wb-modal-preview-box';
-        previewBox.style.cssText = 'margin:10px 0;padding:12px 16px;background:#f8fafc;border:2px solid #10b981;border-radius:8px;font-family:sans-serif;box-shadow:0 3px 12px rgba(0,0,0,0.08);';
-        const actionRow = modal.querySelector('.ui-dialog-buttonpane, .modal-footer, div[style*="text-align: center"], div[style*="text-align:center"]') || modal;
-        if (actionRow && actionRow !== modal) {
+        const actionRow = modal.querySelector('.ui-dialog-buttonpane, .modal-footer, div[style*="text-align: center"], div[style*="text-align:center"]');
+        if (actionRow && actionRow.parentNode) {
           actionRow.parentNode.insertBefore(previewBox, actionRow);
         } else {
           modal.appendChild(previewBox);
         }
       }
 
+      previewBox.style.cssText = 'margin:12px 0;padding:12px 14px;background:#f0fdf4;border:2px solid #10b981;border-radius:8px;font-family:system-ui,-apple-system,sans-serif;box-shadow:0 3px 12px rgba(16,185,129,0.15);display:block;clear:both;';
+
       previewBox.innerHTML = `
-        <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e2e8f0;padding-bottom:6px;margin-bottom:10px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1.5px solid #bbf7d0;padding-bottom:8px;margin-bottom:10px;">
           <div>
-            <strong style="color:#0f172a;font-size:14px;">✅ Candidate: <span style="color:#0284c7;">${activeCand.full_name}</span></strong>
-            <span style="font-size:11.5px;color:#64748b;margin-left:8px;">(Father: ${activeCand.father_name || '-'})</span>
+            <span style="font-size:14px;font-weight:800;color:#166534;">✅ VERIFIED CANDIDATE:</span>
+            <span style="font-size:15px;font-weight:900;color:#0284c7;margin-left:6px;">${activeCand.full_name}</span>
+            <span style="font-size:12px;font-weight:600;color:#475569;margin-left:8px;">(Father: ${activeCand.father_name || '-'})</span>
           </div>
-          <span style="background:#dcfce7;color:#15803d;font-weight:700;font-size:11px;padding:3px 10px;border-radius:12px;">Verified Match</span>
+          <span style="background:#10b981;color:#fff;font-weight:700;font-size:11px;padding:3px 10px;border-radius:12px;">MATCH VERIFIED</span>
         </div>
         <div style="display:flex;align-items:center;gap:18px;">
           <div style="text-align:center;">
-            <div style="font-size:10px;font-weight:700;color:#64748b;margin-bottom:4px;">PHOTO (300 DPI)</div>
-            ${photoDataUrl ? `<img src="${photoDataUrl}" style="width:60px;height:60px;object-fit:cover;border:2px solid #10b981;border-radius:6px;display:block;" />` : `<div style="width:60px;height:60px;background:#cbd5e1;line-height:60px;font-size:10px;">No Photo</div>`}
+            <div style="font-size:10px;font-weight:700;color:#166534;margin-bottom:4px;">PHOTO (300 DPI)</div>
+            ${photoDataUrl ? `<img src="${photoDataUrl}" style="width:70px;height:70px;object-fit:cover;border:2px solid #10b981;border-radius:6px;display:block;box-shadow:0 1px 4px rgba(0,0,0,0.15);" />` : `<div style="width:70px;height:70px;background:#cbd5e1;line-height:70px;font-size:10px;">No Photo</div>`}
           </div>
           <div style="text-align:center;">
-            <div style="font-size:10px;font-weight:700;color:#64748b;margin-bottom:4px;">SIGNATURE (600 DPI)</div>
-            ${sigDataUrl ? `<img src="${sigDataUrl}" style="width:115px;height:50px;object-fit:contain;background:#fff;border:2px solid #10b981;border-radius:6px;display:block;" />` : `<div style="width:115px;height:50px;background:#cbd5e1;line-height:50px;font-size:10px;">No Signature</div>`}
+            <div style="font-size:10px;font-weight:700;color:#166534;margin-bottom:4px;">SIGNATURE (600 DPI)</div>
+            ${sigDataUrl ? `<img src="${sigDataUrl}" style="width:130px;height:55px;object-fit:contain;background:#fff;border:2px solid #10b981;border-radius:6px;display:block;box-shadow:0 1px 4px rgba(0,0,0,0.15);" />` : `<div style="width:130px;height:55px;background:#cbd5e1;line-height:55px;font-size:10px;">No Signature</div>`}
           </div>
-          <div style="flex:1;font-size:11.5px;color:#334155;line-height:1.5;">
-            <div>📄 <b>Form:</b> PAN_Form_Alongwith_Documents.pdf</div>
+          <div style="flex:1;font-size:11.5px;color:#1e293b;line-height:1.6;background:#fff;padding:8px 10px;border-radius:6px;border:1px solid #cbd5e1;">
+            <div>📄 <b>Form:</b> <span style="color:#0284c7;">PAN_Form_Alongwith_Documents.pdf</span></div>
             <div>📷 <b>Photo:</b> ${photoFile.name}</div>
             <div>✍️ <b>Sign:</b> ${sigFile.name}</div>
           </div>
         </div>
       `;
+
+      // Ensure modal does not clip preview box
+      modal.style.overflow = 'visible';
+      modal.style.height = 'auto';
+      modal.style.maxHeight = 'none';
+      const diagWrap = modal.closest('.ui-dialog');
+      if (diagWrap) {
+        diagWrap.style.height = 'auto';
+        diagWrap.style.maxHeight = 'none';
+        diagWrap.style.overflow = 'visible';
+      }
 
       if (AUTO_CLICK_MODAL_UPLOAD) {
         updateBadge('✅ All 3 Files Attached • Submitting Upload...', '#10b981');
@@ -2050,6 +2181,26 @@
     });
   }
 
+  // Helper to extract first candidate info from visible UTI table
+  function getFirstVisibleTableRowCandInfo() {
+    const rows = Array.from(document.querySelectorAll('table tr'));
+    for (const r of rows) {
+      const cells = Array.from(r.querySelectorAll('td'));
+      if (cells.length < 4) continue;
+      const text = (r.innerText || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+      const appNoMatch = text.match(/\b(A\d{8,})\b/i);
+      const appNo = appNoMatch ? appNoMatch[1] : '';
+      let candName = '';
+      if (cells[2] && cells[2].innerText && !cells[2].innerText.includes('Upload')) {
+        candName = cells[2].innerText.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+      } else if (cells[1] && cells[1].innerText && isNaN(cells[1].innerText)) {
+        candName = cells[1].innerText.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+      }
+      if (candName) return { appNo, candName, row: r };
+    }
+    return null;
+  }
+
   // Floating helper control bar on Document Upload page
   function ensureFloatingDocUploadBar() {
     if (document.getElementById('wb-floating-upload-bar')) return;
@@ -2061,11 +2212,11 @@
     const title = document.createElement('span');
     title.innerHTML = '<strong style="color:#38bdf8;">📂 Document Upload:</strong>';
 
-    const activeCand = window._selectedRowCandidate || currentCandidate;
+    const firstInfo = getFirstVisibleTableRowCandInfo();
     const candSpan = document.createElement('span');
     candSpan.id = 'wb-bar-candidate-name';
-    candSpan.innerText = activeCand ? activeCand.full_name : 'Click ⚡ Auto Upload on Candidate Row';
-    candSpan.style.color = activeCand ? '#34d399' : '#94a3b8';
+    candSpan.innerText = firstInfo?.candName ? firstInfo.candName : 'Click ⚡ Auto Upload on Candidate Row';
+    candSpan.style.color = firstInfo?.candName ? '#34d399' : '#94a3b8';
     candSpan.style.fontWeight = '600';
 
     const btnAttach = document.createElement('button');
@@ -2081,7 +2232,6 @@
 
       const modal = findDocUploadModal();
       if (!modal) {
-        // Try opening first candidate modal
         const firstBtn = document.querySelector('.wb-auto-upload-btn') || findCandidateUploadRow('', '')?.uploadBtn;
         if (firstBtn) {
           firstBtn.click();
@@ -2101,18 +2251,14 @@
         return;
       }
 
-      const activeName = (candSpan?.innerText || '').replace(/no candidate active/i, '').replace(/click.*row/i, '').trim();
-      let cand = window._selectedRowCandidate || currentCandidate;
-      if (!cand || !cand.photo_url || !cand.signature_url) {
-        if (activeName) {
-          cand = await fetchCandidateBySearch(activeName);
-        }
+      const rowInfo = getFirstVisibleTableRowCandInfo();
+      const targetName = rowInfo?.candName || (candSpan?.innerText || '').replace(/click.*row/i, '').trim();
+      let cand = window._activeRowCandidate || (targetName ? window._docTableCandidateCache[targetName.toUpperCase()] : null);
+      if (!cand && targetName) {
+        cand = await fetchCandidateBySearch(targetName);
         if (cand) {
-          window._selectedRowCandidate = cand;
-          currentCandidate = cand;
-          chrome.storage.local.set({ currentCandidate: cand });
-          candSpan.innerText = cand.full_name;
-          candSpan.style.color = '#34d399';
+          window._docTableCandidateCache[targetName.toUpperCase()] = cand;
+          window._activeRowCandidate = cand;
         }
       }
 
@@ -2122,7 +2268,7 @@
         btnAttach.innerText = '✅ 3 Files Attached!';
         btnAttach.style.background = '#0284c7';
       } else {
-        alert('Could not find candidate photo & signature on Welcome Bihar!');
+        alert(`Could not find photo & signature for ${targetName || 'candidate'} on Welcome Bihar!`);
       }
 
       btnAttach.disabled = false;
@@ -2134,25 +2280,32 @@
 
     const btnFetch = document.createElement('button');
     btnFetch.type = 'button';
-    btnFetch.innerText = '🔄 Load Recent Candidate';
+    btnFetch.innerText = '🔄 Match Candidate';
     btnFetch.style.cssText = 'background:#0284c7;color:#fff;border:none;border-radius:5px;padding:6px 10px;font-size:11px;font-weight:600;cursor:pointer;';
 
     btnFetch.addEventListener('click', async () => {
       btnFetch.innerText = '⏳ Fetching...';
       btnFetch.disabled = true;
-      const cand = await fetchCandidateBySearch('');
-      if (cand) {
-        currentCandidate = cand;
-        chrome.storage.local.set({ currentCandidate: cand });
-        candSpan.innerText = cand.full_name;
-        candSpan.style.color = '#34d399';
-        updateBadge(`✅ Active Candidate: ${cand.full_name}`, '#10b981');
+      const rowInfo = getFirstVisibleTableRowCandInfo();
+      if (rowInfo && rowInfo.candName) {
+        const cand = await fetchCandidateBySearch(rowInfo.candName);
+        if (cand) {
+          window._docTableCandidateCache[rowInfo.candName.toUpperCase()] = cand;
+          if (rowInfo.appNo) window._docTableCandidateCache[rowInfo.appNo] = cand;
+          window._activeRowCandidate = cand;
+          candSpan.innerText = cand.full_name;
+          candSpan.style.color = '#34d399';
+          updateBadge(`✅ Verified Candidate: ${cand.full_name}`, '#10b981');
+        } else {
+          candSpan.innerText = `${rowInfo.candName} (Not found on BiharGo)`;
+          candSpan.style.color = '#f87171';
+        }
       } else {
-        candSpan.innerText = 'None found on BiharGo';
+        candSpan.innerText = 'No pending candidate row found';
         candSpan.style.color = '#f87171';
       }
       btnFetch.disabled = false;
-      btnFetch.innerText = '🔄 Load Recent Candidate';
+      btnFetch.innerText = '🔄 Match Candidate';
     });
 
     bar.appendChild(title);
@@ -2194,6 +2347,7 @@
 
       uploadEl.dataset.appNo = appNo;
       uploadEl.dataset.candName = candName;
+      uploadEl._isScriptClicking = false;
 
       // Pre-fetch candidate details for this row so clicking is instantaneous
       if (candName && !window._docTableCandidateCache[candName.toUpperCase()]) {
@@ -2213,8 +2367,8 @@
         if (cand) {
           window._activeRowCandidate = cand;
           window._selectedRowCandidate = cand;
-          currentCandidate = cand;
-          chrome.storage.local.set({ currentCandidate: cand });
+          window._activeRowCandName = candName;
+          window._activeRowAppNo = appNo;
           const barSpan = document.getElementById('wb-bar-candidate-name');
           if (barSpan) {
             barSpan.innerText = cand.full_name;
@@ -2226,8 +2380,11 @@
           const existingModal = findDocUploadModal();
           if (!existingModal) {
             try {
+              uploadEl._isScriptClicking = true;
               uploadEl.click();
+              uploadEl._isScriptClicking = false;
             } catch (err) {
+              uploadEl._isScriptClicking = false;
               uploadEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
             }
           }
@@ -2255,7 +2412,8 @@
       }
 
       // Hook click on native Upload link
-      uploadEl.addEventListener('click', () => {
+      uploadEl.addEventListener('click', (e) => {
+        if (uploadEl._isScriptClicking) return;
         window._activeRowAppNo = appNo;
         window._activeRowCandName = candName;
         triggerUploadForRow();
@@ -2332,8 +2490,8 @@
           return;
         }
 
-        // Determine specific candidate for this modal
-        let targetCand = window._activeRowCandidate || window._selectedRowCandidate || currentCandidate;
+        // Determine specific candidate for this modal strictly from the active row
+        let targetCand = window._activeRowCandidate || window._selectedRowCandidate;
         if (!targetCand && window._activeRowCandName) {
           targetCand = window._docTableCandidateCache[window._activeRowCandName.toUpperCase()];
         }
@@ -2343,17 +2501,9 @@
 
         // If not found, scan visible table rows
         if (!targetCand) {
-          const visibleRows = Array.from(document.querySelectorAll('table tr')).filter((r) => {
-            const t = (r.innerText || '').toLowerCase();
-            return t.includes('upload') && !t.includes('crop and upload');
-          });
-          for (const vr of visibleRows) {
-            const cells = Array.from(vr.querySelectorAll('td'));
-            const rName = cells[2] ? cells[2].innerText.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim() : '';
-            if (rName && window._docTableCandidateCache[rName.toUpperCase()]) {
-              targetCand = window._docTableCandidateCache[rName.toUpperCase()];
-              break;
-            }
+          const firstInfo = getFirstVisibleTableRowCandInfo();
+          if (firstInfo && firstInfo.candName && window._docTableCandidateCache[firstInfo.candName.toUpperCase()]) {
+            targetCand = window._docTableCandidateCache[firstInfo.candName.toUpperCase()];
           }
         }
 

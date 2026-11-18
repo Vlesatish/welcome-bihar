@@ -52,7 +52,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const queueItems = Array.isArray(res.queueList) ? res.queueList : [];
-      if (count === 0 || queueItems.length === 0 || !res.currentCandidate) {
+      if (count === 0 || queueItems.length === 0) {
         activeCand = null;
         candEmpty.style.display = 'block';
         candEmpty.innerHTML = '✨ <b>Queue is Empty</b><br><span style="font-size:10.5px;color:#94a3b8;">No active application. Extension will automatically start when a new application is submitted on Welcome Bihar.</span>';
