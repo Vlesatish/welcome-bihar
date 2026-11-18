@@ -1336,7 +1336,12 @@
         receiptHandling = false;
         if (resp && resp.success) {
           lastCompletedCoupon = couponNo;
-          updateBadge(`🎉 Application COMPLETED on Welcome Bihar! (${couponNo})`, '#10b981');
+          updateBadge(`🎉 Application COMPLETED on Welcome Bihar! Opening Upload List...`, '#10b981');
+          setTimeout(() => {
+            try {
+              chrome.runtime.sendMessage({ action: 'openDocUploadPage' });
+            } catch (e) {}
+          }, 800);
         } else {
           updateBadge(`⚠️ Complete update: ${resp?.error || 'Pending retry'}`, '#f59e0b');
         }

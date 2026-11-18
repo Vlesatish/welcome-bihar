@@ -5,6 +5,7 @@
 
 const DEFAULT_PORTAL_URL = 'https://bihargo.xyz';
 const VLE_HOME_URL = 'https://www.myutiitsl.com/panonlineservices/vleHome.action';
+const DOC_UPLOAD_URL = 'https://www.myutiitsl.com/panonlineservices/docUploadListPanApp?applType=B';
 const QUEUE_ALARM_NAME = 'WB_UTI_PAN_QUEUE_WATCH';
 
 let isCycleLaunching = false;
@@ -47,6 +48,27 @@ function getAllUtiTabs() {
       resolve(matched);
     });
   });
+}
+
+async function openDocUploadAndCloseSuccess(successTabId) {
+  const allTabs = await new Promise((resolve) => chrome.tabs.query({}, resolve));
+  const matched = (allTabs || []).filter((t) => {
+    const u = (t.url || t.pendingUrl || '').toLowerCase();
+    return u.includes('docuploadlistpanapp') || u.includes('docupload');
+  });
+
+  if (matched.length > 0) {
+    await chrome.tabs.update(matched[0].id, { url: DOC_UPLOAD_URL, active: true });
+    if (successTabId && successTabId !== matched[0].id) {
+      chrome.tabs.remove(successTabId, () => void chrome.runtime.lastError);
+    }
+  } else {
+    if (successTabId) {
+      chrome.tabs.update(successTabId, { url: DOC_UPLOAD_URL, active: true });
+    } else {
+      chrome.tabs.create({ url: DOC_UPLOAD_URL, active: true });
+    }
+  }
 }
 
 async function closeErrorTabs() {
@@ -266,15 +288,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         await chrome.storage.local.set({
           awaitingDocUpload: true,
           completedReceiptNo: utiRef,
-          lastStatus: `📸 Receipt Saved (${utiRef || 'Done'}) • Paused for Photo & Signature Upload`,
+          lastStatus: `📸 Receipt Saved (${utiRef || 'Done'}) • Opening Document Upload...`,
           lastStatusColor: '#10b981'
         });
 
         sendResponse({ success: Boolean(data && data.success), data });
+
+        // Cut success page and open document upload list page
+        if (data && data.success) {
+          const successTabId = sender && sender.tab ? sender.tab.id : null;
+          setTimeout(() => {
+            openDocUploadAndCloseSuccess(successTabId);
+          }, 800);
+        }
       } catch (err) {
         sendResponse({ success: false, error: err.message });
       }
     })();
+    return true;
+  }
+
+  if (msg.action === 'openDocUploadPage') {
+    const tabId = sender && sender.tab ? sender.tab.id : null;
+    openDocUploadAndCloseSuccess(tabId);
+    sendResponse({ success: true });
     return true;
   }
 
