@@ -13,6 +13,25 @@ let activeCandidateKey = null;
 let lastLaunchedCandKey = null;
 let activeOtpUtiTabId = null;
 let createdGmailTabId = null;
+let keepAliveUtiTabId = null;
+
+async function closeAllIdleUtiTabs() {
+  const allUtiTabs = await getAllUtiTabs();
+  const idsToClose = allUtiTabs
+    .filter((t) => {
+      if (!t || !t.id) return false;
+      if (keepAliveUtiTabId && t.id === keepAliveUtiTabId) return false;
+      const u = (t.url || t.pendingUrl || '').toLowerCase();
+      // Do not close if user is actively on CSC Login or OTP verification screen
+      if (u.includes('logincheckotp') || u.includes('csclogin')) return false;
+      return true;
+    })
+    .map((t) => t.id);
+
+  if (idsToClose.length > 0) {
+    chrome.tabs.remove(idsToClose, () => void chrome.runtime.lastError);
+  }
+}
 
 function getConfig() {
   return new Promise((resolve) => {
@@ -176,18 +195,25 @@ async function checkQueueAndLaunch(forceRestart = false) {
     });
 
     if (queue.length === 0) {
-      // Only keep candidate if actively awaiting immediate document upload right after form submission
-      const stored = await new Promise((r) => chrome.storage.local.get(['awaitingDocUpload'], r));
-      if (stored && stored.awaitingDocUpload) {
+      // Only keep tab open if actively awaiting immediate document upload right after form submission (max 3 min)
+      const stored = await new Promise((r) => chrome.storage.local.get(['awaitingDocUpload', 'awaitingDocUploadAt', 'isWaitingForOtp'], r));
+      if (stored && stored.isWaitingForOtp) {
         return { success: true, count: 0, inFlight: true };
+      }
+      if (stored && stored.awaitingDocUpload) {
+        const elapsed = Date.now() - Number(stored.awaitingDocUploadAt || 0);
+        if (elapsed < 180000) {
+          return { success: true, count: 0, inFlight: true };
+        }
       }
       activeCandidateKey = null;
       lastLaunchedCandKey = null;
-      await chrome.storage.local.remove(['currentCandidate', 'currentUtiRefNo', 'completedReceiptNo', 'awaitingDocUpload']);
+      await chrome.storage.local.remove(['currentCandidate', 'currentUtiRefNo', 'completedReceiptNo', 'awaitingDocUpload', 'awaitingDocUploadAt']);
       await chrome.storage.local.set({
         lastStatus: 'Idle • Waiting for new PAN applications from BiharGo...',
         lastStatusColor: '#94a3b8'
       });
+      await closeAllIdleUtiTabs();
       return { success: true, count: 0 };
     }
 
@@ -342,9 +368,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (data && data.success) {
           activeCandidateKey = null;
           lastLaunchedCandKey = null;
-          // Completed candidate ko storage se completely remove karo
-          await chrome.storage.local.remove(['currentCandidate', 'currentUtiRefNo', 'completedReceiptNo', 'awaitingDocUpload']);
+          // Completed candidate ko storage se remove karo, par awaitingDocUpload true rakho jab tak docUpload poora na ho
+          await chrome.storage.local.remove(['currentCandidate', 'currentUtiRefNo', 'completedReceiptNo']);
           await chrome.storage.local.set({
+            awaitingDocUpload: true,
+            awaitingDocUploadAt: Date.now(),
             lastStatus: `✅ Candidate Completed & Receipt Attached (${utiRef || 'Done'})`,
             lastStatusColor: '#10b981'
           });
@@ -602,7 +630,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 const CSC_DASHBOARD_KEEPALIVE_URL = 'https://digitalseva.csc.gov.in/dashboard';
 const CSC_KEEPALIVE_ALARM_NAME = 'WB_CSC_DASHBOARD_KEEPALIVE_30M';
 const UTI_VLEHOME_KEEPALIVE_URL = 'https://www.myutiitsl.com/panonlineservices/vleHome.action#keepalive';
-const UTI_KEEPALIVE_ALARM_NAME = 'WB_UTI_VLEHOME_KEEPALIVE_10M';
+const UTI_KEEPALIVE_ALARM_NAME = 'WB_UTI_VLEHOME_KEEPALIVE_7M';
 
 function runCscDashboardKeepAlive() {
   try {
@@ -626,8 +654,13 @@ function runUtiVleHomeKeepAlive() {
     chrome.tabs.create({ url: UTI_VLEHOME_KEEPALIVE_URL, active: true }, (tab) => {
       void chrome.runtime.lastError;
       if (tab && tab.id) {
+        keepAliveUtiTabId = tab.id;
         setTimeout(() => {
-          chrome.tabs.remove(tab.id, () => {
+          const targetId = tab.id;
+          if (keepAliveUtiTabId === targetId) {
+            keepAliveUtiTabId = null;
+          }
+          chrome.tabs.remove(targetId, () => {
             void chrome.runtime.lastError;
           });
         }, 3000);
@@ -640,7 +673,7 @@ function runUtiVleHomeKeepAlive() {
 
 chrome.alarms.create(QUEUE_ALARM_NAME, { periodInMinutes: 0.25 });
 chrome.alarms.create(CSC_KEEPALIVE_ALARM_NAME, { periodInMinutes: 30 });
-chrome.alarms.create(UTI_KEEPALIVE_ALARM_NAME, { periodInMinutes: 10 });
+chrome.alarms.create(UTI_KEEPALIVE_ALARM_NAME, { periodInMinutes: 7 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === QUEUE_ALARM_NAME) {
     checkQueueAndLaunch(false);

@@ -2747,7 +2747,13 @@
     if (!autoRowUploadTriggered) {
       const firstInfoCheck = getFirstVisibleTableRowCandInfo();
       if (!firstInfoCheck) {
-        updateBadge('📄 Document Upload List • Waiting for candidate row', '#38bdf8');
+        if (document.readyState === 'complete') {
+          chrome.storage.local.set({ awaitingDocUpload: false });
+          try {
+            chrome.runtime.sendMessage({ action: 'checkQueueNow', force: false });
+          } catch (e) {}
+        }
+        updateBadge('📄 Document Upload List • No pending row (Auto-closing if idle)', '#38bdf8');
         return;
       }
 
