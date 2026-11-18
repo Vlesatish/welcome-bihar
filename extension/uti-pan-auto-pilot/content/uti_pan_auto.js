@@ -1450,12 +1450,284 @@
   }
 
   // -----------------------------------------------------------------------
+  // PAGE 8: docUploadListPanApp -> Document Upload (PAN Form, Photo, Signature)
+  // "upload per click karna hai aur photo aur signature bihargo se utha ke
+  //  yaha per upload karna hai... kisi aur ka kisi aur me upload nahi hona chahiye"
+  // -----------------------------------------------------------------------
+  let docUploadLock = false;
+  let lastUploadedAppNo = '';
+
+  function findCandidateUploadRow(appNo, candidateName) {
+    const cleanAppNo = String(appNo || '').replace(/^U-/i, '').trim().toUpperCase();
+    const cleanName = String(candidateName || '').trim().toUpperCase();
+
+    const rows = Array.from(document.querySelectorAll('table tr'));
+    for (const row of rows) {
+      const text = (row.innerText || '').toUpperCase();
+      const matchesAppNo = cleanAppNo && cleanAppNo.length >= 6 && text.includes(cleanAppNo);
+      const matchesName = cleanName && cleanName.length >= 3 && text.includes(cleanName);
+
+      // Strict row check: Must match App No, or clean Name
+      if (matchesAppNo || (cleanAppNo === '' && matchesName)) {
+        const actionLinks = Array.from(row.querySelectorAll('a, button, input[type="button"]'));
+        const uploadBtn = actionLinks.find((el) => {
+          const t = (el.innerText || el.value || '').trim().toLowerCase();
+          return t === 'upload' || (t.includes('upload') && !t.includes('crop'));
+        });
+        if (uploadBtn) {
+          return { row, uploadBtn, cleanAppNo, cleanName };
+        }
+      }
+    }
+    return null;
+  }
+
+  function findDocUploadModal() {
+    const dialogs = Array.from(document.querySelectorAll('.ui-dialog, .modal, div.popup, div[role="dialog"], div')).filter((d) => {
+      if (!isVisible(d)) return false;
+      const t = (d.innerText || '').toLowerCase();
+      return t.includes('upload documents') && (t.includes('pan form alongwith') || d.querySelector('input[type="file"]'));
+    });
+    return dialogs.length > 0 ? dialogs[0] : null;
+  }
+
+  function findDocUploadInputs(modalContainer) {
+    const root = modalContainer || document;
+    const fileInputs = Array.from(root.querySelectorAll('input[type="file"]'));
+
+    let panFormInput = null;
+    let pictureInput = null;
+    let signatureInput = null;
+
+    for (const inp of fileInputs) {
+      const name = (inp.name || inp.id || '').toLowerCase();
+      const parentText = (inp.closest('tr, div, p')?.innerText || '').toLowerCase();
+
+      if (name.includes('pan') || name.includes('doc') || parentText.includes('pan form') || parentText.includes('alongwith')) {
+        panFormInput = inp;
+      } else if (name.includes('pic') || name.includes('photo') || parentText.includes('picture') || parentText.includes('photo')) {
+        pictureInput = inp;
+      } else if (name.includes('sig') || parentText.includes('signature')) {
+        signatureInput = inp;
+      }
+    }
+
+    if (fileInputs.length === 3) {
+      if (!panFormInput) panFormInput = fileInputs[0];
+      if (!pictureInput) pictureInput = fileInputs[1];
+      if (!signatureInput) signatureInput = fileInputs[2];
+    }
+
+    return { panFormInput, pictureInput, signatureInput };
+  }
+
+  async function fetchAndFormatPhoto(photoUrl, name) {
+    const cleanUrl = String(photoUrl || '').replace(/welcome\.bihargo\.xyz/gi, 'bihargo.xyz');
+    const imgRes = await fetch(cleanUrl);
+    const blob = await imgRes.blob();
+    const bmp = await createImageBitmap(blob);
+    const canvas = document.createElement('canvas');
+    canvas.width = 213;
+    canvas.height = 213;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, 213, 213);
+    ctx.drawImage(bmp, 0, 0, 213, 213);
+    const jpegBlob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.88));
+    const safeName = (name || 'photo').replace(/[^a-zA-Z0-9]/g, '_');
+    return new File([jpegBlob], `${safeName}_photo_213x213.jpg`, { type: 'image/jpeg' });
+  }
+
+  async function fetchAndFormatSignature(sigUrl, name) {
+    const cleanUrl = String(sigUrl || '').replace(/welcome\.bihargo\.xyz/gi, 'bihargo.xyz');
+    const imgRes = await fetch(cleanUrl);
+    const blob = await imgRes.blob();
+    const bmp = await createImageBitmap(blob);
+    const canvas = document.createElement('canvas');
+    canvas.width = 400;
+    canvas.height = 200;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, 400, 200);
+    ctx.drawImage(bmp, 0, 0, 400, 200);
+
+    const imgData = ctx.getImageData(0, 0, 400, 200);
+    const d = imgData.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+      if (lum > 170) {
+        d[i] = 255; d[i + 1] = 255; d[i + 2] = 255;
+      } else if (lum < 75) {
+        d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+
+    const jpegBlob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.85));
+    const safeName = (name || 'signature').replace(/[^a-zA-Z0-9]/g, '_');
+    return new File([jpegBlob], `${safeName}_signature_400x200.jpg`, { type: 'image/jpeg' });
+  }
+
+  function clickModalUploadButton(modal) {
+    const allBtns = Array.from(modal.querySelectorAll('button, input[type="button"], input[type="submit"]'));
+    const uploadBtn = allBtns.find((b) => {
+      if (!isVisible(b) || b.disabled) return false;
+      const t = (b.textContent || b.value || '').trim().toLowerCase();
+      return t === 'upload';
+    });
+
+    if (uploadBtn) {
+      updateBadge('🚀 Submitting Documents to UTI Portal...', '#10b981');
+      try {
+        uploadBtn.focus();
+        uploadBtn.click();
+      } catch (e) {
+        uploadBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+      }
+
+      setTimeout(() => {
+        docUploadLock = false;
+        chrome.storage.local.set({ awaitingDocUpload: false });
+      }, 3000);
+    }
+  }
+
+  async function attachDocumentsToModal(inputs, cand, modal) {
+    updateBadge('⏳ Loading Photo, Signature & PDF Form...', '#38bdf8');
+
+    try {
+      // 1. User-Provided Standard PAN Form PDF (assets/default_pan_form.pdf)
+      const pdfUrl = chrome.runtime.getURL('assets/default_pan_form.pdf');
+      const pdfRes = await fetch(pdfUrl);
+      const pdfBlob = await pdfRes.blob();
+      const panFormFile = new File([pdfBlob], 'PAN_Form_Alongwith_Documents.pdf', { type: 'application/pdf' });
+
+      // 2. Candidate Photo from BiharGo (UTI 213x213 @ 300 DPI)
+      const photoFile = await fetchAndFormatPhoto(cand.photo_url, cand.full_name);
+
+      // 3. Candidate Signature from BiharGo (UTI 400x200 @ 600 DPI Fresh)
+      const sigFile = await fetchAndFormatSignature(cand.signature_url, cand.full_name);
+
+      // Set input files via DataTransfer
+      const dt1 = new DataTransfer();
+      dt1.items.add(panFormFile);
+      inputs.panFormInput.files = dt1.files;
+      inputs.panFormInput.dispatchEvent(new Event('change', { bubbles: true }));
+      inputs.panFormInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+      const dt2 = new DataTransfer();
+      dt2.items.add(photoFile);
+      inputs.pictureInput.files = dt2.files;
+      inputs.pictureInput.dispatchEvent(new Event('change', { bubbles: true }));
+      inputs.pictureInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+      const dt3 = new DataTransfer();
+      dt3.items.add(sigFile);
+      inputs.signatureInput.files = dt3.files;
+      inputs.signatureInput.dispatchEvent(new Event('change', { bubbles: true }));
+      inputs.signatureInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+      updateBadge('✅ All 3 Files Attached • Clicking Upload...', '#10b981');
+
+      setTimeout(() => {
+        clickModalUploadButton(modal);
+      }, 700);
+    } catch (err) {
+      docUploadLock = false;
+      console.error('Document attach error:', err);
+      updateBadge(`⚠️ Document attach error: ${err.message}`, '#f59e0b');
+    }
+  }
+
+  function handleDocUploadListPage() {
+    // 1. Auto-dismiss any success alert popup
+    const successDialog = Array.from(document.querySelectorAll('.ui-dialog, .modal, .alert')).find((d) => {
+      if (!isVisible(d)) return false;
+      const t = (d.innerText || '').toLowerCase();
+      return t.includes('documents uploaded successfully') || t.includes('uploaded successfully');
+    });
+    if (successDialog) {
+      const okBtn = Array.from(successDialog.querySelectorAll('button, input[type="button"]')).find((b) => {
+        const t = (b.textContent || b.value || '').trim().toLowerCase();
+        return t === 'ok' || t === 'close';
+      });
+      if (okBtn) {
+        try { okBtn.click(); } catch (e) {}
+        updateBadge('🎉 Documents Uploaded Successfully!', '#10b981');
+      }
+      return;
+    }
+
+    if (docUploadLock) return;
+
+    // 2. Check if modal is already open
+    const modal = findDocUploadModal();
+    if (modal) {
+      const inputs = findDocUploadInputs(modal);
+      if (inputs.panFormInput && inputs.pictureInput && inputs.signatureInput) {
+        if (inputs.panFormInput.files?.length > 0 && inputs.pictureInput.files?.length > 0 && inputs.signatureInput.files?.length > 0) {
+          clickModalUploadButton(modal);
+          return;
+        }
+
+        if (currentCandidate && currentCandidate.photo_url && currentCandidate.signature_url) {
+          docUploadLock = true;
+          attachDocumentsToModal(inputs, currentCandidate, modal);
+          return;
+        }
+      }
+      return;
+    }
+
+    // 3. Modal not open yet: Match row by Candidate App No & Name
+    if (!currentCandidate) {
+      updateBadge('📄 Document Upload List • Waiting for Candidate Data', '#f59e0b');
+      return;
+    }
+
+    const appNo = String(currentUtiRefNo || currentCandidate.coupon_no || currentCandidate.app_ref || '').replace(/^U-/i, '').trim().toUpperCase();
+    const candName = (currentCandidate.full_name || '').trim().toUpperCase();
+
+    if (appNo && appNo === lastUploadedAppNo) {
+      return;
+    }
+
+    const match = findCandidateUploadRow(appNo, candName);
+    if (!match) {
+      updateBadge(`🔍 Finding Row for App No: ${appNo || candName}...`, '#38bdf8');
+      return;
+    }
+
+    docUploadLock = true;
+    lastUploadedAppNo = match.cleanAppNo || appNo;
+    updateBadge(`⚡ Clicking Upload for ${match.cleanName} (${match.cleanAppNo || 'Matched'})...`, '#10b981');
+
+    setTimeout(() => {
+      try {
+        match.uploadBtn.focus();
+        match.uploadBtn.click();
+      } catch (e) {
+        match.uploadBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+      }
+      setTimeout(() => {
+        docUploadLock = false;
+      }, 1500);
+    }, 400);
+  }
+
+  // -----------------------------------------------------------------------
   // Router & Observers
   // -----------------------------------------------------------------------
   function runAutoFill(force = false) {
     const url = (window.location.href || '').toLowerCase();
 
-    // 0. Receipt / redirectSuccess page (Success Screen)
+    // 0A. Document Upload List / Modal (applType=B)
+    if (url.includes('docuploadlistpanapp') || url.includes('docupload')) {
+      handleDocUploadListPage();
+      return;
+    }
+
+    // 0B. Receipt / redirectSuccess page (Success Screen)
     if (isReceiptPage()) {
       handleReceiptSuccessPage();
       return;
