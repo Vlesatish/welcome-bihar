@@ -471,6 +471,8 @@
       handleIndMainForm(force);
     } else if (url.includes('vlehome')) {
       updateBadge('VLE Home • Open Form 49A to proceed', '#10b981');
+    } else if (url.includes('error?errormsg') || bodyText.includes('something went wrong') || bodyText.includes('there is some problem')) {
+      updateBadge('⚠️ Direct Form blocked • Reopen from vleHome', '#ef4444');
     } else if (url.includes('csclogin')) {
       updateBadge('CSC Login Screen • Please sign in', '#fbbf24');
     } else {

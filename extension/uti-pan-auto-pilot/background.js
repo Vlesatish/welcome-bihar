@@ -1,16 +1,15 @@
 // =========================================================================
 // Welcome Bihar - UTI PAN Auto-Pilot (Background Service Worker, MV3)
-// Polls /api/pan-card/queue and manages myutiitsl.com tab lifecycle
+// Polls /api/pan-card/queue and opens vleHome.action ONLY when data arrives
 // =========================================================================
 
 const DEFAULT_PORTAL_URL = 'https://bihargo.xyz';
 const VLE_HOME_URL = 'https://www.myutiitsl.com/panonlineservices/vleHome.action';
-const CSC_LOGIN_URL = 'https://www.myutiitsl.com/panonlineservices/CSCLogin';
-const PRE_PAN_URL = 'https://www.myutiitsl.com/PANform/forms/pan.html/prePANForm';
 const QUEUE_ALARM_NAME = 'WB_UTI_PAN_QUEUE_WATCH';
 
 let isCycleLaunching = false;
 let activeCandidateKey = null;
+let lastLaunchedCandKey = null;
 
 function getConfig() {
   return new Promise((resolve) => {
@@ -30,7 +29,7 @@ function getAllUtiTabs() {
       void chrome.runtime.lastError;
       const matched = (allTabs || []).filter((t) => {
         const u = (t.url || t.pendingUrl || '').toLowerCase();
-        return u.includes('myutiitsl.com/panform');
+        return u.includes('myutiitsl.com');
       });
       resolve(matched);
     });
@@ -50,7 +49,7 @@ async function closeAllUtiTabs() {
   }
 }
 
-async function launchFreshUtiCycle(cand, targetUrl) {
+async function openVleHomeOnly(cand) {
   if (isCycleLaunching) return;
   isCycleLaunching = true;
   try {
@@ -60,28 +59,24 @@ async function launchFreshUtiCycle(cand, targetUrl) {
         currentUtiRefNo: ''
       });
     }
+
     const openTabs = await getAllUtiTabs();
-    const finalUrl = targetUrl || VLE_HOME_URL;
     if (openTabs.length === 0) {
+      // Sirf aur sirf vleHome.action open karo jab koi tab na khula ho
       await new Promise((resolve) => {
-        chrome.tabs.create({ url: finalUrl, active: true }, () => {
+        chrome.tabs.create({ url: VLE_HOME_URL, active: true }, () => {
           void chrome.runtime.lastError;
           resolve();
         });
       });
     } else {
-      // If open tab is not already on form, navigate to target url
-      const currUrl = (openTabs[0].url || '').toLowerCase();
-      if (!currUrl.includes('panform')) {
-        chrome.tabs.update(openTabs[0].id, { url: finalUrl, active: true });
-      } else {
-        chrome.tabs.update(openTabs[0].id, { active: true });
-      }
+      // Agar UTI ka tab pehle se khula hai, duplicate mat banao — usi tab ko focus karo
+      chrome.tabs.update(openTabs[0].id, { active: true });
     }
   } finally {
     setTimeout(() => {
       isCycleLaunching = false;
-    }, 2500);
+    }, 2000);
   }
 }
 
@@ -122,16 +117,24 @@ async function checkQueueAndLaunch(forceRestart = false) {
 
     if (queue.length === 0) {
       activeCandidateKey = null;
+      lastLaunchedCandKey = null;
       return { success: true, count: 0 };
     }
 
     const firstCand = queue[0];
     const candKey = String(firstCand.app_ref || firstCand.id);
-    const openTabs = await getAllUtiTabs();
+    activeCandidateKey = candKey;
 
-    if (forceRestart || activeCandidateKey !== candKey || openTabs.length === 0) {
-      activeCandidateKey = candKey;
-      await launchFreshUtiCycle(firstCand);
+    // Sirf naya data detect hone par ya force button dabane par vleHome open hoga
+    const openTabs = await getAllUtiTabs();
+    if (forceRestart || (lastLaunchedCandKey !== candKey && openTabs.length === 0)) {
+      lastLaunchedCandKey = candKey;
+      await openVleHomeOnly(firstCand);
+    } else {
+      // Candidate data update karo taaki badge me dikhta rahe
+      await chrome.storage.local.set({
+        currentCandidate: firstCand
+      });
     }
 
     return { success: true, count: queue.length, active: firstCand };
@@ -164,9 +167,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.action === 'launchCandidate') {
     (async () => {
-      if (msg.candidate) {
-        activeCandidateKey = String(msg.candidate.app_ref || msg.candidate.id);
-        await launchFreshUtiCycle(msg.candidate);
+      const cand = msg.candidate || null;
+      if (cand) {
+        activeCandidateKey = String(cand.app_ref || cand.id);
+        lastLaunchedCandKey = activeCandidateKey;
+        await openVleHomeOnly(cand);
         sendResponse({ success: true });
       } else {
         const r = await checkQueueAndLaunch(true);
@@ -186,6 +191,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           remarks: msg.remarks || ''
         });
         activeCandidateKey = null;
+        lastLaunchedCandKey = null;
         await chrome.storage.local.remove(['currentCandidate', 'currentUtiRefNo']);
         await closeAllUtiTabs();
         setTimeout(() => checkQueueAndLaunch(true), 1000);
@@ -206,6 +212,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           reason: msg.reason || 'Rejected from UTI PAN Auto-Pilot'
         });
         activeCandidateKey = null;
+        lastLaunchedCandKey = null;
         await chrome.storage.local.remove(['currentCandidate', 'currentUtiRefNo']);
         await closeAllUtiTabs();
         setTimeout(() => checkQueueAndLaunch(true), 1000);
