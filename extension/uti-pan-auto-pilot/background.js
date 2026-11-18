@@ -5,7 +5,6 @@
 
 const DEFAULT_PORTAL_URL = 'https://bihargo.xyz';
 const VLE_HOME_URL = 'https://www.myutiitsl.com/panonlineservices/vleHome.action';
-const PRE_PAN_URL = 'https://www.myutiitsl.com/PANform/forms/pan.html/prePANForm';
 const QUEUE_ALARM_NAME = 'WB_UTI_PAN_QUEUE_WATCH';
 
 let isCycleLaunching = false;
@@ -194,23 +193,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const r = await checkQueueAndLaunch(true);
         sendResponse(r);
       }
-    })();
-    return true;
-  }
-
-  if (msg.action === 'openPrePanTab') {
-    (async () => {
-      const allTabs = await getAllUtiTabs();
-      const existingPrePan = allTabs.find((t) => {
-        const u = (t.url || t.pendingUrl || '').toLowerCase();
-        return u.includes('prepanform') || u.includes('indmainform');
-      });
-      if (existingPrePan) {
-        chrome.tabs.update(existingPrePan.id, { active: true });
-      } else {
-        chrome.tabs.create({ url: PRE_PAN_URL, active: true });
-      }
-      sendResponse({ success: true });
     })();
     return true;
   }

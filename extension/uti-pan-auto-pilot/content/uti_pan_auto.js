@@ -243,7 +243,14 @@
       `;
       document.body.appendChild(host);
 
-      document.getElementById('wb-btn-refill').addEventListener('click', () => runAutoFill(true));
+      document.getElementById('wb-btn-refill').addEventListener('click', () => {
+        const u = (window.location.href || '').toLowerCase();
+        if (u.includes('vlehome')) {
+          clickApplicationForNewPanMenu();
+        } else {
+          runAutoFill(true);
+        }
+      });
       document.getElementById('wb-btn-complete').addEventListener('click', () => {
         if (!currentCandidate) return;
         chrome.runtime.sendMessage({
@@ -465,22 +472,53 @@
   }
 
   // -----------------------------------------------------------------------
-  // PAGE 0: vleHome.action -> Wait for home session, then open prePANForm in new tab
+  // PAGE 0: vleHome.action -> Auto-trigger "Application for New PAN" menu item
   // -----------------------------------------------------------------------
-  let prePanTabRequested = false;
-  function handleVleHomePage() {
-    if (prePanTabRequested) return;
-    prePanTabRequested = true;
+  let vleMenuClicked = false;
 
-    updateBadge('VLE Home active • Opening prePANForm in new tab...', '#38bdf8');
+  function clickApplicationForNewPanMenu() {
+    // 1. Open "Apply New PAN" top menu
+    const topMenus = Array.from(document.querySelectorAll('a, li, span, td, div')).filter((el) => {
+      const t = (el.innerText || el.textContent || '').trim().toLowerCase();
+      return t === 'apply new pan' || t.startsWith('apply new pan');
+    });
+    for (const m of topMenus) {
+      try {
+        m.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        m.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+      } catch (e) {}
+    }
 
-    setTimeout(() => {
-      chrome.runtime.sendMessage({ action: 'openPrePanTab' }, (res) => {
-        if (res && res.success) {
-          updateBadge('🚀 prePANForm tab opened in new tab', '#10b981');
-        }
+    // 2. Find target link: "Application for New PAN"
+    const allLinks = Array.from(document.querySelectorAll('a, button, li, span, td'));
+    const target = allLinks.find((el) => {
+      const txt = (el.innerText || el.textContent || '').trim().toLowerCase();
+      if (txt === 'pan application') return false; // skip heading
+      return txt === 'application for new pan' ||
+             txt.includes('application for new pan') ||
+             txt.includes('new pan (49a)');
+    });
+
+    if (target) {
+      updateBadge('🚀 Launching Application for New PAN...', '#10b981');
+      ['mouseover', 'mouseenter', 'mousedown', 'mouseup', 'click'].forEach((evt) => {
+        try { target.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window })); } catch (e) {}
       });
-    }, 1200);
+      try { target.click(); } catch (e) {}
+      return true;
+    }
+    return false;
+  }
+
+  function handleVleHomePage() {
+    updateBadge('VLE Home • Launching Form 49A...', '#10b981');
+
+    if (!vleMenuClicked) {
+      vleMenuClicked = true;
+      setTimeout(() => {
+        clickApplicationForNewPanMenu();
+      }, 800);
+    }
   }
 
   // -----------------------------------------------------------------------
