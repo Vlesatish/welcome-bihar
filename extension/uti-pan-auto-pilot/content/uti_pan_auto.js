@@ -845,6 +845,51 @@
   }
 
   // -----------------------------------------------------------------------
+  // STEP 5: Other Details Tab (capacityCd -> SELF, verification place)
+  // -----------------------------------------------------------------------
+  function handleOtherDetailsTab(force = false) {
+    let filled = false;
+
+    // 1. Capacity dropdown -> SELF (value="1")
+    const capacityCdEl = document.getElementById('capacityCd');
+    if (capacityCdEl && (!capacityCdEl.value || capacityCdEl.value !== '1' || force)) {
+      if (selectOption(capacityCdEl, '1', ['self'])) {
+        try {
+          if (typeof window.checkStatus === 'function') {
+            window.checkStatus('1');
+          }
+        } catch (e) {}
+        filled = true;
+      }
+    }
+
+    // 2. Verification Place -> Candidate District
+    const veriPlaceEl = document.getElementById('veriPlace');
+    const district = (currentCandidate?.district_name || currentCandidate?.district || '').trim();
+    if (veriPlaceEl && district && (!veriPlaceEl.value || force)) {
+      setInputValue(veriPlaceEl, district.toUpperCase());
+      filled = true;
+    }
+
+    // 3. Verifier Name if not auto-populated by checkStatus
+    const veriNameEl = document.getElementById('veriName');
+    if (veriNameEl && currentCandidate?.full_name && (!veriNameEl.value || force)) {
+      setInputValue(veriNameEl, currentCandidate.full_name.toUpperCase());
+    }
+
+    // 4. Verification Designation -> SELF if not auto-populated
+    const veriDesnEl = document.getElementById('veriDesn');
+    if (veriDesnEl && (!veriDesnEl.value || force)) {
+      setInputValue(veriDesnEl, 'SELF');
+    }
+
+    if (filled) {
+      updateBadge(`✍️ Declaration Set: SELF (${district || 'Verified'})`, '#10b981');
+    }
+    return filled;
+  }
+
+  // -----------------------------------------------------------------------
   // PAGE 2: IndmainForm (Form No. 93)
   // -----------------------------------------------------------------------
   function handleIndMainForm(force = false) {
@@ -992,7 +1037,13 @@
       filledAny = true;
     }
 
-    if (filledAny && !docsFilled && !contactFilled && !addressFilled) {
+    // Step 5: Other Details Tab (Declaration / Capacity: SELF)
+    const otherFilled = handleOtherDetailsTab(force);
+    if (otherFilled) {
+      filledAny = true;
+    }
+
+    if (filledAny && !docsFilled && !contactFilled && !addressFilled && !otherFilled) {
       updateBadge(`✍️ Personal Info Auto-Filled: ${currentCandidate.full_name}`, '#10b981');
     }
   }
@@ -1067,6 +1118,7 @@
       document.getElementById('firstName') ||
       document.getElementById('identityProofDoc') ||
       document.getElementById('resAddr1') ||
+      document.getElementById('capacityCd') ||
       document.getElementById('refNo') ||
       document.getElementById('reEnterUid')
     ) {
