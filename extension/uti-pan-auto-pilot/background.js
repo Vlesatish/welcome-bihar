@@ -4,6 +4,7 @@
 // =========================================================================
 
 const DEFAULT_PORTAL_URL = 'https://bihargo.xyz';
+const CSC_LOGIN_URL = 'https://www.myutiitsl.com/panonlineservices/CSCLogin';
 const PRE_PAN_URL = 'https://www.myutiitsl.com/PANform/forms/pan.html/prePANForm';
 const QUEUE_ALARM_NAME = 'WB_UTI_PAN_QUEUE_WATCH';
 
@@ -48,7 +49,7 @@ async function closeAllUtiTabs() {
   }
 }
 
-async function launchFreshUtiCycle(cand) {
+async function launchFreshUtiCycle(cand, targetUrl) {
   if (isCycleLaunching) return;
   isCycleLaunching = true;
   try {
@@ -58,18 +59,22 @@ async function launchFreshUtiCycle(cand) {
         currentUtiRefNo: ''
       });
     }
-    await closeAllUtiTabs();
-    await new Promise((r) => setTimeout(r, 350));
-    await new Promise((resolve) => {
-      chrome.tabs.create({ url: PRE_PAN_URL, active: true }, () => {
-        void chrome.runtime.lastError;
-        resolve();
+    const openTabs = await getAllUtiTabs();
+    const finalUrl = targetUrl || CSC_LOGIN_URL;
+    if (openTabs.length === 0) {
+      await new Promise((resolve) => {
+        chrome.tabs.create({ url: finalUrl, active: true }, () => {
+          void chrome.runtime.lastError;
+          resolve();
+        });
       });
-    });
+    } else {
+      chrome.tabs.update(openTabs[0].id, { active: true });
+    }
   } finally {
     setTimeout(() => {
       isCycleLaunching = false;
-    }, 3500);
+    }, 2500);
   }
 }
 

@@ -58,14 +58,35 @@
     }
   }
 
-  function selectOptionByText(selectEl, targetText) {
+  function selectOptionByText(selectEl, targetText, exactOnly = false) {
     if (!selectEl || !targetText) return false;
     const target = String(targetText).trim().toLowerCase();
+
+    // Pass 1: Strict exact match (Prevents "Individual" matching "Body of Individual")
     for (let i = 0; i < selectEl.options.length; i++) {
       const opt = selectEl.options[i];
       const txt = (opt.text || '').trim().toLowerCase();
       const val = (opt.value || '').trim().toLowerCase();
-      if (txt === target || val === target || txt.includes(target)) {
+      if (txt === target || val === target) {
+        if (selectEl.selectedIndex !== i) {
+          selectEl.selectedIndex = i;
+          selectEl.value = opt.value;
+          opt.selected = true;
+          selectEl.dispatchEvent(new Event('input', { bubbles: true }));
+          selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        return true;
+      }
+    }
+
+    if (exactOnly) return false;
+
+    // Pass 2: Fallback to starts-with or contains only if exact match is absent
+    for (let i = 0; i < selectEl.options.length; i++) {
+      const opt = selectEl.options[i];
+      const txt = (opt.text || '').trim().toLowerCase();
+      const val = (opt.value || '').trim().toLowerCase();
+      if (txt.startsWith(target) || txt.includes(target)) {
         if (selectEl.selectedIndex !== i) {
           selectEl.selectedIndex = i;
           selectEl.value = opt.value;
@@ -263,7 +284,7 @@
   function handlePrePanForm() {
     if (prePanSubmitted) return;
 
-    updateBadge('Step 0: Configuring prePANForm...', '#38bdf8');
+    updateBadge('Step 0: Configuring Individual & NRI No...', '#38bdf8');
 
     // 1. Physical Mode radio
     const physicalRadio = findRadioNearText('physical mode', 'physical') ||
@@ -275,46 +296,93 @@
       clickRadio(physicalRadio);
     }
 
-    // 2. Status of the Applicant -> Individual
-    const statusSelect = Array.from(document.querySelectorAll('select')).find((sel) => {
-      return Array.from(sel.options).some((o) => (o.text || '').trim().toLowerCase() === 'individual');
-    });
+    // 2. Status of the Applicant -> Strictly "Individual" (Never "Body of Individual")
     let individualSelected = false;
-    if (statusSelect) {
-      individualSelected = selectOptionByText(statusSelect, 'Individual');
+    const allSelects = Array.from(document.querySelectorAll('select'));
+    for (const sel of allSelects) {
+      const optIndex = Array.from(sel.options).findIndex((o) => (o.text || '').trim().toLowerCase() === 'individual');
+      if (optIndex >= 0) {
+        if (sel.selectedIndex !== optIndex) {
+          sel.selectedIndex = optIndex;
+          sel.value = sel.options[optIndex].value;
+          sel.options[optIndex].selected = true;
+          sel.dispatchEvent(new Event('input', { bubbles: true }));
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        individualSelected = (sel.selectedIndex === optIndex);
+        break;
+      }
     }
 
-    // 3. Whether you are from defence/NRI Category ? -> No (appears after Individual is selected)
-    const nriNoRadio = findRadioNearText('defence/nri', 'no') || findRadioNearText('nri category', 'no');
-    let nriSelected = false;
-    if (nriNoRadio) {
-      nriSelected = clickRadio(nriNoRadio);
+    // 3. Whether you are from defence/NRI Category ? -> Strictly "No"
+    let nriNoSelected = false;
+    const allRadios = Array.from(document.querySelectorAll('input[type="radio"]'));
+
+    // Find the container block for defence/NRI
+    const nriBlock = Array.from(document.querySelectorAll('div, tr, section, fieldset, td, p')).find((el) => {
+      const t = (el.innerText || '').toLowerCase();
+      return (t.includes('defence/nri') || (t.includes('defence') && t.includes('nri'))) && el.querySelectorAll('input[type="radio"]').length >= 2;
+    });
+
+    if (nriBlock) {
+      const radiosInBlock = Array.from(nriBlock.querySelectorAll('input[type="radio"]'));
+      let noRadio = radiosInBlock.find((r) => {
+        const val = (r.value || '').trim().toLowerCase();
+        const id = (r.id || '').toLowerCase();
+        const next = (r.nextSibling?.textContent || '').trim().toLowerCase();
+        const lbl = (document.querySelector(`label[for="${r.id}"]`)?.innerText || '').trim().toLowerCase();
+        return val === 'n' || val === 'no' || id.endsWith('no') || id.includes('_n') || next === 'no' || next.startsWith('no') || lbl === 'no';
+      });
+
+      // If not uniquely matched, in a standard Yes/No pair, [1] is always 'No'
+      if (!noRadio && radiosInBlock.length >= 2) {
+        noRadio = radiosInBlock[1];
+      }
+
+      if (noRadio) {
+        clickRadio(noRadio);
+        nriNoSelected = Boolean(noRadio.checked);
+      }
+    } else {
+      // Fallback: search across all radios
+      const nriRadio = allRadios.find((r) => {
+        const name = (r.name || '').toLowerCase();
+        const id = (r.id || '').toLowerCase();
+        const val = (r.value || '').toLowerCase();
+        const next = (r.nextSibling?.textContent || '').trim().toLowerCase();
+        return (name.includes('nri') || id.includes('nri') || name.includes('defence')) &&
+               (val === 'n' || val === 'no' || next === 'no');
+      });
+      if (nriRadio) {
+        clickRadio(nriRadio);
+        nriNoSelected = Boolean(nriRadio.checked);
+      }
     }
 
     // 4. PAN CARD Mode -> Both physical PAN Card and e-PAN
-    const bothPanRadio = findRadioNearText('both physical pan card', 'both') ||
-      Array.from(document.querySelectorAll('input[type="radio"]')).find((r) => {
-        const t = (r.parentElement?.innerText || r.closest('label, span, div')?.innerText || '').toLowerCase();
-        return t.includes('both physical pan card');
-      });
-    let panModeSelected = false;
-    if (bothPanRadio) {
-      panModeSelected = clickRadio(bothPanRadio);
+    const bothPanRadio = allRadios.find((r) => {
+      const parentTxt = (r.parentElement?.innerText || r.closest('label, span, div')?.innerText || '').toLowerCase();
+      const val = (r.value || '').toLowerCase();
+      return parentTxt.includes('both physical pan') || val.includes('both') || val === 'b';
+    });
+    if (bothPanRadio && !bothPanRadio.checked) {
+      clickRadio(bothPanRadio);
     }
 
-    // 5. Submit once all 4 options are selected
-    if (physicalRadio?.checked && individualSelected && nriSelected && panModeSelected) {
-      const submitBtn = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"]')).find((b) => {
+    // 5. Submit once Individual and NRI No are configured
+    if (individualSelected && nriNoSelected) {
+      const submitBtn = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a.btn')).find((b) => {
         if (!isVisible(b)) return false;
         const txt = (b.textContent || b.value || '').trim().toLowerCase();
         return txt === 'submit';
       });
+
       if (submitBtn && !prePanSubmitted) {
         prePanSubmitted = true;
-        updateBadge('🚀 prePANForm ready! Submitting...', '#10b981');
+        updateBadge('🚀 prePANForm ready! Auto-submitting...', '#10b981');
         setTimeout(() => {
           submitBtn.click();
-        }, 450);
+        }, 350);
       }
     }
   }
@@ -395,10 +463,14 @@
   // -----------------------------------------------------------------------
   function runAutoFill(force = false) {
     const url = (window.location.href || '').toLowerCase();
-    if (url.includes('prepanform')) {
+    const bodyText = (document.body?.innerText || '').toLowerCase();
+
+    if (url.includes('prepanform') || bodyText.includes('status of the applicant') || bodyText.includes('pan card for indian citizen')) {
       handlePrePanForm();
-    } else if (url.includes('indmainform')) {
+    } else if (url.includes('indmainform') || bodyText.includes('form no. 49a') || bodyText.includes('form 49a')) {
       handleIndMainForm(force);
+    } else if (url.includes('csclogin')) {
+      updateBadge('CSC Login Screen • Please sign in', '#fbbf24');
     } else {
       updateBadge('Ready on UTI PAN Portal', '#38bdf8');
     }

@@ -26,8 +26,8 @@
   "content_scripts": [
     {
       "matches": [
-        "https://www.myutiitsl.com/PANform/*",
-        "https://myutiitsl.com/PANform/*"
+        "https://www.myutiitsl.com/*",
+        "https://myutiitsl.com/*"
       ],
       "js": [
         "content/uti_pan_auto.js"
