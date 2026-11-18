@@ -455,6 +455,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.action === 'openCscLoginTab') {
+    (async () => {
+      try {
+        const cscLoginUrl = 'https://www.myutiitsl.com/panonlineservices/CSCLogin';
+        const senderTabId = sender.tab ? sender.tab.id : null;
+        if (senderTabId) {
+          chrome.tabs.update(senderTabId, { url: cscLoginUrl, active: true }, () => {
+            void chrome.runtime.lastError;
+          });
+        } else {
+          const allTabs = await getAllUtiTabs();
+          if (allTabs.length > 0) {
+            chrome.tabs.update(allTabs[0].id, { url: cscLoginUrl, active: true }, () => {
+              void chrome.runtime.lastError;
+            });
+          } else {
+            chrome.tabs.create({ url: cscLoginUrl, active: true });
+          }
+        }
+        sendResponse({ success: true });
+      } catch (err) {
+        sendResponse({ success: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
   return false;
 });
 

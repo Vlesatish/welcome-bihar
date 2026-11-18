@@ -2709,20 +2709,26 @@
     if (sessionInvalidRedirecting) return;
     sessionInvalidRedirecting = true;
 
-    updateBadge('⚠️ Session Invalid • Opening CSC Login in 1s...', '#f59e0b');
+    updateBadge('⚠️ Session Invalid • Redirecting to CSC Login...', '#f59e0b');
 
-    // Click Close button if present
-    const closeBtn = Array.from(document.querySelectorAll('button, input[type="button"], a, div[role="button"]')).find((b) => {
-      const t = (b.textContent || b.value || '').trim().toLowerCase();
-      return t === 'close' || t === 'ok';
-    });
-    if (closeBtn) {
-      try { closeBtn.click(); } catch (e) {}
-    }
+    // Tell background service worker to navigate the browser tab directly
+    // This avoids iframe sandbox restrictions and X-Frame-Options: DENY
+    try {
+      chrome.runtime.sendMessage({ action: 'openCscLoginTab' });
+    } catch (e) {}
 
+    // Fallback: If top-level window, assign URL directly
     setTimeout(() => {
-      window.location.href = 'https://www.myutiitsl.com/panonlineservices/CSCLogin';
-    }, 800);
+      try {
+        if (window.top === window) {
+          window.location.assign('https://www.myutiitsl.com/panonlineservices/CSCLogin');
+        } else {
+          try {
+            window.top.location.href = 'https://www.myutiitsl.com/panonlineservices/CSCLogin';
+          } catch (e) {}
+        }
+      } catch (e) {}
+    }, 400);
   }
 
   function handleCscLoginPage() {
@@ -2730,23 +2736,54 @@
 
     updateBadge('⚡ CSC Login Screen • Auto-Clicking "Click Here"...', '#0ea5e9');
 
-    // Find Click Here button under VLE Users
-    const allClickable = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"], [role="button"], div, span'));
-    const clickHereBtn = allClickable.find((el) => {
-      if (!isVisible(el)) return false;
-      const txt = (el.textContent || el.value || '').trim().toLowerCase();
-      return txt === 'click here' || (txt.includes('click') && txt.includes('here'));
-    });
+    function executeClickHere() {
+      // 1. Direct ID or specific selectors for the "Click here" button on CSCLogin
+      const clickHereBtn =
+        document.getElementById('LoginCSC_0') ||
+        document.querySelector('input[id*="LoginCSC"]') ||
+        document.querySelector('input[src*="ClickHere" i]') ||
+        document.querySelector('input[src*="Clickhere" i]') ||
+        document.querySelector('input[value*="Click here" i]') ||
+        document.querySelector('a[href*="connect.csc.gov.in"]') ||
+        document.querySelector('a[href*="authorize"]') ||
+        Array.from(document.querySelectorAll('input, a, button, img, div, span')).find((el) => {
+          if (!isVisible(el)) return false;
+          const txt = (el.textContent || el.value || el.alt || el.title || '').trim().toLowerCase();
+          return txt === 'click here' || (txt.includes('click') && txt.includes('here'));
+        });
 
-    if (clickHereBtn) {
-      cscLoginClicking = true;
-      setTimeout(() => {
+      if (clickHereBtn) {
+        cscLoginClicking = true;
+        updateBadge('⚡ Clicked "Click Here" • Redirecting to Digital Seva Connect...', '#10b981');
+
         try { clickHereBtn.focus(); } catch (e) {}
         try { clickHereBtn.click(); } catch (e) {}
         try {
           clickHereBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
         } catch (e) {}
-      }, 400);
+
+        const parentAnchor = clickHereBtn.closest('a') || (clickHereBtn.tagName.toLowerCase() === 'a' ? clickHereBtn : null);
+        if (parentAnchor && parentAnchor.href) {
+          try { parentAnchor.click(); } catch (e) {}
+          setTimeout(() => {
+            if (window.location.href.toLowerCase().includes('csclogin')) {
+              window.location.assign(parentAnchor.href);
+            }
+          }, 350);
+        }
+        return true;
+      }
+      return false;
+    }
+
+    if (!executeClickHere()) {
+      let attempts = 0;
+      const retryInterval = setInterval(() => {
+        attempts++;
+        if (executeClickHere() || attempts > 25) {
+          clearInterval(retryInterval);
+        }
+      }, 200);
     }
   }
 
@@ -2869,7 +2906,13 @@
     }
 
     // 5. CSC Login -> Auto-Click "Click Here" (Image 2)
-    if (url.includes('csclogin') || (document.body && document.body.innerText.includes('VLE Users') && document.body.innerText.includes('Click Here'))) {
+    if (
+      url.includes('csclogin') ||
+      document.getElementById('LoginCSC_0') ||
+      (document.body && document.body.innerText.includes('VLE Users')) ||
+      document.querySelector('a[href*="connect.csc.gov.in"]') ||
+      document.querySelector('input[src*="ClickHere" i]')
+    ) {
       handleCscLoginPage();
       return;
     }
