@@ -735,6 +735,80 @@
   }
 
   // -----------------------------------------------------------------------
+  // STEP 4: Address Details Tab (resAddr1, resAddr2, resAddr3, resAddr4, resDistList, resPin, incomeOthSource)
+  // -----------------------------------------------------------------------
+  function handleAddressDetailsTab(force = false) {
+    let filled = false;
+
+    // 1. Source of Income -> Income from Other source (incomeOthSource)
+    const incomeOthSourceEl = document.getElementById('incomeOthSource');
+    if (incomeOthSourceEl && !incomeOthSourceEl.checked) {
+      incomeOthSourceEl.checked = true;
+      incomeOthSourceEl.dispatchEvent(new Event('input', { bubbles: true }));
+      incomeOthSourceEl.dispatchEvent(new Event('change', { bubbles: true }));
+      filled = true;
+    }
+
+    // 2. Flat/Door/Building (resAddr1) -> husband_name if present, else father_name
+    const resAddr1El = document.getElementById('resAddr1');
+    if (resAddr1El && (!resAddr1El.value || force)) {
+      const careOf = (currentCandidate?.husband_name && currentCandidate.husband_name.trim())
+        ? currentCandidate.husband_name.trim()
+        : (currentCandidate?.father_name ? currentCandidate.father_name.trim() : '');
+      if (careOf) {
+        setInputValue(resAddr1El, careOf.slice(0, 25).toUpperCase());
+        filled = true;
+      }
+    }
+
+    // 3. Road/Street/Block/Sector (resAddr2) -> village name
+    const resAddr2El = document.getElementById('resAddr2');
+    const village = (currentCandidate?.village || currentCandidate?.village_name || '').trim();
+    if (resAddr2El && village && (!resAddr2El.value || force)) {
+      setInputValue(resAddr2El, village.slice(0, 25).toUpperCase());
+      filled = true;
+    }
+
+    // 4. Post Office (resAddr3) -> post office
+    const resAddr3El = document.getElementById('resAddr3');
+    const postOffice = (currentCandidate?.post_office || currentCandidate?.po || '').trim();
+    if (resAddr3El && postOffice && (!resAddr3El.value || force)) {
+      setInputValue(resAddr3El, postOffice.slice(0, 25).toUpperCase());
+      filled = true;
+    }
+
+    // 5. Area/Locality/Town/City (resAddr4) -> block name
+    const resAddr4El = document.getElementById('resAddr4');
+    const block = (currentCandidate?.block_name || currentCandidate?.block || '').trim();
+    if (resAddr4El && block && (!resAddr4El.value || force)) {
+      setInputValue(resAddr4El, block.slice(0, 25).toUpperCase());
+      filled = true;
+    }
+
+    // 6. District (resDistList)
+    const resDistListEl = document.getElementById('resDistList');
+    const district = (currentCandidate?.district_name || currentCandidate?.district || '').trim();
+    if (resDistListEl && district && (!resDistListEl.value || force)) {
+      if (selectOptionByText(resDistListEl, district, false)) {
+        filled = true;
+      }
+    }
+
+    // 7. Pin/Zip Code (resPin)
+    const resPinEl = document.getElementById('resPin');
+    const pincode = String(currentCandidate?.pincode || currentCandidate?.pin || '').replace(/\D/g, '').slice(0, 6);
+    if (resPinEl && pincode && (!resPinEl.value || force)) {
+      setInputValue(resPinEl, pincode);
+      filled = true;
+    }
+
+    if (filled) {
+      updateBadge(`🏠 Residence Address Set: ${village || district || currentCandidate.full_name}`, '#10b981');
+    }
+    return filled;
+  }
+
+  // -----------------------------------------------------------------------
   // PAGE 2: IndmainForm (Form No. 93)
   // -----------------------------------------------------------------------
   function handleIndMainForm(force = false) {
@@ -876,7 +950,13 @@
       filledAny = true;
     }
 
-    if (filledAny && !docsFilled && !contactFilled) {
+    // Step 4: Address Details Tab
+    const addressFilled = handleAddressDetailsTab(force);
+    if (addressFilled) {
+      filledAny = true;
+    }
+
+    if (filledAny && !docsFilled && !contactFilled && !addressFilled) {
       updateBadge(`✍️ Personal Info Auto-Filled: ${currentCandidate.full_name}`, '#10b981');
     }
   }
@@ -947,8 +1027,10 @@
     if (
       url.includes('indmainform') ||
       url.includes('panind.html') ||
+      url.includes('mainformeditind') ||
       document.getElementById('firstName') ||
       document.getElementById('identityProofDoc') ||
+      document.getElementById('resAddr1') ||
       document.getElementById('refNo') ||
       document.getElementById('reEnterUid')
     ) {
