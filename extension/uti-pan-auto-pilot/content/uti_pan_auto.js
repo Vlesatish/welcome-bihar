@@ -390,6 +390,12 @@
   function handleAllModals() {
     let handled = false;
 
+    // -1. Session Invalid Check (Image 1)
+    if (isSessionInvalidPage()) {
+      handleSessionInvalidPage();
+      return true;
+    }
+
     // 0. PAN Already Exists on Aadhaar Check
     if (isPanAlreadyExistsPage()) {
       handlePanAlreadyExistsPage();
@@ -2684,6 +2690,67 @@
   }
 
   // -----------------------------------------------------------------------
+  // SESSION INVALID & CSC LOGIN (Images 1 & 2)
+  // -----------------------------------------------------------------------
+  let sessionInvalidRedirecting = false;
+  let cscLoginClicking = false;
+
+  function isSessionInvalidPage() {
+    const text = (document.body ? document.body.innerText : '').toLowerCase();
+    return (
+      text.includes('session invalid') ||
+      text.includes('invalid session') ||
+      text.includes('session has expired') ||
+      text.includes('session expired')
+    );
+  }
+
+  function handleSessionInvalidPage() {
+    if (sessionInvalidRedirecting) return;
+    sessionInvalidRedirecting = true;
+
+    updateBadge('⚠️ Session Invalid • Opening CSC Login in 1s...', '#f59e0b');
+
+    // Click Close button if present
+    const closeBtn = Array.from(document.querySelectorAll('button, input[type="button"], a, div[role="button"]')).find((b) => {
+      const t = (b.textContent || b.value || '').trim().toLowerCase();
+      return t === 'close' || t === 'ok';
+    });
+    if (closeBtn) {
+      try { closeBtn.click(); } catch (e) {}
+    }
+
+    setTimeout(() => {
+      window.location.href = 'https://www.myutiitsl.com/panonlineservices/CSCLogin';
+    }, 800);
+  }
+
+  function handleCscLoginPage() {
+    if (cscLoginClicking) return;
+
+    updateBadge('⚡ CSC Login Screen • Auto-Clicking "Click Here"...', '#0ea5e9');
+
+    // Find Click Here button under VLE Users
+    const allClickable = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"], [role="button"], div, span'));
+    const clickHereBtn = allClickable.find((el) => {
+      if (!isVisible(el)) return false;
+      const txt = (el.textContent || el.value || '').trim().toLowerCase();
+      return txt === 'click here' || (txt.includes('click') && txt.includes('here'));
+    });
+
+    if (clickHereBtn) {
+      cscLoginClicking = true;
+      setTimeout(() => {
+        try { clickHereBtn.focus(); } catch (e) {}
+        try { clickHereBtn.click(); } catch (e) {}
+        try {
+          clickHereBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+        } catch (e) {}
+      }, 400);
+    }
+  }
+
+  // -----------------------------------------------------------------------
   // PAN Already Exists / Duplicate PAN (reGeneration page / alert)
   // -----------------------------------------------------------------------
   let isRejectingDuplicatePan = false;
@@ -2743,6 +2810,12 @@
   function runAutoFill(force = false) {
     const url = (window.location.href || '').toLowerCase();
 
+    // 000. Check Session Invalid Page (Image 1)
+    if (isSessionInvalidPage()) {
+      handleSessionInvalidPage();
+      return;
+    }
+
     // 00. Check if PAN already exists on this Aadhaar (reGeneration page / dialog)
     if (isPanAlreadyExistsPage()) {
       handlePanAlreadyExistsPage();
@@ -2795,9 +2868,9 @@
       return;
     }
 
-    // 5. CSC Login
-    if (url.includes('csclogin')) {
-      updateBadge('CSC Login Screen • Please sign in', '#fbbf24');
+    // 5. CSC Login -> Auto-Click "Click Here" (Image 2)
+    if (url.includes('csclogin') || (document.body && document.body.innerText.includes('VLE Users') && document.body.innerText.includes('Click Here'))) {
+      handleCscLoginPage();
       return;
     }
 
