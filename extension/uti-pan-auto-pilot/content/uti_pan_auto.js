@@ -2695,6 +2695,52 @@
   let sessionInvalidRedirecting = false;
   let cscLoginClicking = false;
   let otpFetchInitiated = false;
+  let changeProfileSubmitted = false;
+
+  function isChangeProfilePage() {
+    const url = (window.location.href || '').toLowerCase();
+    const text = (document.body ? (document.body.innerText || document.body.textContent || '') : '').toLowerCase();
+
+    return (
+      url.includes('changeprofile') ||
+      url.includes('editprofile') ||
+      url.includes('vleprofile') ||
+      url.includes('profile') ||
+      (text.includes('change profile') && (text.includes('personal details') || text.includes('vle id') || text.includes('contact person name'))) ||
+      (text.includes('personal details') && text.includes('police verification certificate'))
+    );
+  }
+
+  function handleChangeProfilePage() {
+    if (changeProfileSubmitted) return;
+
+    updateBadge('👤 VLE Change Profile Page • Auto-clicking Submit...', '#38bdf8');
+
+    const submitBtn =
+      document.querySelector('input[type="submit"][value*="Submit" i]') ||
+      document.querySelector('button[type="submit"]') ||
+      Array.from(document.querySelectorAll('input, button, a')).find((el) => {
+        if (!isVisible(el)) return false;
+        const val = (el.value || el.textContent || '').trim().toLowerCase();
+        return val === 'submit';
+      });
+
+    if (submitBtn) {
+      changeProfileSubmitted = true;
+      setTimeout(() => {
+        updateBadge('⚡ Profile Submit Clicked! Proceeding...', '#10b981');
+        try { submitBtn.focus(); } catch (e) {}
+        try { submitBtn.click(); } catch (e) {}
+        try {
+          submitBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+        } catch (e) {}
+        const form = submitBtn.closest('form') || document.querySelector('form');
+        if (form) {
+          try { form.submit(); } catch (e) {}
+        }
+      }, 500);
+    }
+  }
 
   function isOtpVerificationPage() {
     const url = (window.location.href || '').toLowerCase();
@@ -2904,6 +2950,12 @@
   // -----------------------------------------------------------------------
   function runAutoFill(force = false) {
     const url = (window.location.href || '').toLowerCase();
+
+    // 00000. Change Profile Screen (right after OTP login)
+    if (isChangeProfilePage()) {
+      handleChangeProfilePage();
+      return;
+    }
 
     // 0000. OTP Verification Page (loginCheckOtpRedirect)
     if (isOtpVerificationPage()) {
