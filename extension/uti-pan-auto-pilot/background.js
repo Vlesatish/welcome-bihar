@@ -599,10 +599,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return false;
 });
 
+const CSC_DASHBOARD_KEEPALIVE_URL = 'https://digitalseva.csc.gov.in/dashboard';
+const CSC_KEEPALIVE_ALARM_NAME = 'WB_CSC_DASHBOARD_KEEPALIVE_30M';
+
+function runCscDashboardKeepAlive() {
+  try {
+    chrome.tabs.create({ url: CSC_DASHBOARD_KEEPALIVE_URL, active: true }, (tab) => {
+      void chrome.runtime.lastError;
+      if (tab && tab.id) {
+        setTimeout(() => {
+          chrome.tabs.remove(tab.id, () => {
+            void chrome.runtime.lastError;
+          });
+        }, 3000);
+      }
+    });
+  } catch (err) {
+    console.error('[Background] CSC keep-alive error:', err);
+  }
+}
+
 chrome.alarms.create(QUEUE_ALARM_NAME, { periodInMinutes: 0.25 });
+chrome.alarms.create(CSC_KEEPALIVE_ALARM_NAME, { periodInMinutes: 30 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === QUEUE_ALARM_NAME) {
     checkQueueAndLaunch(false);
+  } else if (alarm.name === CSC_KEEPALIVE_ALARM_NAME) {
+    runCscDashboardKeepAlive();
   }
 });
 
