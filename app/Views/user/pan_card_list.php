@@ -811,7 +811,7 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                                     <div class="req-thumb-box h-100 d-flex flex-column justify-content-between">
                                         <div>
                                             <div class="d-flex align-items-center justify-content-between mb-1">
-                                                <span class="req-field-label mb-0">PAN FORM</span>
+                                                <span class="req-field-label mb-0">DOB PROOF</span>
                                                 <?php if ($panFormUrl): ?>
                                                     <a href="<?= e($panFormUrl) ?>" target="_blank" class="badge bg-light text-secondary border" style="font-size: 0.60rem;">DOC <i class="bi bi-box-arrow-up-right"></i></a>
                                                 <?php endif; ?>

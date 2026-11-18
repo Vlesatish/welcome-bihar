@@ -712,6 +712,11 @@ try {
             $ctrl->apiComplete();
             break;
 
+        case '/api/pan-card/attach-receipt':
+            $ctrl = new \App\Controllers\PanCardController();
+            $ctrl->apiAttachReceipt();
+            break;
+
         case '/api/pan-card/reject':
             $ctrl = new \App\Controllers\PanCardController();
             $ctrl->apiReject();

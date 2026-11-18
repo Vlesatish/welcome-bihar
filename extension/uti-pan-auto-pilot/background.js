@@ -299,7 +299,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           chrome.storage.local.get(['currentCandidate', 'queueList', 'currentUtiRefNo'], resolve);
         });
 
-        const cand = stored.currentCandidate || (Array.isArray(stored.queueList) && stored.queueList[0]) || {};
+        const cand = stored.currentCandidate || {};
         const appId = msg.appId || cand.id || cand.app_id;
         const rawRef = msg.appRef || cand.app_ref || (cand.id ? `WB-${cand.id}` : '');
         const appRef = String(rawRef || '').replace(/^#+/, '').trim();
@@ -329,19 +329,41 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
           sendResponse({ success: true, data });
 
-          // Cut success page and open document upload list page
-          const successTabId = sender && sender.tab ? sender.tab.id : null;
-          setTimeout(() => {
-            openDocUploadAndCloseSuccess(successTabId);
-          }, 800);
+          // Auto-close and proceed only if autoClose is true
+          if (msg.autoClose !== false) {
+            const successTabId = sender && sender.tab ? sender.tab.id : null;
+            setTimeout(() => {
+              openDocUploadAndCloseSuccess(successTabId);
+            }, 1200);
+          }
 
           // Re-check queue: agar koi naya application aaya hoga toh turant auto-start hoga
           setTimeout(() => {
             checkQueueAndLaunch(false);
-          }, 1500);
+          }, 2000);
         } else {
           sendResponse({ success: false, data, error: data?.error || 'Portal update failed' });
         }
+      } catch (err) {
+        sendResponse({ success: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
+  if (msg.action === 'attachReceipt') {
+    (async () => {
+      try {
+        const data = await postPortalAction('/api/pan-card/attach-receipt', {
+          app_id: msg.appId,
+          app_ref: msg.appRef,
+          applicant_name: msg.applicantName || '',
+          mobile_no: msg.mobileNo || '',
+          aadhaar_no: msg.aadhaarNo || '',
+          uti_ref_no: msg.utiRefNo || '',
+          screenshot: msg.screenshot || msg.result_file_base64 || ''
+        });
+        sendResponse({ success: Boolean(data && data.success), data, error: data?.error });
       } catch (err) {
         sendResponse({ success: false, error: err.message });
       }
@@ -419,6 +441,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ success: false, error: err.message });
       }
     })();
+    return true;
+  }
+
+  if (msg.action === 'closeCurrentTab') {
+    const tabId = sender.tab ? sender.tab.id : null;
+    if (tabId) {
+      chrome.tabs.remove(tabId, () => {
+        void chrome.runtime.lastError;
+      });
+    }
+    sendResponse({ success: true });
     return true;
   }
 

@@ -312,17 +312,17 @@ class PanCardController
                 throw new Exception('PINCODE must be exactly 6 digits.');
             }
 
-            // 3. Process File Uploads (Photo, Signature, Aadhar Card, Pan Form)
+            // 3. Process File Uploads (Photo, Signature, Aadhar Card, Date Of Birth Proof [Optional])
             $trackedFiles = [];
             $photoPath = $this->saveUploadedDocument('photo', 'Photo', ['jpg', 'jpeg', 'png', 'pdf'], 2, $trackedFiles);
             $sigPath = $this->saveUploadedDocument('signature', 'Signature', ['jpg', 'jpeg', 'png', 'pdf'], 2, $trackedFiles);
             $aadharPath = $this->saveUploadedDocument('aadhar_card', 'Aadhar Card', ['pdf', 'jpg', 'jpeg', 'png'], 2, $trackedFiles);
-            $panFormPath = $this->saveUploadedDocument('pan_form', 'PAN Form', ['pdf', 'jpg', 'jpeg', 'png'], 2, $trackedFiles);
+            $panFormPath = $this->saveUploadedDocument('pan_form', 'Date Of Birth Proof', ['pdf', 'jpg', 'jpeg', 'png'], 2, $trackedFiles);
 
             if (empty($photoPath)) throw new Exception('PHOTO is required (JPG, PNG, PDF max 2MB).');
             if (empty($sigPath)) throw new Exception('SIGNATURE is required (JPG, PNG, PDF max 2MB).');
             if (empty($aadharPath)) throw new Exception('AADHAR CARD is required (PDF, JPG, PNG max 2MB).');
-            if (empty($panFormPath)) throw new Exception('PAN FORM is required (PDF, JPG, PNG max 2MB).');
+            // Date of birth proof / PAN Form is optional (defaults to standard format in auto-pilot if omitted)
 
             // 4. Wallet Balance Verification
             $isAdmin = in_array($user['role'] ?? '', ['ADMIN', 'SUPER_ADMIN'], true);
@@ -1125,17 +1125,48 @@ class PanCardController
             if ($found > 0) return $found;
         }
 
-        // Fallback: Latest active PAN application
-        $stmt = $this->db->prepare("SELECT id FROM applications WHERE status IN ('PENDING', 'IN_PROCESS', 'UNDER_REVIEW') ORDER BY id ASC LIMIT 1");
-        $stmt->execute();
-        $found = (int)$stmt->fetchColumn();
-        if ($found > 0) return $found;
-
         return 0;
     }
 
     /**
-     * POST /api/pan-card/complete - Mark PAN application as COMPLETED from Extension
+     * Decode base64 image/PDF string safely without regex backtracking limitations
+     */
+    private function decodeBase64Payload(string $b64, string &$extOut): ?string
+    {
+        $b64 = trim($b64);
+        if ($b64 === '') return null;
+
+        $ext = 'jpg';
+        $rawB64 = $b64;
+
+        if (str_starts_with($b64, 'data:')) {
+            $commaPos = strpos($b64, ',');
+            if ($commaPos !== false) {
+                $header = substr($b64, 0, $commaPos);
+                $rawB64 = substr($b64, $commaPos + 1);
+                if (stripos($header, 'png') !== false) {
+                    $ext = 'png';
+                } elseif (stripos($header, 'pdf') !== false) {
+                    $ext = 'pdf';
+                } else {
+                    $ext = 'jpg';
+                }
+            }
+        }
+
+        $rawB64 = str_replace([' ', "\r", "\n", "\t"], ['+', '', '', ''], $rawB64);
+        $decoded = base64_decode($rawB64, true);
+
+        if ($decoded === false || strlen($decoded) < 50) {
+            return null;
+        }
+
+        $extOut = $ext;
+        return $decoded;
+    }
+
+    /**
+     * POST /api/pan-card/complete - Mark PAN application as COMPLETED and attach Receiving Screenshot
      */
     public function apiComplete(): void
     {
@@ -1153,7 +1184,7 @@ class PanCardController
         $appId = $this->resolvePanAppId($payload);
         if ($appId <= 0) {
             http_response_code(400);
-            echo json_encode(['success' => false, 'error' => 'Valid app_id or app_ref is required.']);
+            echo json_encode(['success' => false, 'error' => 'Valid app_id or app_ref is required. Candidate identity could not be verified.']);
             exit;
         }
 
@@ -1167,23 +1198,30 @@ class PanCardController
 
         $resultFileUrl = trim((string)($payload['result_file_url'] ?? ''));
 
-        // Optional base64 receipt/screenshot upload
+        // Process base64 receipt/screenshot upload safely
         $b64 = trim((string)($payload['result_file_base64'] ?? $payload['screenshot'] ?? ''));
         if ($b64 !== '') {
-            $decoded = false;
             $ext = 'jpg';
-            if (str_starts_with($b64, 'data:') && preg_match('/^data:([^;]+);base64,(.+)$/', $b64, $m)) {
-                $ext = str_contains($m[1], 'pdf') ? 'pdf' : (str_contains($m[1], 'png') ? 'png' : 'jpg');
-                $decoded = base64_decode($m[2], true);
-            } else {
-                $decoded = base64_decode($b64, true);
-            }
-            if ($decoded !== false && strlen($decoded) > 0) {
+            $decoded = $this->decodeBase64Payload($b64, $ext);
+            if ($decoded !== null) {
                 $resDir = dirname(__DIR__, 2) . '/public/uploads/results';
                 if (!is_dir($resDir)) @mkdir($resDir, 0755, true);
-                $fileName = 'uti_res_' . $appId . '_' . date('Ymd_His') . '.' . $ext;
-                if (@file_put_contents($resDir . '/' . $fileName, $decoded) !== false) {
+                $safeCoupon = preg_replace('/[^A-Za-z0-9_-]/', '', $utiRef) ?: 'rec';
+                $fileName = 'receiving_' . $appId . '_' . $safeCoupon . '_' . date('Ymd_His') . '.' . $ext;
+                $savePath = $resDir . '/' . $fileName;
+
+                if (@file_put_contents($savePath, $decoded) !== false) {
                     $resultFileUrl = '/uploads/results/' . $fileName;
+
+                    // Update application_field_values receiving
+                    try {
+                        $fvStmt = $this->db->prepare("
+                            INSERT INTO application_field_values (application_id, field_name, field_value, created_at, updated_at)
+                            VALUES (?, 'receiving', ?, NOW(), NOW())
+                            ON DUPLICATE KEY UPDATE field_value = VALUES(field_value), updated_at = NOW()
+                        ");
+                        $fvStmt->execute([$appId, $resultFileUrl]);
+                    } catch (\Throwable $e) {}
                 }
             }
         }
@@ -1200,15 +1238,100 @@ class PanCardController
                 $remarks,
                 $resultFileUrl !== '' ? $resultFileUrl : null
             );
+
             echo json_encode([
                 'success' => true,
                 'message' => $res['message'] ?? 'Marked as COMPLETED',
-                'result_file_url' => $resultFileUrl
+                'app_id' => $appId,
+                'result_file_url' => $resultFileUrl,
+                'has_receiving' => !empty($resultFileUrl)
             ]);
         } catch (\Throwable $e) {
             http_response_code(400);
             echo json_encode(['success' => false, 'error' => $e->getMessage()]);
         }
+        exit;
+    }
+
+    /**
+     * POST /api/pan-card/attach-receipt - Attach or Retry Receiving Screenshot without re-submitting application
+     */
+    public function apiAttachReceipt(): void
+    {
+        $this->sendCorsHeaders('POST, OPTIONS');
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+            http_response_code(405);
+            echo json_encode(['success' => false, 'error' => 'Method Not Allowed']);
+            exit;
+        }
+
+        $raw = file_get_contents('php://input');
+        $json = json_decode($raw ?: '', true);
+        $payload = is_array($json) ? $json : $_POST;
+
+        $appId = $this->resolvePanAppId($payload);
+        if ($appId <= 0) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'Valid app_id or app_ref is required. Candidate identity could not be verified.']);
+            exit;
+        }
+
+        $b64 = trim((string)($payload['result_file_base64'] ?? $payload['screenshot'] ?? ''));
+        if ($b64 === '') {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'Receiving screenshot base64 data is required.']);
+            exit;
+        }
+
+        $utiRef = trim((string)($payload['uti_ref_no'] ?? $payload['coupon_no'] ?? ''));
+        $ext = 'jpg';
+        $decoded = $this->decodeBase64Payload($b64, $ext);
+
+        if ($decoded === null) {
+            http_response_code(422);
+            echo json_encode(['success' => false, 'error' => 'Invalid or corrupted receiving screenshot base64 data.']);
+            exit;
+        }
+
+        $resDir = dirname(__DIR__, 2) . '/public/uploads/results';
+        if (!is_dir($resDir)) @mkdir($resDir, 0755, true);
+        $safeCoupon = preg_replace('/[^A-Za-z0-9_-]/', '', $utiRef) ?: 'rec';
+        $fileName = 'receiving_' . $appId . '_' . $safeCoupon . '_' . date('Ymd_His') . '.' . $ext;
+        $savePath = $resDir . '/' . $fileName;
+
+        if (@file_put_contents($savePath, $decoded) === false) {
+            http_response_code(500);
+            echo json_encode(['success' => false, 'error' => 'Failed to write receiving screenshot file to server storage.']);
+            exit;
+        }
+
+        $resultFileUrl = '/uploads/results/' . $fileName;
+
+        // Update applications table result_file
+        $stmt = $this->db->prepare("
+            UPDATE applications
+            SET result_file = ?,
+                updated_at = NOW()
+            WHERE id = ?
+        ");
+        $stmt->execute([$resultFileUrl, $appId]);
+
+        // Also update application_field_values receiving
+        try {
+            $fvStmt = $this->db->prepare("
+                INSERT INTO application_field_values (application_id, field_name, field_value, created_at, updated_at)
+                VALUES (?, 'receiving', ?, NOW(), NOW())
+                ON DUPLICATE KEY UPDATE field_value = VALUES(field_value), updated_at = NOW()
+            ");
+            $fvStmt->execute([$appId, $resultFileUrl]);
+        } catch (\Throwable $e) {}
+
+        echo json_encode([
+            'success' => true,
+            'message' => 'Receiving screenshot successfully attached and saved.',
+            'app_id' => $appId,
+            'result_file_url' => $resultFileUrl
+        ]);
         exit;
     }
 

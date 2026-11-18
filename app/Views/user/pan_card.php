@@ -610,7 +610,7 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
             <!-- Upload Section (4 Cards) -->
             <div class="mt-4 pt-3 border-top">
                 <div class="d-flex align-items-center justify-content-between mb-3">
-                    <h6 class="mb-0 fw-bold text-dark"><i class="bi bi-cloud-arrow-up-fill text-primary me-2"></i> Mandatory Documents Upload</h6>
+                    <h6 class="mb-0 fw-bold text-dark"><i class="bi bi-cloud-arrow-up-fill text-primary me-2"></i> Documents Upload</h6>
                     <span class="text-muted small">Max file size: 2MB each (JPG, PNG, PDF)</span>
                 </div>
 
@@ -687,22 +687,22 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                         </div>
                     </div>
 
-                    <!-- 19. PAN FORM -->
+                    <!-- 19. DATE OF BIRTH PROOF (OPTIONAL) -->
                     <div class="col-12 col-md-6 col-lg-3">
-                        <label class="pan-label">PAN FORM <span class="req-star">*</span></label>
+                        <label class="pan-label">DATE OF BIRTH PROOF <span class="badge bg-secondary-subtle text-secondary fw-semibold ms-1" style="font-size: 0.68rem; vertical-align: middle;">Optional</span></label>
                         <div class="pan-upload-zone" id="drop_pan_form" onclick="triggerFileInput('file_pan_form')">
                             <i class="bi bi-file-earmark-medical-fill pan-upload-icon"></i>
-                            <div class="pan-upload-title">Upload Document / Pan Form</div>
-                            <div class="pan-upload-subtitle">(PDF / JPG / PNG max 2MB)</div>
+                            <div class="pan-upload-title">Upload Document / Date Of Birth Proof</div>
+                            <div class="pan-upload-subtitle">(Optional • PDF / JPG / PNG max 2MB)</div>
                             <input type="file" id="file_pan_form" name="pan_form" accept=".pdf,.jpg,.jpeg,.png" style="display:none;" onchange="handleFileSelected(this, 'pan_form')">
                             <button type="button" class="pan-snap-btn" onclick="openCameraModal(event, 'pan_form')">
                                 <i class="bi bi-camera-fill text-danger"></i> Snap Photo / फोटो खींचे
                             </button>
                             <div class="pan-file-preview d-none" id="preview_pan_form">
                                 <div class="d-flex align-items-center gap-2 overflow-hidden">
-                                    <img src="" id="thumb_pan_form" alt="Pan Form">
+                                    <img src="" id="thumb_pan_form" alt="DOB Proof">
                                     <div class="text-start overflow-hidden">
-                                        <div class="small fw-bold text-truncate" id="name_pan_form">pan_form.pdf</div>
+                                        <div class="small fw-bold text-truncate" id="name_pan_form">dob_proof.pdf</div>
                                         <div class="text-muted" style="font-size: 0.68rem;" id="size_pan_form">450 KB</div>
                                     </div>
                                 </div>
