@@ -106,6 +106,25 @@
     if (!selectEl || !targetText) return false;
     const target = String(targetText).trim().toLowerCase();
 
+    // Special rule requested by RIOT: For Aurangabad district in Bihar, always prefer AURANGABAD(BH)
+    const cleanTarget = target.replace(/[^a-z]/g, '');
+    if (cleanTarget.includes('aurangabad') || cleanTarget.includes('aurabgabad')) {
+      for (let i = 0; i < selectEl.options.length; i++) {
+        const opt = selectEl.options[i];
+        const txt = (opt.text || '').trim().toLowerCase();
+        if (txt.includes('aurangabad(bh)') || txt.includes('aurangabad (bh)') || txt.includes('aurangabad(bihar)')) {
+          if (selectEl.selectedIndex !== i) {
+            selectEl.selectedIndex = i;
+            selectEl.value = opt.value;
+            opt.selected = true;
+            selectEl.dispatchEvent(new Event('input', { bubbles: true }));
+            selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+          return true;
+        }
+      }
+    }
+
     // Pass 1: Strict exact match
     for (let i = 0; i < selectEl.options.length; i++) {
       const opt = selectEl.options[i];
@@ -742,9 +761,17 @@
 
     // 6. District (resDistList)
     const resDistListEl = document.getElementById('resDistList');
-    const district = (currentCandidate?.district_name || currentCandidate?.district || '').trim();
+    let district = (currentCandidate?.district_name || currentCandidate?.district || '').trim();
+    const cleanDistCheck = district.toLowerCase().replace(/[^a-z]/g, '');
+    if (cleanDistCheck.includes('aurangabad') || cleanDistCheck.includes('aurabgabad')) {
+      district = 'AURANGABAD(BH)';
+    }
+
     let districtChanged = false;
-    if (resDistListEl && district && (!resDistListEl.value || force)) {
+    const currentSelectedDistText = (resDistListEl && resDistListEl.selectedIndex >= 0) ? (resDistListEl.options[resDistListEl.selectedIndex]?.text || '').trim().toUpperCase() : '';
+    const needsAurangabadFix = district === 'AURANGABAD(BH)' && currentSelectedDistText === 'AURANGABAD';
+
+    if (resDistListEl && district && (!resDistListEl.value || force || needsAurangabadFix)) {
       if (selectOptionByText(resDistListEl, district, false)) {
         filled = true;
         districtChanged = true;
@@ -1083,6 +1110,14 @@
     if (inc && !inc.checked) return false;
     if (!addr1 || !addr1.value.trim()) return false;
     if (!dist || !dist.value) return false;
+
+    // Check if district needs to be AURANGABAD(BH) instead of AURANGABAD
+    const candDist = (currentCandidate?.district_name || currentCandidate?.district || '').toLowerCase().replace(/[^a-z]/g, '');
+    if ((candDist.includes('aurangabad') || candDist.includes('aurabgabad')) && dist.selectedIndex >= 0) {
+      const selectedTxt = (dist.options[dist.selectedIndex]?.text || '').trim().toUpperCase();
+      if (selectedTxt === 'AURANGABAD') return false; // Not complete until AURANGABAD(BH) is chosen
+    }
+
     if (!pin || pin.value.replace(/\D/g, '').length < 6) return false;
     return true;
   }
