@@ -204,20 +204,26 @@
       host = document.createElement('div');
       host.id = 'wb-uti-badge';
       host.style.cssText = [
-        'position:fixed',
-        'bottom:16px',
-        'right:16px',
-        'z-index:2147483647',
-        'background:#0f172a',
-        'color:#f8fafc',
-        'border:1px solid #38bdf8',
-        'border-radius:12px',
-        'padding:10px 14px',
-        'font-family:system-ui,-apple-system,sans-serif',
-        'font-size:12px',
-        'box-shadow:0 8px 24px rgba(0,0,0,0.35)',
-        'min-width:260px',
-        'max-width:340px'
+        'position:fixed !important',
+        'bottom:16px !important',
+        'right:16px !important',
+        'top:auto !important',
+        'left:auto !important',
+        'width:300px !important',
+        'max-width:320px !important',
+        'height:auto !important',
+        'max-height:220px !important',
+        'z-index:2147483647 !important',
+        'background:#0f172a !important',
+        'color:#f8fafc !important',
+        'border:1px solid #38bdf8 !important',
+        'border-radius:12px !important',
+        'padding:10px 14px !important',
+        'font-family:system-ui,-apple-system,sans-serif !important',
+        'font-size:12px !important',
+        'box-shadow:0 8px 24px rgba(0,0,0,0.45) !important',
+        'box-sizing:border-box !important',
+        'line-height:1.4 !important'
       ].join(';');
 
       host.innerHTML = `
@@ -459,6 +465,50 @@
   }
 
   // -----------------------------------------------------------------------
+  // PAGE 0: vleHome.action -> Auto-click "Application for New PAN"
+  // -----------------------------------------------------------------------
+  let vleNavigated = false;
+  function handleVleHomePage() {
+    if (vleNavigated) return;
+
+    updateBadge('VLE Home • Launching Application for New PAN...', '#38bdf8');
+
+    // 1. Hover/Focus "Apply New PAN" menu dropdown
+    const menuHeaders = Array.from(document.querySelectorAll('a, li, div, span, td, th')).filter((el) => {
+      const t = (el.innerText || el.textContent || '').trim().toLowerCase();
+      return t === 'apply new pan' || t.startsWith('apply new pan');
+    });
+    for (const m of menuHeaders) {
+      try {
+        m.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        m.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+      } catch (e) {}
+    }
+
+    // 2. Find "Application for New PAN" link
+    const allLinks = Array.from(document.querySelectorAll('a, button, li, span, td'));
+    const targetLink = allLinks.find((el) => {
+      const txt = (el.innerText || el.textContent || '').trim().toLowerCase();
+      if (txt === 'pan application') return false; // Skip the category heading
+      return txt === 'application for new pan' ||
+             txt.includes('application for new pan') ||
+             txt.includes('new pan (49a)');
+    });
+
+    if (targetLink) {
+      vleNavigated = true;
+      updateBadge('🚀 Opening Application for New PAN...', '#10b981');
+      setTimeout(() => {
+        try { targetLink.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch (e) {}
+        try { targetLink.click(); } catch (e) {}
+        if (targetLink.tagName === 'A' && targetLink.href && !targetLink.href.startsWith('javascript:')) {
+          window.location.href = targetLink.href;
+        }
+      }, 500);
+    }
+  }
+
+  // -----------------------------------------------------------------------
   // Router & Observers
   // -----------------------------------------------------------------------
   function runAutoFill(force = false) {
@@ -470,7 +520,7 @@
     } else if (url.includes('indmainform') || bodyText.includes('form no. 49a') || bodyText.includes('form 49a')) {
       handleIndMainForm(force);
     } else if (url.includes('vlehome')) {
-      updateBadge('VLE Home • Open Form 49A to proceed', '#10b981');
+      handleVleHomePage();
     } else if (url.includes('error?errormsg') || bodyText.includes('something went wrong') || bodyText.includes('there is some problem')) {
       updateBadge('⚠️ Direct Form blocked • Reopen from vleHome', '#ef4444');
     } else if (url.includes('csclogin')) {
