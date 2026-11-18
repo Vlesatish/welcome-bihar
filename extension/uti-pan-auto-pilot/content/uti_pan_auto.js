@@ -1631,6 +1631,128 @@
     return result.buffer;
   }
 
+  // Converts raw JPEG ArrayBuffer into a valid PDF ArrayBuffer (%PDF-1.4 with DCTDecode)
+  function createPdfFromJpeg(jpegArrayBuffer) {
+    const bytes = new Uint8Array(jpegArrayBuffer);
+    let imgW = 595, imgH = 842;
+    let offset = 2;
+    while (offset < bytes.length) {
+      if (bytes[offset] !== 0xFF) { offset++; continue; }
+      const marker = bytes[offset + 1];
+      const len = (bytes[offset + 2] << 8) | bytes[offset + 3];
+      if (marker === 0xC0 || marker === 0xC2) {
+        imgH = (bytes[offset + 5] << 8) | bytes[offset + 6];
+        imgW = (bytes[offset + 7] << 8) | bytes[offset + 8];
+        break;
+      }
+      offset += 2 + len;
+    }
+
+    const pageW = 595.28;
+    const pageH = 841.89;
+    const scale = Math.min(pageW / imgW, pageH / imgH);
+    const drawW = imgW * scale;
+    const drawH = imgH * scale;
+    const posX = (pageW - drawW) / 2;
+    const posY = (pageH - drawH) / 2;
+
+    const contentStream = `q ${drawW.toFixed(2)} 0 0 ${drawH.toFixed(2)} ${posX.toFixed(2)} ${posY.toFixed(2)} cm /Im0 Do Q`;
+    const enc = new TextEncoder();
+    const contentBytes = enc.encode(contentStream);
+
+    const objects = [
+      '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj',
+      '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj',
+      `3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageW} ${pageH}] /Contents 4 0 R /Resources << /XObject << /Im0 5 0 R >> >> >>\nendobj`,
+      `4 0 obj\n<< /Length ${contentBytes.length} >>\nstream\n${contentStream}\nendstream\nendobj`
+    ];
+
+    const imgHeader = `5 0 obj\n<< /Type /XObject /Subtype /Image /Width ${imgW} /Height ${imgH} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${bytes.length} >>\nstream\n`;
+    const imgFooter = '\nendstream\nendobj';
+
+    const headerBuf = enc.encode('%PDF-1.4\n%âãÏÓ\n');
+    const imgHeadBuf = enc.encode(imgHeader);
+    const imgFootBuf = enc.encode(imgFooter + '\n');
+
+    let currentOffset = headerBuf.length;
+    const xrefOffsets = [0];
+
+    const objBuffers = objects.map((objStr) => {
+      xrefOffsets.push(currentOffset);
+      const b = enc.encode(objStr + '\n');
+      currentOffset += b.length;
+      return b;
+    });
+
+    xrefOffsets.push(currentOffset);
+    currentOffset += imgHeadBuf.length + bytes.length + imgFootBuf.length;
+
+    const xrefStart = currentOffset;
+    let xrefStr = `xref\n0 6\n0000000000 65535 f \n`;
+    for (let i = 1; i <= 5; i++) {
+      xrefStr += String(xrefOffsets[i]).padStart(10, '0') + ' 00000 n \n';
+    }
+    xrefStr += `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`;
+    const xrefBuf = enc.encode(xrefStr);
+
+    const totalLen = currentOffset + xrefBuf.length;
+    const out = new Uint8Array(totalLen);
+    let pos = 0;
+
+    out.set(headerBuf, pos); pos += headerBuf.length;
+    for (const ob of objBuffers) {
+      out.set(ob, pos); pos += ob.length;
+    }
+    out.set(imgHeadBuf, pos); pos += imgHeadBuf.length;
+    out.set(bytes, pos); pos += bytes.length;
+    out.set(imgFootBuf, pos); pos += imgFootBuf.length;
+    out.set(xrefBuf, pos);
+
+    return out.buffer;
+  }
+
+  // Fetches real PAN Form / Aadhaar from BiharGo and ensures it is delivered as a valid PDF
+  async function fetchAndFormatPanForm(cand) {
+    const formUrl = cand.pan_form_url || cand.aadhar_card_url || '';
+    if (!formUrl) {
+      return fetchFileViaBackground('assets/default_pan_form.pdf', 'PAN_Form_Alongwith_Documents.pdf', 'application/pdf');
+    }
+
+    try {
+      const rawFile = await fetchFileViaBackground(formUrl, 'cand_form', 'application/octet-stream');
+      const buf = await rawFile.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+
+      // Check if already PDF (%PDF header)
+      if (bytes.length >= 4 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46) {
+        return new File([buf], 'PAN_Form_Alongwith_Documents.pdf', { type: 'application/pdf' });
+      }
+
+      // Check if JPEG image (0xFF 0xD8)
+      if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xD8) {
+        const pdfBuf = createPdfFromJpeg(buf);
+        return new File([pdfBuf], 'PAN_Form_Alongwith_Documents.pdf', { type: 'application/pdf' });
+      }
+
+      // Convert image via Canvas -> JPEG -> PDF
+      const bmp = await createImageBitmap(rawFile);
+      const canvas = document.createElement('canvas');
+      canvas.width = bmp.width;
+      canvas.height = bmp.height;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(bmp, 0, 0);
+      const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.88));
+      const jBuf = await blob.arrayBuffer();
+      const pdfBuf = createPdfFromJpeg(jBuf);
+      return new File([pdfBuf], 'PAN_Form_Alongwith_Documents.pdf', { type: 'application/pdf' });
+    } catch (err) {
+      console.warn('Candidate form conversion to PDF failed, falling back to bundled form:', err);
+      return fetchFileViaBackground('assets/default_pan_form.pdf', 'PAN_Form_Alongwith_Documents.pdf', 'application/pdf');
+    }
+  }
+
   async function fetchAndFormatPhoto(photoUrl, name) {
     const rawFile = await fetchFileViaBackground(photoUrl, 'temp_photo.jpg', 'image/jpeg');
     const bmp = await createImageBitmap(rawFile);
@@ -1754,8 +1876,8 @@
         throw new Error('Candidate photo or signature URL missing from Welcome Bihar');
       }
 
-      // 1. User-Provided Standard PAN Form PDF (assets/default_pan_form.pdf via background)
-      const panFormFile = await fetchFileViaBackground('assets/default_pan_form.pdf', 'PAN_Form_Alongwith_Documents.pdf', 'application/pdf');
+      // 1. Candidate Real PAN Form from BiharGo (delivered as valid PDF)
+      const panFormFile = await fetchAndFormatPanForm(activeCand);
 
       // 2. Candidate Photo from BiharGo (UTI 213x213 @ 300 DPI)
       const photoFile = await fetchAndFormatPhoto(activeCand.photo_url, activeCand.full_name);
@@ -2252,40 +2374,8 @@
       return;
     }
 
-    // 3. Modal not open yet: Match row by Candidate App No & Name if available
-    if (!currentCandidate) {
-      updateBadge('📄 Document Upload List • Click "⚡ Auto Upload" on any row', '#38bdf8');
-      return;
-    }
-
-    const appNo = String(currentUtiRefNo || currentCandidate.coupon_no || currentCandidate.app_ref || '').replace(/^U-/i, '').trim().toUpperCase();
-    const candName = (currentCandidate.full_name || '').trim().toUpperCase();
-
-    if (appNo && appNo === lastUploadedAppNo) {
-      return;
-    }
-
-    const match = findCandidateUploadRow(appNo, candName);
-    if (!match) {
-      updateBadge(`🔍 Ready • Click "⚡ Auto Upload" on any candidate row`, '#38bdf8');
-      return;
-    }
-
-    docUploadLock = true;
-    lastUploadedAppNo = match.cleanAppNo || appNo;
-    updateBadge(`⚡ Clicking Upload for ${match.cleanName} (${match.cleanAppNo || 'Matched'})...`, '#10b981');
-
-    setTimeout(() => {
-      try {
-        match.uploadBtn.focus();
-        match.uploadBtn.click();
-      } catch (e) {
-        match.uploadBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-      }
-      setTimeout(() => {
-        docUploadLock = false;
-      }, 1500);
-    }, 400);
+    // 3. Modal not open yet: Standby for user click (NO AUTO-CLICK LOOP)
+    updateBadge('📄 Document Upload List • Click "⚡ Auto Upload" on candidate row', '#38bdf8');
   }
 
   // -----------------------------------------------------------------------
