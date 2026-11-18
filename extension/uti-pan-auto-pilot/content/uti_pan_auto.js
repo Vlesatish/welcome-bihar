@@ -2031,8 +2031,8 @@
     return new File([finalBuffer], `${safeName}_signature_400x200_600dpi.jpg`, { type: 'image/jpeg' });
   }
 
-  // Do NOT auto click the modal Upload button (RIOT instructed: "esme per auto click mat karo sirf upload karo")
-  const AUTO_CLICK_MODAL_UPLOAD = false;
+  // Auto click the modal Upload button (Requested by RIOT: "document uplaod bhi autokar do")
+  const AUTO_CLICK_MODAL_UPLOAD = true;
 
   function clickModalUploadButton(modal) {
     const root = modal || document;
@@ -2542,6 +2542,8 @@
     }
   }
 
+  let autoRowUploadTriggered = false;
+
   function handleDocUploadListPage() {
     // Inject floating UI and row buttons
     ensureFloatingDocUploadBar();
@@ -2561,7 +2563,13 @@
       if (okBtn) {
         try { okBtn.click(); } catch (e) {}
         chrome.storage.local.set({ awaitingDocUpload: false });
-        updateBadge('🎉 Documents Uploaded Successfully!', '#10b981');
+        autoRowUploadTriggered = false;
+        updateBadge('🎉 Documents Uploaded Successfully! Next process auto-starting...', '#10b981');
+        setTimeout(() => {
+          try {
+            chrome.runtime.sendMessage({ action: 'checkQueueNow', force: true });
+          } catch (e) {}
+        }, 1500);
       }
       return;
     }
@@ -2594,8 +2602,18 @@
         // If not found, scan visible table rows
         if (!targetCand) {
           const firstInfo = getFirstVisibleTableRowCandInfo();
-          if (firstInfo && firstInfo.candName && window._docTableCandidateCache[firstInfo.candName.toUpperCase()]) {
+          if (firstInfo && firstInfo.candName) {
             targetCand = window._docTableCandidateCache[firstInfo.candName.toUpperCase()];
+            if (!targetCand) {
+              fetchCandidateBySearch(firstInfo.candName).then((c) => {
+                if (c) {
+                  window._docTableCandidateCache[firstInfo.candName.toUpperCase()] = c;
+                  docUploadLock = true;
+                  attachDocumentsToModal(inputs, c, modal);
+                }
+              });
+              return;
+            }
           }
         }
 
@@ -2610,8 +2628,59 @@
       return;
     }
 
-    // 3. Modal not open yet: Standby for user click (NO AUTO-CLICK LOOP)
-    updateBadge('📄 Document Upload List • Click "⚡ Auto Upload" on candidate row', '#38bdf8');
+    // 3. Modal not open yet: Match candidate in table and auto-click row Upload button!
+    if (!autoRowUploadTriggered) {
+      chrome.storage.local.get(['currentCandidate', 'queueList', 'currentUtiRefNo'], async (res) => {
+        let cand = res.currentCandidate || (Array.isArray(res.queueList) && res.queueList[0]) || null;
+        let targetName = cand ? (cand.full_name || cand.applicant_name) : '';
+        let targetAppNo = res.currentUtiRefNo ? String(res.currentUtiRefNo).replace(/^U-/i, '').trim() : '';
+
+        // Match row in the table
+        let rowMatch = (targetName || targetAppNo) ? findCandidateUploadRow(targetAppNo, targetName) : null;
+
+        // If not matched, pick first pending row in visible table
+        if (!rowMatch) {
+          const firstInfo = getFirstVisibleTableRowCandInfo();
+          if (firstInfo && (firstInfo.candName || firstInfo.appNo)) {
+            rowMatch = findCandidateUploadRow(firstInfo.appNo, firstInfo.candName);
+            if (rowMatch) {
+              targetName = firstInfo.candName;
+              targetAppNo = firstInfo.appNo;
+            }
+          }
+        }
+
+        if (rowMatch && rowMatch.uploadBtn) {
+          autoRowUploadTriggered = true;
+          updateBadge(`⚡ Auto-opening Upload for ${targetName || targetAppNo}...`, '#0ea5e9');
+
+          if (cand) {
+            window._activeRowCandidate = cand;
+            window._selectedRowCandidate = cand;
+            window._activeRowCandName = targetName;
+            window._activeRowAppNo = targetAppNo;
+          } else if (targetName) {
+            fetchCandidateBySearch(targetName).then((c) => {
+              if (c) {
+                window._activeRowCandidate = c;
+                window._selectedRowCandidate = c;
+              }
+            });
+          }
+
+          setTimeout(() => {
+            try {
+              rowMatch.uploadBtn.click();
+            } catch (err) {
+              rowMatch.uploadBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+            }
+          }, 400);
+          return;
+        }
+
+        updateBadge('📄 Document Upload List • Waiting for candidate row', '#38bdf8');
+      });
+    }
   }
 
   // -----------------------------------------------------------------------
