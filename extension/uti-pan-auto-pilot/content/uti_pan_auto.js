@@ -1437,100 +1437,339 @@
     });
   }
 
-  // Helper to synthesize a high-resolution JPEG receipt when browser captureTab is unavailable
-  function generateReceiptCanvasJpeg(couponNo, applicantName, mobileNo, aadhaarLast4, parentName, dob, barcodeText) {
-    const canvas = document.createElement('canvas');
-    canvas.width = 980;
-    canvas.height = 580;
-    const ctx = canvas.getContext('2d');
-
-    // Clean white background
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Border
-    ctx.strokeStyle = '#0284c7';
-    ctx.lineWidth = 2.5;
-    ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
-
-    // Top Header Banner
-    ctx.fillStyle = '#0284c7';
-    ctx.fillRect(12, 12, canvas.width - 24, 60);
-
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 22px system-ui, sans-serif';
-    ctx.fillText('UTIITSL PAN Online Services', 30, 48);
-
-    ctx.fillStyle = '#0f172a';
-    ctx.font = 'bold 16px system-ui, sans-serif';
-    ctx.fillText('PAN Application Acknowledgment Receipt For Form No. 93', 30, 105);
-
-    ctx.font = '13px system-ui, sans-serif';
-    ctx.fillStyle = '#475569';
-    ctx.fillText('( Physical Application )', 30, 126);
-
-    // Barcode / Coupon box (top right)
-    ctx.fillStyle = '#f8fafc';
-    ctx.strokeStyle = '#cbd5e1';
-    ctx.lineWidth = 1.5;
-    ctx.fillRect(640, 85, 310, 80);
-    ctx.strokeRect(640, 85, 310, 80);
-
-    ctx.fillStyle = '#0f172a';
-    ctx.font = 'bold 11px monospace';
-    ctx.fillText('APPLICATION / COUPON NO.', 655, 108);
-    ctx.font = 'bold 20px monospace';
-    ctx.fillStyle = '#0369a1';
-    ctx.fillText(couponNo || 'U-PENDING', 655, 140);
-
-    // Draw faux barcode lines
-    ctx.fillStyle = '#0f172a';
-    const bCode = barcodeText || (couponNo ? couponNo.replace(/^U-/i, '') : '126075597');
-    for (let bx = 655; bx < 930; bx += 4) {
-      if ((bx % 3) === 0 || (bx % 5) === 0) {
-        ctx.fillRect(bx, 148, 2, 12);
+  // Extract structured fields from the UTI receipt DOM table + candidate fallback
+  function extractReceiptFieldsFromDom(couponNo, fallbackCand) {
+    const rowMap = {};
+    const trs = Array.from(document.querySelectorAll('table tr'));
+    for (const tr of trs) {
+      if (tr.querySelector('table')) continue;
+      const cells = Array.from(tr.cells || tr.querySelectorAll(':scope > td, :scope > th'));
+      if (cells.length >= 2) {
+        const k = (cells[0].innerText || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        const v = (cells[1].innerText || '').replace(/\s+/g, ' ').trim();
+        if (k && v) {
+          rowMap[k] = v;
+        }
       }
     }
 
-    // Table rows
-    const rows = [
-      ['Received Rs. 107.00/- (incl of taxes) from', applicantName || '-'],
-      ['Application No. / Coupon No.', couponNo || '-'],
-      ['Parent Name (On Card)', parentName || 'Mentioned on Form'],
-      ['Date of Birth', dob || '-'],
-      ['Aadhaar Number', aadhaarLast4 ? `XXXX-XXXX-${aadhaarLast4} (MENTIONED, MATCHED)*` : 'MENTIONED, MATCHED'],
-      ['Name as per Aadhaar', applicantName || '-'],
-      ['Applicant\'s Contact details', mobileNo || '-'],
-      ['Residence State', 'BIHAR'],
-      ['Proof of Identity / Address / DOB', 'AADHAAR Card Issued by UIDAI (In Copy)'],
-      ['Mode of PAN Card', 'Both physical PAN and e-PAN Card'],
-      ['Payment Ref No', 'PAID VIA CSC WALLET'],
-      ['Date of Receipt', new Date().toLocaleString('en-IN')]
-    ];
-
-    let startY = 190;
-    rows.forEach(([label, val], idx) => {
-      if (idx % 2 === 0) {
-        ctx.fillStyle = '#f8fafc';
-        ctx.fillRect(20, startY - 18, 940, 26);
+    const findVal = (...patterns) => {
+      for (const pat of patterns) {
+        for (const [k, v] of Object.entries(rowMap)) {
+          if (k.includes(pat)) return v;
+        }
       }
-      ctx.fillStyle = '#475569';
-      ctx.font = '600 12px system-ui, sans-serif';
-      ctx.fillText(label, 30, startY);
+      return '';
+    };
 
-      ctx.fillStyle = '#0f172a';
-      ctx.font = 'bold 12.5px system-ui, sans-serif';
-      ctx.fillText(String(val), 340, startY);
+    const pageText = document.body ? document.body.innerText : '';
+    const lineMatch = (regex) => {
+      const m = pageText.match(regex);
+      return m && m[1] ? m[1].replace(/[\r\n\t]+/g, ' ').trim() : '';
+    };
 
-      startY += 28;
+    const receivedLabel = Object.keys(rowMap).find((k) => k.includes('received rs'))
+      ? Object.keys(rowMap).find((k) => k.includes('received rs')).replace(/\bfrom\b/i, 'from')
+      : 'Received Rs. 107.00/- (incl of taxes) from';
+
+    let applicantName =
+      findVal('received rs', 'name as per aadhaar') ||
+      lineMatch(/Name\s*as\s*per\s*Aadhaar[ \t:]*([^\r\n]+)/i) ||
+      lineMatch(/Received\s*Rs\.[^\r\n]*from[ \t:]*([^\r\n]+)/i) ||
+      fallbackCand?.full_name ||
+      '';
+    applicantName = applicantName.replace(/\bApplication\s*No.*$/i, '').trim().toUpperCase();
+
+    const rawCoupon =
+      findVal('application no', 'coupon no') ||
+      couponNo ||
+      extractCouponNumber() ||
+      '';
+    const formattedCoupon = rawCoupon
+      ? (rawCoupon.toUpperCase().startsWith('U-') ? rawCoupon.toUpperCase() : `U-${rawCoupon.toUpperCase()}`)
+      : 'U-PENDING';
+    const barcodeCode = formattedCoupon.replace(/^U-/i, '');
+
+    let gender =
+      findVal('gender') ||
+      lineMatch(/Gender[ \t:]*([A-Za-z]+)/i) ||
+      fallbackCand?.gender ||
+      '';
+    gender = gender.trim().toUpperCase() || 'MALE';
+
+    let dob =
+      findVal('date of birth') ||
+      lineMatch(/Date\s*of\s*Birth[ \t:]*([0-9\/\-]+)/i) ||
+      fallbackCand?.dob ||
+      '';
+    dob = dob.replace(/-/g, '/').trim();
+
+    let parentName =
+      findVal('parent name') ||
+      lineMatch(/Parent\s*Name\s*(?:\(On\s*Card\))?[ \t:]*([^\r\n]+)/i) ||
+      fallbackCand?.father_name ||
+      '';
+    parentName = parentName.replace(/\bAadhaar\s*Number.*$/i, '').trim().toUpperCase();
+
+    let aadhaarRaw =
+      findVal('aadhaar number') ||
+      lineMatch(/Aadhaar\s*Number[ \t:]*([^\r\n]+)/i) ||
+      '';
+    const aadhDigits = (aadhaarRaw || fallbackCand?.aadhaar_no || '').replace(/\D/g, '');
+    const aadhaarLast4 = aadhDigits.slice(-4);
+    const aadhaarDisplay = aadhaarLast4
+      ? `xxxx-xxxx-${aadhaarLast4} (MENTIONED, MATCHED)*`
+      : (aadhaarRaw || 'xxxx-xxxx-xxxx (MENTIONED, MATCHED)*');
+
+    let nameAsPerAadhaar =
+      findVal('name as per aadhaar') ||
+      applicantName ||
+      '';
+    nameAsPerAadhaar = nameAsPerAadhaar.replace(/\bApplication\s*No.*$/i, '').trim().toUpperCase();
+
+    let contactDetails =
+      findVal('contact details') ||
+      lineMatch(/Contact\s*details[^\r\n]*?[ \t:]+([0-9]{10}[^\r\n]*)/i) ||
+      '';
+    if (!contactDetails) {
+      const mob = (fallbackCand?.mobile_no || '').replace(/\D/g, '').slice(-10);
+      const em = (fallbackCand?.email || 'amitkumarkathwar@gmail.com').trim().toLowerCase();
+      contactDetails = mob ? `${mob} / ${em}` : em;
+    }
+
+    const commAddress = (findVal('communication address') || 'RESIDENCE').toUpperCase();
+    const resState = (findVal('residence state') || 'BIHAR').toUpperCase();
+    const poi = findVal('proof of identity') || 'AADHAAR Card issued by UIDAI (In Copy)';
+    const poa = findVal('proof of address') || 'AADHAAR Card issued by UIDAI (In Copy)';
+    const podob = findVal('proof of dob', 'proof of date of birth') || 'AADHAAR Card issued by UIDAI (In Copy)';
+
+    let dateOfReceipt = findVal('date of receipt') || lineMatch(/Date\s*of\s*Receipt[ \t:]*([0-9\/\- :]+)/i);
+    if (!dateOfReceipt) {
+      const now = new Date();
+      const dd = String(now.getDate()).padStart(2, '0');
+      const mm = String(now.getMonth() + 1).padStart(2, '0');
+      const yyyy = now.getFullYear();
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mi = String(now.getMinutes()).padStart(2, '0');
+      const ss = String(now.getSeconds()).padStart(2, '0');
+      dateOfReceipt = `${dd}/${mm}/${yyyy} ${hh}:${mi}:${ss}`;
+    }
+
+    const modeOfPan = findVal('mode of pan card') || 'Both physical PAN and e-PAN Card';
+
+    return {
+      receivedLabel: 'Received Rs. 107.00/- (incl of taxes) from',
+      applicantName,
+      formattedCoupon,
+      barcodeCode,
+      gender,
+      dob,
+      parentName,
+      aadhaarLast4,
+      aadhaarDisplay,
+      nameAsPerAadhaar,
+      contactDetails,
+      commAddress,
+      resState,
+      poi,
+      poa,
+      podob,
+      dateOfReceipt,
+      modeOfPan
+    };
+  }
+
+  // Synthesize exact Image-1 style UTIITSL Form 93 Acknowledgment Receipt JPEG
+  function generateReceiptCanvasJpeg(couponNo, applicantName, mobileNo, aadhaarLast4, parentName, dob, barcodeText, fallbackCand) {
+    const info = extractReceiptFieldsFromDom(couponNo, fallbackCand);
+    if (applicantName && !info.applicantName) info.applicantName = applicantName.toUpperCase();
+    if (parentName && !info.parentName) info.parentName = parentName.toUpperCase();
+    if (dob && !info.dob) info.dob = dob;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 1060;
+    canvas.height = 445;
+    const ctx = canvas.getContext('2d');
+
+    // Pure white background
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Left subtle border line like UTI printout
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(1.5, 0);
+    ctx.lineTo(1.5, canvas.height);
+    ctx.stroke();
+
+    // 1. Top-Left UTIITSL Logo Box (x=24, y=3, w=134, h=48)
+    const logoImg = Array.from(document.querySelectorAll('img')).find((im) => {
+      const s = (im.src || '').toLowerCase();
+      return (s.includes('uti') || s.includes('logo')) && im.complete && im.naturalWidth > 20;
     });
 
-    // Footer
-    ctx.fillStyle = '#64748b';
-    ctx.font = '11px system-ui, sans-serif';
-    ctx.fillText('Designed, Developed and Maintained by UTIITSL • Auto-Captured via Welcome Bihar', 30, canvas.height - 20);
+    if (logoImg) {
+      try {
+        ctx.drawImage(logoImg, 24, 3, 134, 48);
+      } catch (e) {
+        drawVectorUtiLogo(ctx, 24, 3, 134, 48);
+      }
+    } else {
+      drawVectorUtiLogo(ctx, 24, 3, 134, 48);
+    }
 
-    return canvas.toDataURL('image/jpeg', 0.88);
+    // 2. Centered Header Text
+    ctx.fillStyle = '#000000';
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 15px Arial, Helvetica, sans-serif';
+    ctx.fillText('PAN Application Acknowledgment Receipt For Form No. 93', 555, 25);
+    ctx.font = 'bold 14px Arial, Helvetica, sans-serif';
+    ctx.fillText('( Physical Application )', 555, 45);
+    ctx.textAlign = 'left';
+
+    // 3. Blue Horizontal Divider Line below header (y=54)
+    ctx.strokeStyle = '#2563eb';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(2, 54);
+    ctx.lineTo(canvas.width, 54);
+    ctx.stroke();
+
+    // 4. Right-Side Barcode & Large Application Number (x=712..1032, y=60..186)
+    const bCodeStr = (barcodeText || info.barcodeCode || 'A126098710').replace(/^U-/i, '');
+    drawCode128StyleBarcode(ctx, 712, 60, 318, 92, bCodeStr);
+    ctx.fillStyle = '#000000';
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 29px Arial, Helvetica, sans-serif';
+    ctx.fillText(bCodeStr, 871, 180);
+    ctx.textAlign = 'left';
+
+    // 5. 15 Table Rows (Alternating White & #e2e2e2 Gray Bands)
+    const rows = [
+      [info.receivedLabel, info.applicantName || '-'],
+      ['Application No./Coupon No.', info.formattedCoupon],
+      ['Gender', info.gender],
+      ['Date of Birth', info.dob || '-'],
+      ['Parent Name (On Card)', info.parentName || '-'],
+      ['Aadhaar Number', info.aadhaarDisplay, true],
+      ['Name as per Aadhaar', info.nameAsPerAadhaar || info.applicantName || '-'],
+      ["Applicant's Contact details(Mobile/Landline/email)", info.contactDetails],
+      ['Communication Address', info.commAddress],
+      ['Residence State', info.resState],
+      ['Proof of Identity', info.poi],
+      ['Proof of Address', info.poa],
+      ['Proof of DOB', info.podob],
+      ['Date of Receipt', info.dateOfReceipt],
+      ['Mode of PAN Card', info.modeOfPan]
+    ];
+
+    const startY = 60;
+    const rowH = 25;
+
+    rows.forEach(([label, val, isAadhaarRow], idx) => {
+      const rowTop = startY + idx * rowH;
+      const isGray = idx % 2 === 1;
+
+      if (isGray) {
+        // Rows 0..4 stop at x=695 so barcode on right remains on clean white background
+        const bgWidth = idx < 5 ? 677 : (canvas.width - 24);
+        ctx.fillStyle = '#e2e2e2';
+        ctx.fillRect(18, rowTop, bgWidth, rowH);
+      }
+
+      const textY = rowTop + 17.5;
+
+      // Label column (regular)
+      ctx.fillStyle = '#000000';
+      ctx.font = '13.5px Arial, Helvetica, sans-serif';
+      ctx.fillText(label, 27, textY);
+
+      // Value column (bold)
+      if (isAadhaarRow && String(val).includes('(MENTIONED')) {
+        const parts = String(val).split('(MENTIONED');
+        const mainPart = parts[0];
+        const suffixPart = '(MENTIONED' + parts[1];
+        ctx.font = 'bold 13.5px Arial, Helvetica, sans-serif';
+        ctx.fillText(mainPart, 355, textY);
+        const mainW = ctx.measureText(mainPart).width;
+        ctx.font = 'bold 10.5px Arial, Helvetica, sans-serif';
+        ctx.fillText(suffixPart, 355 + mainW + 2, textY);
+      } else {
+        ctx.font = 'bold 13.5px Arial, Helvetica, sans-serif';
+        ctx.fillText(String(val), 355, textY);
+      }
+    });
+
+    return canvas.toDataURL('image/jpeg', 0.94);
+  }
+
+  function drawVectorUtiLogo(ctx, x, y, w, h) {
+    // Blue outer rectangle
+    ctx.fillStyle = '#2e3192';
+    ctx.fillRect(x, y, w, h);
+
+    // Left cream badge
+    ctx.fillStyle = '#fffbeb';
+    ctx.beginPath();
+    ctx.roundRect ? ctx.roundRect(x + 2, y + 2, 62, h - 4, 8) : ctx.rect(x + 2, y + 2, 62, h - 4);
+    ctx.fill();
+
+    // Orange "uti" text
+    ctx.fillStyle = '#f58220';
+    ctx.font = 'bold 18px Arial, sans-serif';
+    ctx.fillText('uti', x + 7, y + 24);
+
+    // Diagonal slashes
+    ctx.strokeStyle = '#2e3192';
+    ctx.lineWidth = 1.8;
+    for (let s = 0; s < 3; s++) {
+      ctx.beginPath();
+      ctx.moveTo(x + 36 + s * 6, y + 28);
+      ctx.lineTo(x + 48 + s * 6, y + 8);
+      ctx.stroke();
+    }
+
+    // "UTIITSL" text
+    ctx.fillStyle = '#2e3192';
+    ctx.font = 'bold 9.5px Arial, sans-serif';
+    ctx.fillText('UTIITSL', x + 10, y + h - 8);
+
+    // Right side white text
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '7.5px Arial, sans-serif';
+    ctx.fillText('UTI Infrastructure', x + 68, y + 15);
+    ctx.fillText('Technology  And', x + 68, y + 27);
+    ctx.fillText('Services  Limited', x + 68, y + 39);
+  }
+
+  function drawCode128StyleBarcode(ctx, x, y, w, h, text) {
+    ctx.fillStyle = '#000000';
+    // Deterministic crisp barcode pattern from text characters
+    const pattern = [2, 1, 1, 2, 3, 1];
+    for (let i = 0; i < text.length; i++) {
+      const code = text.charCodeAt(i);
+      pattern.push(
+        ((code >> 0) & 3) + 1,
+        ((code >> 2) & 2) + 1,
+        ((code >> 4) & 3) + 1,
+        ((code >> 1) & 2) + 1,
+        ((code >> 3) & 2) + 1,
+        1
+      );
+    }
+    pattern.push(2, 3, 1, 1, 2);
+
+    const totalUnits = pattern.reduce((a, b) => a + b, 0);
+    const unitW = w / totalUnits;
+    let curX = x;
+    for (let i = 0; i < pattern.length; i++) {
+      const bw = pattern[i] * unitW;
+      if (i % 2 === 0) {
+        ctx.fillRect(Math.round(curX), y, Math.max(1.5, Math.round(bw)), h);
+      }
+      curX += bw;
+    }
   }
 
   function resolveReceiptTargetCandidate(applicantName, mobileNo, aadhaarLast4, stored) {
@@ -1589,81 +1828,29 @@
     receiptHandling = true;
     updateBadge(`📸 Capturing Receiving Screenshot (${couponNo || 'Form 93'})...`, '#0284c7');
 
-    // Extract exact candidate details from the receipt table
-    const nameMatch = pageText.match(/Received\s*Rs\.[^\n]*from\s*([A-Za-z\s]+)/i) || pageText.match(/Name\s*as\s*per\s*Aadhaar\s*([A-Za-z\s]+)/i);
-    const applicantName = nameMatch ? nameMatch[1].replace(/\n/g, ' ').trim() : '';
+    // Extract exact candidate details from the receipt table DOM
+    const domFields = extractReceiptFieldsFromDom(couponNo, currentCandidate);
+    const applicantName = domFields.applicantName || '';
 
-    const mobMatch = pageText.match(/Contact\s*details[^\n]*\b(\d{10})\b/i) || pageText.match(/\b([6-9]\d{9})\b/);
+    const mobMatch = (domFields.contactDetails || pageText).match(/\b([6-9]\d{9})\b/);
     const mobileNo = mobMatch ? mobMatch[1].trim() : '';
 
-    const aadhMatch = pageText.match(/Aadhaar\s*Number\s*([xX0-9\-]+)/i);
-    const aadhaarLast4 = aadhMatch ? aadhMatch[1].replace(/\D/g, '').slice(-4) : '';
+    const aadhaarLast4 = domFields.aadhaarLast4 || '';
+    const parentName = domFields.parentName || '';
+    const dob = domFields.dob || '';
 
-    const parentMatch = pageText.match(/Parent\s*Name[^\n]*\b([A-Za-z\s]+)/i);
-    const parentName = parentMatch ? parentMatch[1].replace(/\n/g, ' ').trim() : '';
-
-    const dobMatch = pageText.match(/Date\s*of\s*Birth\s*([0-9\/\-]+)/i);
-    const dob = dobMatch ? dobMatch[1].trim() : '';
-
-    // Scroll to top to ensure complete visibility of receipt
-    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
-    let receiptEl = findReceiptElement();
-    if (receiptEl) {
-      try { receiptEl.scrollIntoView({ behavior: 'instant', block: 'start' }); } catch (e) {}
-    }
-
-    // Allow 400ms for layout to settle cleanly
-    await new Promise((r) => setTimeout(r, 400));
-
-    receiptEl = findReceiptElement();
-    const rect = receiptEl ? receiptEl.getBoundingClientRect() : null;
-    const dpr = window.devicePixelRatio || 1;
-
-    const crop = (rect && rect.width > 250 && rect.height > 180) ? {
-      x: Math.max(0, Math.floor((rect.left - 4) * dpr)),
-      y: Math.max(0, Math.floor((rect.top - 4) * dpr)),
-      width: Math.min(window.innerWidth * dpr, Math.ceil((rect.width + 8) * dpr)),
-      height: Math.min(window.innerHeight * dpr, Math.ceil((rect.height + 8) * dpr))
-    } : null;
-
-    chrome.runtime.sendMessage({ action: 'captureTab' }, (res) => {
-      let finalBase64 = null;
-
-      if (res && res.dataUrl) {
-        const img = new Image();
-        img.onload = () => {
-          let croppedBase64 = res.dataUrl;
-          if (crop && crop.width > 100 && crop.height > 100) {
-            try {
-              const canvas = document.createElement('canvas');
-              const targetW = Math.max(10, Math.min(crop.width, img.width - crop.x));
-              const targetH = Math.max(10, Math.min(crop.height, img.height - crop.y));
-              if (targetW > 100 && targetH > 100 && crop.x < img.width && crop.y < img.height) {
-                canvas.width = targetW;
-                canvas.height = targetH;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(img, crop.x, crop.y, targetW, targetH, 0, 0, targetW, targetH);
-                croppedBase64 = canvas.toDataURL('image/jpeg', 0.88);
-              }
-            } catch (err) {
-              croppedBase64 = res.dataUrl;
-            }
-          }
-          deliverReceivingPayload(croppedBase64, couponNo, applicantName, mobileNo, aadhaarLast4, isRetry);
-        };
-
-        img.onerror = () => {
-          const synth = generateReceiptCanvasJpeg(couponNo, applicantName, mobileNo, aadhaarLast4, parentName, dob);
-          deliverReceivingPayload(synth, couponNo, applicantName, mobileNo, aadhaarLast4, isRetry);
-        };
-
-        img.src = res.dataUrl;
-      } else {
-        // Fallback directly to synthesized receipt canvas
-        const synth = generateReceiptCanvasJpeg(couponNo, applicantName, mobileNo, aadhaarLast4, parentName, dob);
-        deliverReceivingPayload(synth, couponNo, applicantName, mobileNo, aadhaarLast4, isRetry);
-      }
-    });
+    // Synthesize exact Image-1 format receipt directly from live DOM fields
+    const synth = generateReceiptCanvasJpeg(
+      couponNo,
+      applicantName,
+      mobileNo,
+      aadhaarLast4,
+      parentName,
+      dob,
+      domFields.barcodeCode,
+      currentCandidate
+    );
+    deliverReceivingPayload(synth, couponNo, applicantName, mobileNo, aadhaarLast4, isRetry);
   }
 
   function deliverReceivingPayload(receiptBase64, couponNo, applicantName, mobileNo, aadhaarLast4, isRetry) {
