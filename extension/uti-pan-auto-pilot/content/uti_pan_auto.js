@@ -1507,16 +1507,16 @@
 
   function findCandidateUploadRow(appNo, candidateName) {
     const cleanAppNo = String(appNo || '').replace(/^U-/i, '').trim().toUpperCase();
-    const cleanName = String(candidateName || '').trim().toUpperCase();
+    const cleanName = String(candidateName || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
 
     const rows = Array.from(document.querySelectorAll('table tr'));
     for (const row of rows) {
-      const text = (row.innerText || '').toUpperCase();
+      const text = (row.innerText || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
       const matchesAppNo = cleanAppNo && cleanAppNo.length >= 6 && text.includes(cleanAppNo);
       const matchesName = cleanName && cleanName.length >= 3 && text.includes(cleanName);
 
       // Strict row check: Must match App No, or clean Name
-      if (matchesAppNo || (cleanAppNo === '' && matchesName)) {
+      if (matchesAppNo || matchesName) {
         const actionLinks = Array.from(row.querySelectorAll('a, button, input[type="button"]'));
         const uploadBtn = actionLinks.find((el) => {
           const t = (el.innerText || el.value || '').trim().toLowerCase();
@@ -1808,33 +1808,44 @@
     return new Promise((resolve) => {
       chrome.storage.local.get(['portalUrl'], async (res) => {
         const portalUrl = (res.portalUrl || 'https://bihargo.xyz').replace(/\/+$/, '');
+        const cleanTerm = String(searchTerm || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+
         try {
-          if (searchTerm) {
-            const clean = encodeURIComponent(searchTerm.trim());
+          if (cleanTerm) {
+            const clean = encodeURIComponent(cleanTerm);
             const resp = await fetch(`${portalUrl}/api/pan-card/queue?status=ALL&search=${clean}`);
             const json = await resp.json();
             if (json && json.success && Array.isArray(json.data) && json.data.length > 0) {
               resolve(json.data[0]);
               return;
             }
+
+            // Fallback: search individual name words
+            const words = cleanTerm.split(' ').filter(w => w.length >= 3);
+            for (const word of words) {
+              const pResp = await fetch(`${portalUrl}/api/pan-card/queue?status=ALL&search=${encodeURIComponent(word)}`);
+              const pJson = await pResp.json();
+              if (pJson && pJson.success && Array.isArray(pJson.data) && pJson.data.length > 0) {
+                const found = pJson.data.find(c => {
+                  const fn = (c.full_name || '').toUpperCase();
+                  return fn.includes(cleanTerm.toUpperCase()) || cleanTerm.toUpperCase().includes(fn);
+                });
+                if (found) {
+                  resolve(found);
+                  return;
+                }
+              }
+            }
+
+            // CRITICAL: searchTerm was given but not matched -> return null! NEVER return another candidate!
+            resolve(null);
+            return;
           }
-          // Fallback: fetch recent 25 applications across ALL statuses
+
+          // Only when NO searchTerm was provided at all
           const respAll = await fetch(`${portalUrl}/api/pan-card/queue?status=ALL&limit=25`);
           const jsonAll = await respAll.json();
           if (jsonAll && jsonAll.success && Array.isArray(jsonAll.data) && jsonAll.data.length > 0) {
-            if (searchTerm) {
-              const stUpper = searchTerm.trim().toUpperCase();
-              const found = jsonAll.data.find((c) => {
-                const cName = (c.full_name || '').toUpperCase();
-                const cRef = (c.app_ref || '').toUpperCase();
-                const cAadh = (c.aadhaar_no || '').replace(/\D/g, '');
-                return cName.includes(stUpper) || stUpper.includes(cName) || cRef.includes(stUpper) || (c.remarks && c.remarks.toUpperCase().includes(stUpper));
-              });
-              if (found) {
-                resolve(found);
-                return;
-              }
-            }
             resolve(jsonAll.data[0]);
             return;
           }
@@ -1858,10 +1869,20 @@
     const title = document.createElement('span');
     title.innerHTML = '<strong style="color:#38bdf8;">📂 Document Upload:</strong>';
 
+    let initialName = 'No Candidate Active';
+    const firstDataRows = Array.from(document.querySelectorAll('table tr'));
+    for (const r of firstDataRows) {
+      const cells = Array.from(r.querySelectorAll('td'));
+      if (cells.length >= 4 && cells[2] && cells[2].innerText && !cells[2].innerText.includes('Upload')) {
+        initialName = cells[2].innerText.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+        break;
+      }
+    }
+
     const candSpan = document.createElement('span');
     candSpan.id = 'wb-bar-candidate-name';
-    candSpan.innerText = currentCandidate ? currentCandidate.full_name : 'No Candidate Active';
-    candSpan.style.color = currentCandidate ? '#34d399' : '#94a3b8';
+    candSpan.innerText = initialName !== 'No Candidate Active' ? initialName : (currentCandidate ? currentCandidate.full_name : 'No Candidate Active');
+    candSpan.style.color = '#38bdf8';
     candSpan.style.fontWeight = '600';
 
     const btnAttach = document.createElement('button');
@@ -1971,15 +1992,15 @@
 
       if (!uploadEl) continue;
 
-      const text = (row.innerText || '').toUpperCase();
+      const text = (row.innerText || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
       const appNoMatch = text.match(/\b(A\d{8,})\b/i);
       const appNo = appNoMatch ? appNoMatch[1] : '';
 
       let candName = '';
       if (cells[2] && cells[2].innerText && !cells[2].innerText.includes('Upload')) {
-        candName = cells[2].innerText.trim();
+        candName = cells[2].innerText.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
       } else if (cells[1] && cells[1].innerText && isNaN(cells[1].innerText)) {
-        candName = cells[1].innerText.trim();
+        candName = cells[1].innerText.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
       }
 
       const btn = document.createElement('button');
@@ -2006,9 +2027,6 @@
         if (!cand && appNo) {
           cand = await fetchCandidateBySearch(appNo);
         }
-        if (!cand) {
-          cand = await fetchCandidateBySearch('');
-        }
 
         if (cand) {
           currentCandidate = cand;
@@ -2020,7 +2038,7 @@
           }
           updateBadge(`📂 Candidate Found: ${cand.full_name} • Opening Upload Modal...`, '#10b981');
         } else {
-          updateBadge(`⚠️ Candidate details not found on BiharGo`, '#f59e0b');
+          updateBadge(`⚠️ Candidate details not found on BiharGo for ${candName || appNo}`, '#f59e0b');
         }
 
         btn.disabled = false;
@@ -2042,6 +2060,50 @@
     // Inject floating UI and row buttons
     ensureFloatingDocUploadBar();
     injectDocUploadButtons();
+
+    // Auto-detect candidate from the visible table rows to prevent candidate mismatch
+    const tableRows = Array.from(document.querySelectorAll('table tr'));
+    let tableCandName = '';
+    let tableAppNo = '';
+    for (const r of tableRows) {
+      const cells = Array.from(r.querySelectorAll('td'));
+      if (cells.length >= 4) {
+        const rowText = (r.innerText || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+        const mApp = rowText.match(/\b(A\d{8,})\b/i);
+        if (mApp) tableAppNo = mApp[1];
+        if (cells[2] && cells[2].innerText && !cells[2].innerText.includes('Upload')) {
+          tableCandName = cells[2].innerText.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+          break;
+        } else if (cells[1] && cells[1].innerText && isNaN(cells[1].innerText)) {
+          tableCandName = cells[1].innerText.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+          break;
+        }
+      }
+    }
+
+    const curNameUpper = (currentCandidate?.full_name || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+    const tableUpper = tableCandName.toUpperCase().trim();
+
+    if (tableUpper && (!currentCandidate || (!curNameUpper.includes(tableUpper) && !tableUpper.includes(curNameUpper)))) {
+      fetchCandidateBySearch(tableCandName).then((cand) => {
+        if (cand) {
+          currentCandidate = cand;
+          chrome.storage.local.set({ currentCandidate: cand });
+          const barSpan = document.getElementById('wb-bar-candidate-name');
+          if (barSpan) {
+            barSpan.innerText = cand.full_name;
+            barSpan.style.color = '#34d399';
+          }
+          updateBadge(`📂 Synced Candidate with Table: ${cand.full_name}`, '#10b981');
+        } else {
+          const barSpan = document.getElementById('wb-bar-candidate-name');
+          if (barSpan) {
+            barSpan.innerText = tableCandName;
+            barSpan.style.color = '#fbbf24';
+          }
+        }
+      });
+    }
 
     // 1. Auto-dismiss any success alert popup
     const successDialog = Array.from(document.querySelectorAll('.ui-dialog, .modal, .alert')).find((d) => {

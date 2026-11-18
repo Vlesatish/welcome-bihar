@@ -928,7 +928,7 @@ class PanCardController
             $panDataTypeId = $this->getPanDataTypeId();
             $limit = max(1, min(100, (int)($_GET['limit'] ?? 50)));
             $statusParam = strtoupper(trim((string)($_GET['status'] ?? '')));
-            $searchParam = trim((string)($_GET['search'] ?? ''));
+            $searchParam = preg_replace('/\s+/', ' ', trim((string)($_GET['search'] ?? '')));
 
             $where = ["(a.application_code = 'PAN_CARD' OR a.data_type_id = :pan_dt_id)"];
             $params = [':pan_dt_id' => $panDataTypeId];
