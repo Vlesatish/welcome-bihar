@@ -1568,14 +1568,16 @@
     return new File([jpegBlob], `${safeName}_signature_400x200.jpg`, { type: 'image/jpeg' });
   }
 
-  // Flag to control automatic clicking of the final modal "Upload" button
-  // RIOT instructed: "upload per mai click karuna flow dekh leta hu uske auto kar duga abhi yaha per tum click mat karwao"
-  const AUTO_CLICK_MODAL_UPLOAD = false;
+  // Auto-submit modal upload when files are attached
+  // RIOT commanded: "yaha upload karo"
+  const AUTO_CLICK_MODAL_UPLOAD = true;
 
   function clickModalUploadButton(modal) {
-    const allBtns = Array.from(modal.querySelectorAll('button, input[type="button"], input[type="submit"]'));
+    const root = modal || document;
+    const allBtns = Array.from(root.querySelectorAll('button, input[type="button"], input[type="submit"]'));
     const uploadBtn = allBtns.find((b) => {
       if (!isVisible(b) || b.disabled) return false;
+      if (b.classList.contains('wb-auto-upload-btn')) return false;
       const t = (b.textContent || b.value || '').trim().toLowerCase();
       return t === 'upload';
     });
@@ -1600,6 +1602,18 @@
     updateBadge('⏳ Loading Photo, Signature & PDF Form...', '#38bdf8');
 
     try {
+      let activeCand = cand;
+      if (!activeCand || !activeCand.photo_url || !activeCand.signature_url) {
+        // Query BiharGo for active candidate
+        const candSpan = document.getElementById('wb-bar-candidate-name');
+        const sTerm = (candSpan?.innerText || '').replace(/no candidate active/i, '').trim();
+        activeCand = await fetchCandidateBySearch(sTerm);
+      }
+
+      if (!activeCand || !activeCand.photo_url || !activeCand.signature_url) {
+        throw new Error('Candidate photo or signature URL missing from Welcome Bihar');
+      }
+
       // 1. User-Provided Standard PAN Form PDF (assets/default_pan_form.pdf)
       const pdfUrl = chrome.runtime.getURL('assets/default_pan_form.pdf');
       const pdfRes = await fetch(pdfUrl);
@@ -1607,10 +1621,10 @@
       const panFormFile = new File([pdfBlob], 'PAN_Form_Alongwith_Documents.pdf', { type: 'application/pdf' });
 
       // 2. Candidate Photo from BiharGo (UTI 213x213 @ 300 DPI)
-      const photoFile = await fetchAndFormatPhoto(cand.photo_url, cand.full_name);
+      const photoFile = await fetchAndFormatPhoto(activeCand.photo_url, activeCand.full_name);
 
       // 3. Candidate Signature from BiharGo (UTI 400x200 @ 600 DPI Fresh)
-      const sigFile = await fetchAndFormatSignature(cand.signature_url, cand.full_name);
+      const sigFile = await fetchAndFormatSignature(activeCand.signature_url, activeCand.full_name);
 
       // Set input files via DataTransfer
       const dt1 = new DataTransfer();
@@ -1631,15 +1645,11 @@
       inputs.signatureInput.dispatchEvent(new Event('change', { bubbles: true }));
       inputs.signatureInput.dispatchEvent(new Event('input', { bubbles: true }));
 
-      if (AUTO_CLICK_MODAL_UPLOAD) {
-        updateBadge('✅ All 3 Files Attached • Clicking Upload...', '#10b981');
-        setTimeout(() => {
-          clickModalUploadButton(modal);
-        }, 700);
-      } else {
-        updateBadge('✅ All 3 Files Attached • Ready for You to Click Upload', '#10b981');
-        docUploadLock = false;
-      }
+      updateBadge('✅ All 3 Files Attached • Submitting Upload...', '#10b981');
+
+      setTimeout(() => {
+        clickModalUploadButton(modal);
+      }, 500);
     } catch (err) {
       docUploadLock = false;
       console.error('Document attach error:', err);
@@ -1741,8 +1751,10 @@
         return;
       }
 
-      if (!currentCandidate || !currentCandidate.photo_url) {
-        const cand = await fetchCandidateBySearch('');
+      const activeName = (candSpan?.innerText || '').replace(/no candidate active/i, '').trim();
+      let cand = currentCandidate;
+      if (!cand || !cand.photo_url || !cand.signature_url) {
+        cand = await fetchCandidateBySearch(activeName);
         if (cand) {
           currentCandidate = cand;
           chrome.storage.local.set({ currentCandidate: cand });
@@ -1751,9 +1763,9 @@
         }
       }
 
-      if (currentCandidate && currentCandidate.photo_url && currentCandidate.signature_url) {
+      if (cand && cand.photo_url && cand.signature_url) {
         docUploadLock = true;
-        await attachDocumentsToModal(inputs, currentCandidate, modal);
+        await attachDocumentsToModal(inputs, cand, modal);
       } else {
         alert('Could not find candidate photo & signature on Welcome Bihar!');
       }
@@ -1925,11 +1937,12 @@
         if (!docUploadLock) {
           docUploadLock = true;
           updateBadge('🔍 Auto-fetching candidate data from Welcome Bihar...', '#0ea5e9');
-          fetchCandidateBySearch('').then((cand) => {
+          const barSpan = document.getElementById('wb-bar-candidate-name');
+          const term = (barSpan?.innerText || '').replace(/no candidate active/i, '').trim();
+          fetchCandidateBySearch(term).then((cand) => {
             if (cand && cand.photo_url && cand.signature_url) {
               currentCandidate = cand;
               chrome.storage.local.set({ currentCandidate: cand });
-              const barSpan = document.getElementById('wb-bar-candidate-name');
               if (barSpan) {
                 barSpan.innerText = cand.full_name;
                 barSpan.style.color = '#34d399';
