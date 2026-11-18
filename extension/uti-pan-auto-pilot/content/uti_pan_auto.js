@@ -1568,6 +1568,10 @@
     return new File([jpegBlob], `${safeName}_signature_400x200.jpg`, { type: 'image/jpeg' });
   }
 
+  // Flag to control automatic clicking of the final modal "Upload" button
+  // RIOT instructed: "upload per mai click karuna flow dekh leta hu uske auto kar duga abhi yaha per tum click mat karwao"
+  const AUTO_CLICK_MODAL_UPLOAD = false;
+
   function clickModalUploadButton(modal) {
     const allBtns = Array.from(modal.querySelectorAll('button, input[type="button"], input[type="submit"]'));
     const uploadBtn = allBtns.find((b) => {
@@ -1627,11 +1631,15 @@
       inputs.signatureInput.dispatchEvent(new Event('change', { bubbles: true }));
       inputs.signatureInput.dispatchEvent(new Event('input', { bubbles: true }));
 
-      updateBadge('✅ All 3 Files Attached • Clicking Upload...', '#10b981');
-
-      setTimeout(() => {
-        clickModalUploadButton(modal);
-      }, 700);
+      if (AUTO_CLICK_MODAL_UPLOAD) {
+        updateBadge('✅ All 3 Files Attached • Clicking Upload...', '#10b981');
+        setTimeout(() => {
+          clickModalUploadButton(modal);
+        }, 700);
+      } else {
+        updateBadge('✅ All 3 Files Attached • Ready for You to Click Upload', '#10b981');
+        docUploadLock = false;
+      }
     } catch (err) {
       docUploadLock = false;
       console.error('Document attach error:', err);
@@ -1653,6 +1661,7 @@
       });
       if (okBtn) {
         try { okBtn.click(); } catch (e) {}
+        chrome.storage.local.set({ awaitingDocUpload: false });
         updateBadge('🎉 Documents Uploaded Successfully!', '#10b981');
       }
       return;
@@ -1666,7 +1675,11 @@
       const inputs = findDocUploadInputs(modal);
       if (inputs.panFormInput && inputs.pictureInput && inputs.signatureInput) {
         if (inputs.panFormInput.files?.length > 0 && inputs.pictureInput.files?.length > 0 && inputs.signatureInput.files?.length > 0) {
-          clickModalUploadButton(modal);
+          if (AUTO_CLICK_MODAL_UPLOAD) {
+            clickModalUploadButton(modal);
+          } else {
+            updateBadge('✅ All 3 Files Attached • Ready for You to Click Upload', '#10b981');
+          }
           return;
         }
 
