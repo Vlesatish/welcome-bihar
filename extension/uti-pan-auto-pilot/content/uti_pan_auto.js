@@ -280,10 +280,16 @@
   // -----------------------------------------------------------------------
   // PAGE 1: prePANForm
   // -----------------------------------------------------------------------
-  function handlePrePanForm() {
-    if (prePanSubmitted) return;
+  let lastPrePanSubmitTime = 0;
 
-    updateBadge('Step 0: Configuring Individual & NRI No...', '#38bdf8');
+  function handlePrePanForm() {
+    const now = Date.now();
+    // Allow re-submission if still stuck on page after 2.5 seconds
+    if (prePanSubmitted && (now - lastPrePanSubmitTime) < 2500) {
+      return;
+    }
+
+    updateBadge('Step 0: Auto-Selecting Options & Submitting prePANForm...', '#38bdf8');
 
     // 1. Physical Mode radio
     const physicalRadio = findRadioNearText('physical mode', 'physical') ||
@@ -296,7 +302,6 @@
     }
 
     // 2. Status of the Applicant -> Strictly "Individual"
-    let individualSelected = false;
     const allSelects = Array.from(document.querySelectorAll('select'));
     for (const sel of allSelects) {
       const optIndex = Array.from(sel.options).findIndex((o) => (o.text || '').trim().toLowerCase() === 'individual');
@@ -308,15 +313,12 @@
           sel.dispatchEvent(new Event('input', { bubbles: true }));
           sel.dispatchEvent(new Event('change', { bubbles: true }));
         }
-        individualSelected = (sel.selectedIndex === optIndex);
         break;
       }
     }
 
     // 3. Whether you are from defence/NRI Category ? -> Strictly "No"
-    let nriNoSelected = false;
     const allRadios = Array.from(document.querySelectorAll('input[type="radio"]'));
-
     const nriBlock = Array.from(document.querySelectorAll('div, tr, section, fieldset, td, p')).find((el) => {
       const t = (el.innerText || '').toLowerCase();
       return (t.includes('defence/nri') || (t.includes('defence') && t.includes('nri'))) && el.querySelectorAll('input[type="radio"]').length >= 2;
@@ -331,14 +333,11 @@
         const lbl = (document.querySelector(`label[for="${r.id}"]`)?.innerText || '').trim().toLowerCase();
         return val === 'n' || val === 'no' || id.endsWith('no') || id.includes('_n') || next === 'no' || next.startsWith('no') || lbl === 'no';
       });
-
       if (!noRadio && radiosInBlock.length >= 2) {
         noRadio = radiosInBlock[1];
       }
-
-      if (noRadio) {
+      if (noRadio && !noRadio.checked) {
         clickRadio(noRadio);
-        nriNoSelected = Boolean(noRadio.checked);
       }
     } else {
       const nriRadio = allRadios.find((r) => {
@@ -349,9 +348,8 @@
         return (name.includes('nri') || id.includes('nri') || name.includes('defence')) &&
                (val === 'n' || val === 'no' || next === 'no');
       });
-      if (nriRadio) {
+      if (nriRadio && !nriRadio.checked) {
         clickRadio(nriRadio);
-        nriNoSelected = Boolean(nriRadio.checked);
       }
     }
 
@@ -365,20 +363,24 @@
       clickRadio(bothPanRadio);
     }
 
-    // 5. Submit once Individual and NRI No are configured
-    if (individualSelected && nriNoSelected) {
-      const submitBtn = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a.btn, .btn')).find((b) => {
-        const txt = (b.textContent || b.value || '').trim().toLowerCase();
-        return txt === 'submit' || txt.startsWith('submit') || (txt.includes('submit') && !txt.includes('cancel'));
-      });
+    // 5. AUTO-CLICK SUBMIT IMMEDIATELY (As requested by RIOT)
+    const submitBtn = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a, [role="button"], div.btn, span.btn')).find((b) => {
+      if (!isVisible(b) || b.disabled) return false;
+      const txt = (b.textContent || b.value || '').trim().toLowerCase();
+      return txt === 'submit' || txt === 'submit application' || (txt.startsWith('submit') && !txt.includes('cancel'));
+    });
 
-      if (submitBtn && !prePanSubmitted) {
-        prePanSubmitted = true;
-        updateBadge('🚀 prePANForm ready! Submitting...', '#10b981');
-        setTimeout(() => {
-          try { submitBtn.click(); } catch (e) {}
-        }, 400);
-      }
+    if (submitBtn) {
+      prePanSubmitted = true;
+      lastPrePanSubmitTime = Date.now();
+      updateBadge('🚀 prePANForm Auto-Submitting...', '#10b981');
+      setTimeout(() => {
+        try { submitBtn.focus(); } catch (e) {}
+        try { submitBtn.click(); } catch (e) {}
+        try {
+          submitBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+        } catch (e) {}
+      }, 150);
     }
   }
 
