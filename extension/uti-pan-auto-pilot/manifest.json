@@ -57,6 +57,16 @@
       ],
       "run_at": "document_idle",
       "all_frames": true
+    },
+    {
+      "matches": [
+        "https://mail.google.com/*"
+      ],
+      "js": [
+        "content/gmail_otp_reader.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ],
   "web_accessible_resources": [

@@ -2694,6 +2694,63 @@
   // -----------------------------------------------------------------------
   let sessionInvalidRedirecting = false;
   let cscLoginClicking = false;
+  let otpFetchInitiated = false;
+
+  function isOtpVerificationPage() {
+    const url = (window.location.href || '').toLowerCase();
+    return (
+      url.includes('logincheckotpredirect') ||
+      url.includes('logincheckotpverify') ||
+      Boolean(document.getElementById('otpInput')) ||
+      Boolean(document.getElementById('submitOtpBtn')) ||
+      (document.body && document.body.innerText.toLowerCase().includes('verification code') && document.body.innerText.toLowerCase().includes('enter otp'))
+    );
+  }
+
+  function handleOtpVerificationPage() {
+    if (otpFetchInitiated) return;
+    otpFetchInitiated = true;
+
+    updateBadge('📧 OTP Verification Screen • Fetching latest code from Gmail...', '#f59e0b');
+
+    chrome.runtime.sendMessage({ action: 'fetchGmailOtp' }, () => {
+      void chrome.runtime.lastError;
+    });
+
+    setTimeout(() => {
+      otpFetchInitiated = false;
+    }, 35000);
+  }
+
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg && msg.action === 'fillOtpAndSubmit') {
+      const code = String(msg.code || '').trim();
+      const otpInput = document.getElementById('otpInput') || document.querySelector('input[placeholder*="OTP" i]');
+      const submitBtn = document.getElementById('submitOtpBtn') || document.querySelector('button[type="submit"]');
+
+      if (otpInput && code) {
+        otpInput.value = code;
+        ['input', 'change', 'keyup', 'blur'].forEach((evt) => {
+          try { otpInput.dispatchEvent(new Event(evt, { bubbles: true })); } catch (e) {}
+        });
+
+        updateBadge(`🔑 OTP ${code} Filled • Submitting...`, '#10b981');
+
+        setTimeout(() => {
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            try { submitBtn.click(); } catch (e) {}
+          }
+          const form = document.getElementById('loginForm') || document.querySelector('form');
+          if (form) {
+            try { form.submit(); } catch (e) {}
+          }
+        }, 500);
+      }
+      sendResponse({ success: true });
+      return true;
+    }
+  });
 
   function isSessionInvalidPage() {
     const text = (document.body ? document.body.innerText : '').toLowerCase();
@@ -2846,6 +2903,12 @@
   // -----------------------------------------------------------------------
   function runAutoFill(force = false) {
     const url = (window.location.href || '').toLowerCase();
+
+    // 0000. OTP Verification Page (loginCheckOtpRedirect)
+    if (isOtpVerificationPage()) {
+      handleOtpVerificationPage();
+      return;
+    }
 
     // 000. Check Session Invalid Page (Image 1)
     if (isSessionInvalidPage()) {

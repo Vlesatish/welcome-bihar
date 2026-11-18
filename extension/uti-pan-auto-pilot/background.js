@@ -11,6 +11,8 @@ const QUEUE_ALARM_NAME = 'WB_UTI_PAN_QUEUE_WATCH';
 let isCycleLaunching = false;
 let activeCandidateKey = null;
 let lastLaunchedCandKey = null;
+let activeOtpUtiTabId = null;
+let createdGmailTabId = null;
 
 function getConfig() {
   return new Promise((resolve) => {
@@ -474,6 +476,88 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             chrome.tabs.create({ url: cscLoginUrl, active: true });
           }
         }
+        sendResponse({ success: true });
+      } catch (err) {
+        sendResponse({ success: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
+  if (msg.action === 'fetchGmailOtp') {
+    (async () => {
+      try {
+        activeOtpUtiTabId = sender.tab ? sender.tab.id : null;
+        await chrome.storage.local.set({ isWaitingForOtp: true, otpRequestedAt: Date.now() });
+
+        const allTabs = await new Promise((r) => chrome.tabs.query({}, r));
+        const gmailTabs = (allTabs || []).filter((t) => {
+          const u = (t.url || t.pendingUrl || '').toLowerCase();
+          return u.includes('mail.google.com');
+        });
+
+        const targetGmailUrl = 'https://mail.google.com/mail/u/0/#search/from%3Apanonline%40utiitsl.com';
+
+        if (gmailTabs.length > 0) {
+          createdGmailTabId = null; // Do not close pre-existing tab
+          const gTab = gmailTabs[0];
+          await chrome.tabs.update(gTab.id, { url: targetGmailUrl, active: true });
+          setTimeout(() => {
+            chrome.tabs.sendMessage(gTab.id, { action: 'readOtpNow' }, () => {
+              void chrome.runtime.lastError;
+            });
+          }, 1200);
+        } else {
+          const newTab = await new Promise((r) => {
+            chrome.tabs.create({ url: targetGmailUrl, active: true }, r);
+          });
+          createdGmailTabId = newTab ? newTab.id : null;
+        }
+
+        sendResponse({ success: true });
+      } catch (err) {
+        sendResponse({ success: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
+  if (msg.action === 'otpExtracted') {
+    (async () => {
+      try {
+        const code = String(msg.code || '').trim();
+        await chrome.storage.local.remove(['isWaitingForOtp']);
+
+        // 1. Switch back to UTI tab and submit OTP
+        if (activeOtpUtiTabId) {
+          await new Promise((r) => chrome.tabs.update(activeOtpUtiTabId, { active: true }, r));
+          setTimeout(() => {
+            chrome.tabs.sendMessage(activeOtpUtiTabId, { action: 'fillOtpAndSubmit', code }, () => {
+              void chrome.runtime.lastError;
+            });
+          }, 300);
+        } else {
+          // If tab id was lost, find any UTI tab on loginCheckOtpRedirect
+          const allTabs = await getAllUtiTabs();
+          const otpTab = allTabs.find((t) => (t.url || '').toLowerCase().includes('logincheckotpredirect'));
+          if (otpTab) {
+            await chrome.tabs.update(otpTab.id, { active: true });
+            setTimeout(() => {
+              chrome.tabs.sendMessage(otpTab.id, { action: 'fillOtpAndSubmit', code }, () => {
+                void chrome.runtime.lastError;
+              });
+            }, 300);
+          }
+        }
+
+        // 2. Close temporary Gmail tab if we created it
+        if (createdGmailTabId) {
+          setTimeout(() => {
+            chrome.tabs.remove(createdGmailTabId, () => void chrome.runtime.lastError);
+            createdGmailTabId = null;
+          }, 2500);
+        }
+
         sendResponse({ success: true });
       } catch (err) {
         sendResponse({ success: false, error: err.message });
