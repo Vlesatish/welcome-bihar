@@ -43,44 +43,16 @@
   }
 
   function updateWalletBadge(statusText, color = '#0284c7') {
-    if (!document.body) return;
-    let host = document.getElementById('wb-csc-badge');
-    if (!host) {
-      host = document.createElement('div');
-      host.id = 'wb-csc-badge';
-      host.style.cssText = [
-        'position:fixed !important',
-        'bottom:16px !important',
-        'right:16px !important',
-        'width:300px !important',
-        'max-width:320px !important',
-        'z-index:2147483647 !important',
-        'background:#0f172a !important',
-        'color:#f8fafc !important',
-        'border:1px solid #38bdf8 !important',
-        'border-radius:12px !important',
-        'padding:10px 14px !important',
-        'font-family:system-ui,-apple-system,sans-serif !important',
-        'font-size:12px !important',
-        'box-shadow:0 8px 24px rgba(0,0,0,0.45) !important',
-        'box-sizing:border-box !important',
-        'line-height:1.4 !important'
-      ].join(';');
-
-      host.innerHTML = `
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-          <strong style="color:#38bdf8;font-size:12px;">💳 CSC Wallet Auto-Pilot</strong>
-          <span style="font-size:10px;color:#fbbf24;font-weight:700;">₹97.37</span>
-        </div>
-        <div id="wb-csc-status" style="font-size:11px;color:#34d399;">Ready</div>
-      `;
-      document.body.appendChild(host);
+    const existing = document.getElementById('wb-csc-badge');
+    if (existing) {
+      try { existing.remove(); } catch (e) {}
     }
-    const stEl = document.getElementById('wb-csc-status');
-    if (stEl) {
-      stEl.textContent = statusText;
-      stEl.style.color = color;
-    }
+    try {
+      chrome.storage.local.set({
+        lastStatus: statusText,
+        lastStatusColor: color
+      });
+    } catch (e) {}
   }
 
   // -----------------------------------------------------------------------

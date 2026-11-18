@@ -64,6 +64,10 @@ document.addEventListener('DOMContentLoaded', () => {
         candEmpty.style.display = 'block';
         candDetails.style.display = 'none';
       }
+
+      if (res.lastStatus) {
+        setStatus(res.lastStatus, res.lastStatusColor || '#38bdf8');
+      }
     });
   }
 

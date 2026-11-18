@@ -261,113 +261,20 @@
   }
 
   // -----------------------------------------------------------------------
-  // Floating Status Badge UI
+  // Status Sync (Viewable via Extension Popup)
   // -----------------------------------------------------------------------
   function updateBadge(statusText, color = '#0284c7') {
-    if (!document.body) return;
-    let host = document.getElementById('wb-uti-badge');
-    if (!host) {
-      host = document.createElement('div');
-      host.id = 'wb-uti-badge';
-      host.style.cssText = [
-        'position:fixed !important',
-        'bottom:16px !important',
-        'right:16px !important',
-        'top:auto !important',
-        'left:auto !important',
-        'width:300px !important',
-        'max-width:320px !important',
-        'height:auto !important',
-        'max-height:220px !important',
-        'z-index:2147483647 !important',
-        'background:#0f172a !important',
-        'color:#f8fafc !important',
-        'border:1px solid #38bdf8 !important',
-        'border-radius:12px !important',
-        'padding:10px 14px !important',
-        'font-family:system-ui,-apple-system,sans-serif !important',
-        'font-size:12px !important',
-        'box-shadow:0 8px 24px rgba(0,0,0,0.45) !important',
-        'box-sizing:border-box !important',
-        'line-height:1.4 !important'
-      ].join(';');
-
-      host.innerHTML = `
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-          <strong style="color:#38bdf8;font-size:12px;">🪪 Welcome Bihar PAN Auto-Pilot</strong>
-          <span id="wb-uti-ref" style="font-size:10px;color:#fbbf24;font-weight:700;"></span>
-        </div>
-        <div id="wb-uti-cand" style="font-size:11.5px;font-weight:600;color:#e2e8f0;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-          Waiting for queue data...
-        </div>
-        <div id="wb-uti-status" style="font-size:11px;color:#34d399;margin-bottom:8px;">Idle</div>
-        <div style="display:flex;gap:6px;">
-          <button id="wb-btn-refill" type="button" style="flex:1;padding:5px 8px;border:none;border-radius:6px;background:#0284c7;color:#fff;font-size:11px;font-weight:600;cursor:pointer;">🔄 Refill</button>
-          <button id="wb-btn-complete" type="button" style="flex:1;padding:5px 8px;border:none;border-radius:6px;background:#10b981;color:#fff;font-size:11px;font-weight:600;cursor:pointer;">✅ Done</button>
-          <button id="wb-btn-reject" type="button" style="flex:1;padding:5px 8px;border:none;border-radius:6px;background:#ef4444;color:#fff;font-size:11px;font-weight:600;cursor:pointer;">❌ Reject</button>
-        </div>
-      `;
-      document.body.appendChild(host);
-
-      document.getElementById('wb-btn-refill').addEventListener('click', () => {
-        const u = (window.location.href || '').toLowerCase();
-        if (u.includes('vlehome')) {
-          clickApplicationForNewPanMenu();
-        } else {
-          aadhaarConfirmed = false;
-          runAutoFill(true);
-        }
+    const existing = document.getElementById('wb-uti-badge');
+    if (existing) {
+      try { existing.remove(); } catch (e) {}
+    }
+    try {
+      chrome.storage.local.set({
+        lastStatus: statusText,
+        lastStatusColor: color,
+        currentUtiRefNo: currentUtiRefNo || ''
       });
-      document.getElementById('wb-btn-complete').addEventListener('click', () => {
-        if (!currentCandidate) return;
-        chrome.runtime.sendMessage({
-          action: 'candidateCompleted',
-          appId: currentCandidate.id,
-          appRef: currentCandidate.app_ref,
-          utiRefNo: currentUtiRefNo
-        });
-      });
-      document.getElementById('wb-btn-reject').addEventListener('click', () => {
-        if (!currentCandidate) return;
-        const reason = prompt('Rejection reason:', 'Document mismatch / rejected on UTI portal');
-        if (reason === null) return;
-        chrome.runtime.sendMessage({
-          action: 'candidateRejected',
-          appId: currentCandidate.id,
-          appRef: currentCandidate.app_ref,
-          reason: reason.trim() || 'Rejected on UTI portal'
-        });
-      });
-    }
-
-    const candEl = document.getElementById('wb-uti-cand');
-    const stEl = document.getElementById('wb-uti-status');
-    const refEl = document.getElementById('wb-uti-ref');
-
-    if (candEl) {
-      candEl.textContent = currentCandidate
-        ? `#${currentCandidate.app_ref} • ${currentCandidate.full_name}`
-        : 'No active PAN candidate in queue';
-    }
-    if (stEl) {
-      stEl.textContent = statusText;
-      stEl.style.color = color;
-    }
-    if (refEl) {
-      refEl.textContent = currentUtiRefNo ? `UTI: ${currentUtiRefNo}` : '';
-    }
-
-    const refillBtn = document.getElementById('wb-btn-refill');
-    const u = (window.location.href || '').toLowerCase();
-    if (refillBtn) {
-      if (u.includes('vlehome')) {
-        refillBtn.textContent = '🚀 Open Form 49A';
-        refillBtn.style.background = '#10b981';
-      } else {
-        refillBtn.textContent = '🔄 Refill';
-        refillBtn.style.background = '#0284c7';
-      }
-    }
+    } catch (e) {}
   }
 
   // -----------------------------------------------------------------------
