@@ -11,6 +11,7 @@
   let currentCandidate = null;
   let currentUtiRefNo = '';
   let prePanSubmitted = false;
+  let aadhaarConfirmed = false;
 
   // -----------------------------------------------------------------------
   // DOM & Input Helpers
@@ -28,6 +29,7 @@
   function setInputValue(el, val) {
     if (!el || val === undefined || val === null) return false;
     const str = String(val);
+    if (el.value === str) return true; // Stop redundant events & prevent loop popups
     try { el.focus(); } catch (e) {}
     try {
       const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
@@ -61,7 +63,7 @@
     if (!selectEl || !targetText) return false;
     const target = String(targetText).trim().toLowerCase();
 
-    // Pass 1: Strict exact match (Prevents "Individual" matching "Body of Individual")
+    // Pass 1: Strict exact match
     for (let i = 0; i < selectEl.options.length; i++) {
       const opt = selectEl.options[i];
       const txt = (opt.text || '').trim().toLowerCase();
@@ -80,7 +82,7 @@
 
     if (exactOnly) return false;
 
-    // Pass 2: Fallback to starts-with or contains only if exact match is absent
+    // Pass 2: Fallback to starts-with or contains
     for (let i = 0; i < selectEl.options.length; i++) {
       const opt = selectEl.options[i];
       const txt = (opt.text || '').trim().toLowerCase();
@@ -111,7 +113,6 @@
     };
   }
 
-  // Find input/select near a label text
   function findFieldByLabel(keywords, tagSelector = 'input, select') {
     const keys = Array.isArray(keywords) ? keywords : [keywords];
     const normKeys = keys.map((k) => k.toLowerCase());
@@ -244,6 +245,7 @@
         if (u.includes('vlehome')) {
           clickApplicationForNewPanMenu();
         } else {
+          aadhaarConfirmed = false;
           runAutoFill(true);
         }
       });
@@ -300,7 +302,7 @@
   }
 
   // -----------------------------------------------------------------------
-  // PAGE 1: prePANForm (Physical Mode -> Individual -> Defence/NRI No -> Both PAN -> Submit)
+  // PAGE 1: prePANForm
   // -----------------------------------------------------------------------
   function handlePrePanForm() {
     if (prePanSubmitted) return;
@@ -317,7 +319,7 @@
       clickRadio(physicalRadio);
     }
 
-    // 2. Status of the Applicant -> Strictly "Individual" (Never "Body of Individual")
+    // 2. Status of the Applicant -> Strictly "Individual"
     let individualSelected = false;
     const allSelects = Array.from(document.querySelectorAll('select'));
     for (const sel of allSelects) {
@@ -405,57 +407,110 @@
   }
 
   // -----------------------------------------------------------------------
-  // PAGE 2: IndmainForm (Form No. 93)
+  // POPUP & DIALOG AUTO-HANDLERS (Form No. 93)
   // -----------------------------------------------------------------------
-  function dismissReferenceNoModal() {
-    // 1. Capture Reference Number from hidden input #valno1 / #panValNo or page text
-    const valNoInput = document.getElementById('valno1') || document.getElementById('panValNo');
-    if (valNoInput && valNoInput.value) {
-      const val = valNoInput.value.trim();
-      if (val && currentUtiRefNo !== val) {
-        currentUtiRefNo = val;
-        chrome.storage.local.set({ currentUtiRefNo });
-      }
-    } else {
-      const match = (document.body?.innerText || '').match(/Reference\s*Number\s*[:-]*\s*([A-Z0-9]{6,})/i);
-      if (match && match[1] && currentUtiRefNo !== match[1]) {
-        currentUtiRefNo = match[1];
-        chrome.storage.local.set({ currentUtiRefNo });
-      }
-    }
+  function handleAllModals() {
+    let handled = false;
 
-    // 2. Click Ok button on open jQuery UI dialog or modal
-    const okBtns = Array.from(document.querySelectorAll('.ui-dialog:not([style*="display: none"]) button, .ui-dialog-buttonpane button, .ui-dialog button, button, input[type="button"]')).filter((b) => {
-      if (!isVisible(b)) return false;
-      const t = (b.textContent || b.value || '').trim().toLowerCase();
-      return t === 'ok' || t === 'okay';
+    // 1. Re-Enter AADHAAR No modal (#reEnterUid / #reEnterUidField)
+    const reEnterInput = document.getElementById('reEnterUidField') ||
+      document.querySelector('#reEnterUid input[type="text"], .ui-dialog input[maxlength="12"]');
+
+    const reEnterDialog = Array.from(document.querySelectorAll('.ui-dialog')).find((d) => {
+      if (!isVisible(d)) return false;
+      const t = (d.innerText || d.textContent || '').toLowerCase();
+      return t.includes('re-enter aadhaar') || t.includes('reenter aadhaar') || t.includes('re enter aadhaar');
     });
 
-    if (okBtns.length > 0) {
-      for (const btn of okBtns) {
-        try {
-          btn.click();
-        } catch (e) {
-          btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    const isReEnterOpen = Boolean(reEnterDialog || (reEnterInput && isVisible(reEnterInput)));
+
+    if (isReEnterOpen && currentCandidate?.aadhaar_no) {
+      const aNo = String(currentCandidate.aadhaar_no).replace(/\D/g, '');
+      if (reEnterInput && reEnterInput.value !== aNo) {
+        setInputValue(reEnterInput, aNo);
+      }
+
+      const container = reEnterDialog || reEnterInput?.closest('.ui-dialog') || document.getElementById('reEnterUid')?.closest('.ui-dialog');
+      if (container) {
+        const okBtn = Array.from(container.querySelectorAll('.ui-dialog-buttonpane button, button, input[type="button"]')).find((b) => {
+          const t = (b.textContent || b.value || '').trim().toLowerCase();
+          return t === 'ok' || t === 'okay';
+        });
+        if (okBtn) {
+          try {
+            okBtn.click();
+          } catch (e) {
+            okBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+          }
+          aadhaarConfirmed = true;
+          updateBadge('✅ Re-Enter Aadhaar Verified & Confirmed', '#10b981');
+          handled = true;
         }
       }
-      updateBadge(`✅ Ref No: ${currentUtiRefNo || 'captured'} | Popup OK clicked`, '#10b981');
-      return true;
     }
 
-    return false;
+    // 2. Reference No modal (#refNo)
+    const refDialog = Array.from(document.querySelectorAll('.ui-dialog')).find((d) => {
+      if (!isVisible(d)) return false;
+      const t = (d.innerText || d.textContent || '').toLowerCase();
+      return t.includes('reference number') || t.includes('please note the reference number');
+    });
+
+    if (refDialog) {
+      const valNoInput = document.getElementById('valno1') || document.getElementById('panValNo');
+      if (valNoInput && valNoInput.value) {
+        currentUtiRefNo = valNoInput.value.trim();
+        chrome.storage.local.set({ currentUtiRefNo });
+      } else {
+        const match = refDialog.innerText.match(/Reference\s*Number\s*[:-]*\s*([A-Z0-9]{6,})/i);
+        if (match && match[1]) {
+          currentUtiRefNo = match[1];
+          chrome.storage.local.set({ currentUtiRefNo });
+        }
+      }
+      const okBtn = Array.from(refDialog.querySelectorAll('.ui-dialog-buttonpane button, button, input[type="button"]')).find((b) => {
+        const t = (b.textContent || b.value || '').trim().toLowerCase();
+        return t === 'ok' || t === 'okay';
+      });
+      if (okBtn) {
+        try { okBtn.click(); } catch (e) {}
+        updateBadge(`✅ Ref No: ${currentUtiRefNo || 'captured'} | Dialog closed`, '#10b981');
+        handled = true;
+      }
+    }
+
+    // 3. Aadhaar Details / Information modal (#uidExist)
+    const uidExistDialog = Array.from(document.querySelectorAll('.ui-dialog')).find((d) => {
+      if (!isVisible(d)) return false;
+      const t = (d.innerText || d.textContent || '').toLowerCase();
+      return t.includes('aadhaar details') || t.includes('aadhaar name contains initials') || (t.includes('information') && !t.includes('re-enter'));
+    });
+
+    if (uidExistDialog) {
+      const okBtn = Array.from(uidExistDialog.querySelectorAll('.ui-dialog-buttonpane button, button')).find((b) => {
+        const t = (b.textContent || b.value || '').trim().toLowerCase();
+        return t === 'ok' || t === 'okay';
+      });
+      if (okBtn) {
+        try { okBtn.click(); } catch (e) {}
+        handled = true;
+      }
+    }
+
+    return handled;
   }
 
+  // -----------------------------------------------------------------------
+  // PAGE 2: IndmainForm (Form No. 93)
+  // -----------------------------------------------------------------------
   function handleIndMainForm(force = false) {
-    // Always dismiss popup if visible
-    dismissReferenceNoModal();
+    handleAllModals();
 
     if (!currentCandidate) {
       updateBadge('Form 93 Ready • Waiting for Candidate Data', '#f59e0b');
       return;
     }
 
-    // Step 1: Personal Information (First Name, Middle Name, Last Name, Gender)
     const { first, middle, last } = splitFullName(currentCandidate.full_name);
 
     let filledAny = false;
@@ -559,9 +614,13 @@
 
     // 8. Aadhaar Details (aadhaarNo, aadhaarName)
     const aadhaarNoEl = document.getElementById('aadhaarNo');
-    if (aadhaarNoEl && (!aadhaarNoEl.value || force) && currentCandidate.aadhaar_no) {
-      setInputValue(aadhaarNoEl, String(currentCandidate.aadhaar_no).replace(/\D/g, ''));
-      filledAny = true;
+    if (aadhaarNoEl && currentCandidate.aadhaar_no) {
+      const cleanAadhaar = String(currentCandidate.aadhaar_no).replace(/\D/g, '');
+      // Only set if field is empty or force
+      if (!aadhaarNoEl.value || (force && aadhaarNoEl.value !== cleanAadhaar)) {
+        setInputValue(aadhaarNoEl, cleanAadhaar);
+        filledAny = true;
+      }
     }
 
     const aadhaarNameEl = document.getElementById('aadhaarName');
@@ -573,7 +632,7 @@
 
     if (filledAny) {
       updateBadge(`✍️ Personal Info Auto-Filled: ${currentCandidate.full_name}`, '#10b981');
-    } else {
+    } else if (!aadhaarConfirmed) {
       updateBadge(`Form 93 Ready: ${currentCandidate.full_name}`, '#38bdf8');
     }
   }
@@ -641,7 +700,7 @@
     const url = (window.location.href || '').toLowerCase();
 
     // 1. Form No. 93 / IndmainForm (Highest Priority)
-    if (url.includes('indmainform') || url.includes('panind.html') || document.getElementById('firstName') || document.getElementById('refNo')) {
+    if (url.includes('indmainform') || url.includes('panind.html') || document.getElementById('firstName') || document.getElementById('refNo') || document.getElementById('reEnterUid')) {
       handleIndMainForm(force);
       return;
     }
@@ -683,6 +742,7 @@
     if (area !== 'local') return;
     if (changes.currentCandidate) {
       currentCandidate = changes.currentCandidate.newValue || null;
+      aadhaarConfirmed = false;
       runAutoFill(true);
     }
     if (changes.currentUtiRefNo) {
@@ -693,5 +753,5 @@
   // Re-check periodically for dynamic DOM & modals
   setInterval(() => {
     runAutoFill(false);
-  }, 800);
+  }, 700);
 })();
