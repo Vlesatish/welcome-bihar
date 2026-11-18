@@ -2015,6 +2015,19 @@
     return { panFormInput, pictureInput, signatureInput };
   }
 
+  // Helper to construct a 100% RAM-backed File (BlobDataItem::kBytes) so Chrome never throws ERR_UPLOAD_FILE_CHANGED / "Your file couldn't be accessed"
+  function createRamBackedFile(bufferOrBytes, filename, mimeType) {
+    const src = bufferOrBytes instanceof Uint8Array
+      ? bufferOrBytes
+      : new Uint8Array(bufferOrBytes);
+    const ramCopy = new Uint8Array(src.byteLength);
+    ramCopy.set(src);
+    return new File([ramCopy], filename, {
+      type: mimeType || 'application/octet-stream',
+      lastModified: Date.now()
+    });
+  }
+
   // Fetch asset bytes via background service worker to completely bypass page CORS limits
   async function fetchFileViaBackground(url, filename, defaultMime = 'image/jpeg') {
     return new Promise((resolve, reject) => {
@@ -2025,13 +2038,11 @@
         }
         try {
           const byteCharacters = atob(res.base64);
-          const byteNumbers = new Array(byteCharacters.length);
+          const byteArray = new Uint8Array(byteCharacters.length);
           for (let i = 0; i < byteCharacters.length; i++) {
-            byteNumbers[i] = byteCharacters.charCodeAt(i);
+            byteArray[i] = byteCharacters.charCodeAt(i);
           }
-          const byteArray = new Uint8Array(byteNumbers);
-          const blob = new Blob([byteArray], { type: res.mime || defaultMime });
-          const file = new File([blob], filename, { type: res.mime || defaultMime });
+          const file = createRamBackedFile(byteArray, filename, res.mime || defaultMime);
           resolve(file);
         } catch (e) {
           reject(e);
@@ -2162,22 +2173,25 @@
   // -----------------------------------------------------------------------
   async function getDefaultPanFormFile() {
     try {
-      const url = chrome.runtime.getURL('assets/default_pan_form.pdf');
-      const res = await fetch(url);
-      if (res.ok) {
-        const blob = await res.blob();
-        if (blob && blob.size > 1000) {
-          return new File([blob], 'PAN_Form_Alongwith_Documents.pdf', { type: 'application/pdf' });
-        }
+      const file = await fetchFileViaBackground('assets/default_pan_form.pdf', 'PAN_Form_Alongwith_Documents.pdf', 'application/pdf');
+      if (file && file.size > 1000) {
+        return file;
       }
-    } catch (e) {
-      console.warn('Direct fetch of default PDF failed, trying background worker:', e);
+    } catch (err) {
+      console.warn('Background fetch of default PDF failed, trying direct arrayBuffer:', err);
     }
 
     try {
-      return await fetchFileViaBackground('assets/default_pan_form.pdf', 'PAN_Form_Alongwith_Documents.pdf', 'application/pdf');
-    } catch (err) {
-      console.warn('Background fetch of default PDF failed:', err);
+      const url = chrome.runtime.getURL('assets/default_pan_form.pdf');
+      const res = await fetch(url);
+      if (res.ok) {
+        const ab = await res.arrayBuffer();
+        if (ab && ab.byteLength > 1000) {
+          return createRamBackedFile(ab, 'PAN_Form_Alongwith_Documents.pdf', 'application/pdf');
+        }
+      }
+    } catch (e) {
+      console.warn('Direct arrayBuffer fetch of default PDF failed:', e);
     }
     return null;
   }
@@ -2203,13 +2217,13 @@
 
       // Check if already PDF (%PDF header)
       if (bytes.length >= 4 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46) {
-        return new File([buf], 'PAN_Form_Alongwith_Documents.pdf', { type: 'application/pdf' });
+        return createRamBackedFile(buf, 'PAN_Form_Alongwith_Documents.pdf', 'application/pdf');
       }
 
       // Check if JPEG image (0xFF 0xD8)
       if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xD8) {
         const pdfBuf = createPdfFromJpeg(buf);
-        return new File([pdfBuf], 'PAN_Form_Alongwith_Documents.pdf', { type: 'application/pdf' });
+        return createRamBackedFile(pdfBuf, 'PAN_Form_Alongwith_Documents.pdf', 'application/pdf');
       }
 
       // Convert image via Canvas -> JPEG -> PDF
@@ -2224,7 +2238,7 @@
       const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.88));
       const jBuf = await blob.arrayBuffer();
       const pdfBuf = createPdfFromJpeg(jBuf);
-      return new File([pdfBuf], 'PAN_Form_Alongwith_Documents.pdf', { type: 'application/pdf' });
+      return createRamBackedFile(pdfBuf, 'PAN_Form_Alongwith_Documents.pdf', 'application/pdf');
     } catch (err) {
       console.warn('Candidate form conversion to PDF failed, falling back to bundled form:', err);
       return fetchFileViaBackground('assets/default_pan_form.pdf', 'PAN_Form_Alongwith_Documents.pdf', 'application/pdf');
@@ -2261,7 +2275,7 @@
     }
 
     const safeName = (name || 'photo').replace(/[^a-zA-Z0-9]/g, '_');
-    return new File([finalBuffer], `${safeName}_photo_213x213_300dpi.jpg`, { type: 'image/jpeg' });
+    return createRamBackedFile(finalBuffer, `${safeName}_photo_213x213_300dpi.jpg`, 'image/jpeg');
   }
 
   async function fetchAndFormatSignature(sigUrl, name) {
@@ -2306,7 +2320,7 @@
     }
 
     const safeName = (name || 'signature').replace(/[^a-zA-Z0-9]/g, '_');
-    return new File([finalBuffer], `${safeName}_signature_400x200_600dpi.jpg`, { type: 'image/jpeg' });
+    return createRamBackedFile(finalBuffer, `${safeName}_signature_400x200_600dpi.jpg`, 'image/jpeg');
   }
 
   // Auto click the modal Upload button (Requested by RIOT: "document uplaod bhi autokar do")

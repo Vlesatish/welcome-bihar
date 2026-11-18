@@ -800,12 +800,13 @@ function triggerFileInput(inputId) {
     if (el) el.click();
 }
 
-// Handle file selection
+// Handle file selection (Reads file into RAM immediately and detaches disk handle to prevent Chrome ERR_UPLOAD_FILE_CHANGED / "Your file couldn't be accessed")
 function handleFileSelected(input, fieldKey) {
     if (!input.files || input.files.length === 0) return;
     const file = input.files[0];
+    const isImage = file.type.startsWith('image/') || /\.(jpe?g|png)$/i.test(file.name || '');
 
-    if ((fieldKey === 'photo' || fieldKey === 'signature') && !file.type.startsWith('image/')) {
+    if ((fieldKey === 'photo' || fieldKey === 'signature') && !isImage) {
         alert('Photo and Signature must be a JPG or PNG image file. PDF is not allowed.');
         input.value = '';
         return;
@@ -822,24 +823,37 @@ function handleFileSelected(input, fieldKey) {
     const thumbImg = document.getElementById('thumb_' + fieldKey);
     const nameEl = document.getElementById('name_' + fieldKey);
     const sizeEl = document.getElementById('size_' + fieldKey);
+    const base64Input = document.getElementById(fieldKey + '_base64');
 
     nameEl.textContent = file.name;
     sizeEl.textContent = (file.size / 1024).toFixed(1) + ' KB';
 
-    if (file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            thumbImg.src = e.target.result;
-            thumbImg.style.display = 'block';
-            document.getElementById(fieldKey + '_base64').value = e.target.result;
-        };
-        reader.readAsDataURL(file);
-    } else {
-        // PDF fallback icon
+    if (!isImage) {
         thumbImg.src = 'https://cdn-icons-png.flaticon.com/512/337/337946.png';
         thumbImg.style.display = 'block';
-        document.getElementById(fieldKey + '_base64').value = '';
     }
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const dataUrl = e.target.result || '';
+        if (isImage) {
+            thumbImg.src = dataUrl;
+            thumbImg.style.display = 'block';
+        }
+        if (base64Input) {
+            base64Input.value = dataUrl;
+        }
+        // Detach OS disk file handle from <input type="file"> once cached in RAM
+        // This 100% prevents Chrome's "Your file couldn't be accessed" (ERR_UPLOAD_FILE_CHANGED)
+        try {
+            input.value = '';
+        } catch (err) {}
+    };
+    reader.onerror = function() {
+        alert('Could not read the selected file. Please re-select the file.');
+        try { input.value = ''; } catch (err) {}
+    };
+    reader.readAsDataURL(file);
 
     previewBox.classList.remove('d-none');
 }
@@ -1061,8 +1075,16 @@ function closeCameraModal() {
     });
 })();
 
-// Instant submit feedback - disables button and gives feedback while redirecting to list
-document.getElementById('panCardForm')?.addEventListener('submit', function() {
+// Instant submit feedback & RAM-only upload safety guard
+document.getElementById('panCardForm')?.addEventListener('submit', function(e) {
+    ['photo', 'signature', 'aadhar_card', 'pan_form'].forEach(function(key) {
+        var b64 = document.getElementById(key + '_base64');
+        var fInp = document.getElementById('file_' + key);
+        if (b64 && b64.value && fInp) {
+            try { fInp.value = ''; } catch (err) {}
+        }
+    });
+
     const btn = document.getElementById('submitPanBtn');
     if (btn) {
         btn.disabled = true;
