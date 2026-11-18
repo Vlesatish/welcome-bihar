@@ -220,41 +220,65 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.action === 'captureTab') {
-    const tabId = sender.tab ? sender.tab.id : null;
-    const winId = sender.tab ? sender.tab.windowId : null;
-
-    const doCapture = () => {
+    (async () => {
       try {
-        if (typeof winId === 'number') {
-          chrome.tabs.captureVisibleTab(winId, { format: 'png' }, (dataUrl) => {
-            if (chrome.runtime.lastError || !dataUrl) {
-              chrome.tabs.captureVisibleTab({ format: 'png' }, (dataUrl2) => {
-                void chrome.runtime.lastError;
-                sendResponse({ dataUrl: dataUrl2 || null });
-              });
-            } else {
-              sendResponse({ dataUrl });
-            }
-          });
-        } else {
-          chrome.tabs.captureVisibleTab({ format: 'png' }, (dataUrl) => {
+        const tabId = sender.tab ? sender.tab.id : null;
+        const winId = sender.tab ? sender.tab.windowId : null;
+
+        if (winId) {
+          await new Promise((res) => chrome.windows.update(winId, { focused: true }, () => {
             void chrome.runtime.lastError;
-            sendResponse({ dataUrl: dataUrl || null });
+            res();
+          }));
+        }
+        if (tabId) {
+          await new Promise((res) => chrome.tabs.update(tabId, { active: true }, () => {
+            void chrome.runtime.lastError;
+            res();
+          }));
+        }
+
+        // Wait for tab paint after focusing
+        await new Promise((res) => setTimeout(res, 300));
+
+        let dataUrl = await new Promise((resolve) => {
+          if (typeof winId === 'number') {
+            chrome.tabs.captureVisibleTab(winId, { format: 'png' }, (d) => {
+              if (chrome.runtime.lastError || !d) {
+                chrome.tabs.captureVisibleTab({ format: 'png' }, (d2) => {
+                  void chrome.runtime.lastError;
+                  resolve(d2 || null);
+                });
+              } else {
+                resolve(d);
+              }
+            });
+          } else {
+            chrome.tabs.captureVisibleTab({ format: 'png' }, (d) => {
+              void chrome.runtime.lastError;
+              resolve(d || null);
+            });
+          }
+        });
+
+        // Retry once if initially null
+        if (!dataUrl) {
+          await new Promise((res) => setTimeout(res, 400));
+          dataUrl = await new Promise((resolve) => {
+            chrome.tabs.captureVisibleTab({ format: 'png' }, (d3) => {
+              void chrome.runtime.lastError;
+              resolve(d3 || null);
+            });
           });
         }
-      } catch (e) {
-        sendResponse({ dataUrl: null, error: e.message });
-      }
-    };
 
-    if (tabId) {
-      chrome.tabs.update(tabId, { active: true }, () => {
-        void chrome.runtime.lastError;
-        setTimeout(doCapture, 150);
-      });
-    } else {
-      doCapture();
-    }
+        console.log('[Background] captureTab completed. Size:', dataUrl ? dataUrl.length : 0);
+        sendResponse({ success: Boolean(dataUrl), dataUrl: dataUrl || null });
+      } catch (e) {
+        console.error('[Background] captureTab exception:', e);
+        sendResponse({ success: false, dataUrl: null, error: e.message });
+      }
+    })();
     return true;
   }
 

@@ -1265,6 +1265,7 @@
   // -----------------------------------------------------------------------
   let receiptHandling = false;
   let lastCompletedCoupon = '';
+  let receiptRetryCount = 0;
 
   function isReceiptPage() {
     const url = (window.location.href || '').toLowerCase();
@@ -1273,6 +1274,17 @@
     if (bodyText.includes('pan application acknowledgment receipt') || bodyText.includes('pan application acknowledgement receipt')) return true;
     if (bodyText.includes('coupon no') && (bodyText.includes('received rs.') || bodyText.includes('mode of pan card') || bodyText.includes('aadhaar matched'))) return true;
     return false;
+  }
+
+  function extractCouponNumber() {
+    const pageText = document.body ? document.body.innerText : '';
+    const m1 = pageText.match(/\b(U-[A-Za-z0-9]{8,})\b/i);
+    if (m1) return m1[1].trim();
+    const m2 = pageText.match(/(?:Application\s*No\.?\s*\/?\s*Coupon\s*No\.?|Coupon\s*No\.?)\s*[:\s]*([Uu]-[A-Za-z0-9]+|[A-Za-z0-9]{8,})/i);
+    if (m2) return m2[1].trim();
+    const m3 = pageText.match(/\b([A-Za-z]\d{9})\b/);
+    if (m3) return m3[1].trim();
+    return currentUtiRefNo || '';
   }
 
   function findReceiptElement() {
@@ -1298,7 +1310,7 @@
     const matches = allContainers.filter((el) => {
       if (!isVisible(el)) return false;
       const txt = (el.innerText || el.textContent || '').toLowerCase();
-      return txt.includes('acknowledg') && (txt.includes('coupon no') || txt.includes('received rs.'));
+      return (txt.includes('acknowledg') || txt.includes('coupon no')) && txt.includes('received rs.');
     });
 
     if (matches.length > 0) {
@@ -1313,13 +1325,39 @@
     return null;
   }
 
+  function showManualReceiptCaptureUI(couponNo, applicantName, mobileNo, aadhaarLast4) {
+    let bar = document.getElementById('uti-receipt-fallback-bar');
+    if (bar) return;
+    bar = document.createElement('div');
+    bar.id = 'uti-receipt-fallback-bar';
+    bar.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9999999;background:#0f172a;color:#fff;padding:14px 24px;border-radius:12px;box-shadow:0 10px 35px rgba(0,0,0,0.6);border:2px solid #38bdf8;font-family:sans-serif;font-size:14px;display:flex;align-items:center;gap:14px;';
+    bar.innerHTML = `
+      <span>📸 Receipt capture waiting for <b>${couponNo || 'Application'}</b></span>
+      <button id="uti-btn-retry-receipt" style="background:#0284c7;color:#fff;border:none;padding:7px 16px;border-radius:6px;cursor:pointer;font-weight:bold;font-size:13px;">📸 Save Receipt to BiharGo</button>
+      <button id="uti-btn-skip-receipt" style="background:#475569;color:#fff;border:none;padding:7px 16px;border-radius:6px;cursor:pointer;font-size:13px;">Skip & Continue</button>
+    `;
+    document.body.appendChild(bar);
+
+    document.getElementById('uti-btn-retry-receipt')?.addEventListener('click', () => {
+      bar.remove();
+      receiptRetryCount = 0;
+      receiptHandling = false;
+      handleReceiptSuccessPage();
+    });
+
+    document.getElementById('uti-btn-skip-receipt')?.addEventListener('click', () => {
+      bar.remove();
+      sendCompletionPayload('', couponNo, applicantName, mobileNo, aadhaarLast4);
+    });
+  }
+
   function sendCompletionPayload(croppedBase64, couponNo, applicantName, mobileNo, aadhaarLast4) {
     chrome.storage.local.get(['currentCandidate', 'queueList'], (stored) => {
       const cand = stored?.currentCandidate || (Array.isArray(stored?.queueList) && stored?.queueList[0]) || null;
       const appId = cand ? (cand.id || cand.app_id) : null;
       const appRef = cand ? String(cand.app_ref || '').replace(/^#+/, '').trim() : null;
 
-      updateBadge(`📤 Updating Welcome Bihar (Coupon: ${couponNo || 'Saved'})...`, '#38bdf8');
+      updateBadge(`📤 Saving Receiving Receipt on Welcome Bihar (Coupon: ${couponNo || 'Saved'})...`, '#0284c7');
 
       chrome.runtime.sendMessage({
         action: 'candidateCompleted',
@@ -1336,33 +1374,49 @@
         receiptHandling = false;
         if (resp && resp.success) {
           lastCompletedCoupon = couponNo;
-          updateBadge(`🎉 Application COMPLETED on Welcome Bihar! Opening Upload List...`, '#10b981');
+          updateBadge(`🎉 Application & Receipt SAVED on Welcome Bihar! Opening Upload List...`, '#10b981');
           setTimeout(() => {
             try {
               chrome.runtime.sendMessage({ action: 'openDocUploadPage' });
             } catch (e) {}
-          }, 800);
+          }, 1500);
         } else {
-          updateBadge(`⚠️ Complete update: ${resp?.error || 'Pending retry'}`, '#f59e0b');
+          updateBadge(`⚠️ Save failed: ${resp?.error || 'Pending retry'}`, '#f59e0b');
+          showManualReceiptCaptureUI(couponNo, applicantName, mobileNo, aadhaarLast4);
         }
       });
     });
   }
 
-  function handleReceiptSuccessPage() {
+  async function handleReceiptSuccessPage() {
     if (receiptHandling) return;
 
-    const pageText = document.body?.innerText || '';
-    const couponMatch = pageText.match(/(?:Application\s*No\.?\s*\/?\s*Coupon\s*No\.?|Coupon\s*No\.?)\s*[:\s]*([Uu]-[A-Za-z0-9]+|[A-Za-z0-9]{8,})/i) ||
-                        pageText.match(/\b(U-[A-Za-z0-9]{8,})\b/i);
-    const couponNo = couponMatch ? couponMatch[1].trim() : (currentUtiRefNo || '');
+    let couponNo = extractCouponNumber();
+    let receiptEl = findReceiptElement();
+
+    // If receipt table not rendered yet, poll up to 15 times (every 300ms = 4.5 seconds)
+    if (!receiptEl && receiptRetryCount < 15) {
+      receiptRetryCount++;
+      updateBadge(`⏳ Waiting for Receipt Table to render (${receiptRetryCount}/15)...`, '#38bdf8');
+      setTimeout(handleReceiptSuccessPage, 300);
+      return;
+    }
 
     // If already completed for this specific coupon, avoid duplicate API calls
     if (couponNo && couponNo === lastCompletedCoupon) {
       return;
     }
 
-    // Extract demographic details directly from the on-screen receipt table
+    receiptHandling = true;
+
+    // Safety timeout to prevent permanent lock
+    const safetyTimer = setTimeout(() => {
+      receiptHandling = false;
+    }, 12000);
+
+    updateBadge(`📸 Capturing Receipt (${couponNo || 'Form 93'})...`, '#0284c7');
+
+    const pageText = document.body ? document.body.innerText : '';
     const nameMatch = pageText.match(/Received\s*Rs\.[^\n]*from\s*([A-Za-z\s]+)/i) || pageText.match(/Name\s*as\s*per\s*Aadhaar\s*([A-Za-z\s]+)/i);
     const applicantName = nameMatch ? nameMatch[1].replace(/\n/g, ' ').trim() : '';
 
@@ -1372,81 +1426,75 @@
     const aadhMatch = pageText.match(/Aadhaar\s*Number\s*([xX0-9\-]+)/i);
     const aadhaarLast4 = aadhMatch ? aadhMatch[1].replace(/\D/g, '').slice(-4) : '';
 
-    const receiptEl = findReceiptElement();
-    receiptHandling = true;
-
-    // Auto-unlock after 6 seconds to prevent any permanent lock
-    const safetyTimer = setTimeout(() => {
-      receiptHandling = false;
-    }, 6000);
-
-    updateBadge(`📸 Processing Receipt (${couponNo || 'Form 93'})...`, '#38bdf8');
-
-    // Scroll receipt smoothly into view
+    // Scroll smoothly to top
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
     if (receiptEl) {
       try {
-        receiptEl.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
+        receiptEl.scrollIntoView({ behavior: 'instant', block: 'start' });
       } catch (e) {}
     }
 
-    setTimeout(() => {
-      const rect = receiptEl ? receiptEl.getBoundingClientRect() : null;
-      const dpr = window.devicePixelRatio || 1;
+    // Allow scroll to settle
+    await new Promise(r => setTimeout(r, 350));
 
-      const crop = rect ? {
-        x: Math.max(0, Math.floor((rect.left - 4) * dpr)),
-        y: Math.max(0, Math.floor((rect.top - 4) * dpr)),
-        width: Math.min(window.innerWidth * dpr, Math.ceil((rect.width + 8) * dpr)),
-        height: Math.min(window.innerHeight * dpr, Math.ceil((rect.height + 8) * dpr))
-      } : null;
+    receiptEl = findReceiptElement();
+    const rect = receiptEl ? receiptEl.getBoundingClientRect() : null;
+    const dpr = window.devicePixelRatio || 1;
 
-      // Request tab screenshot from background
-      chrome.runtime.sendMessage({ action: 'captureTab' }, (res) => {
-        clearTimeout(safetyTimer);
-        // Even if captureTab returns no dataUrl, ALWAYS complete the candidate!
-        if (!res || !res.dataUrl || !crop) {
-          sendCompletionPayload('', couponNo, applicantName, mobileNo, aadhaarLast4);
+    const crop = (rect && rect.width > 200 && rect.height > 150) ? {
+      x: Math.max(0, Math.floor((rect.left - 4) * dpr)),
+      y: Math.max(0, Math.floor((rect.top - 4) * dpr)),
+      width: Math.min(window.innerWidth * dpr, Math.ceil((rect.width + 8) * dpr)),
+      height: Math.min(window.innerHeight * dpr, Math.ceil((rect.height + 8) * dpr))
+    } : null;
+
+    chrome.runtime.sendMessage({ action: 'captureTab' }, (res) => {
+      clearTimeout(safetyTimer);
+
+      if (!res || !res.dataUrl) {
+        console.warn('captureTab failed or returned no dataUrl:', res);
+        if (receiptRetryCount < 4) {
+          receiptRetryCount++;
+          receiptHandling = false;
+          updateBadge(`⚠️ Capture failed, retrying screenshot (${receiptRetryCount}/4)...`, '#f59e0b');
+          setTimeout(handleReceiptSuccessPage, 1000);
           return;
         }
 
-        const img = new Image();
-        img.onload = () => {
-          let croppedBase64 = '';
+        showManualReceiptCaptureUI(couponNo, applicantName, mobileNo, aadhaarLast4);
+        return;
+      }
+
+      const img = new Image();
+      img.onload = () => {
+        let finalBase64 = res.dataUrl; // DEFAULT TO FULL SNAPSHOT! Never send empty!
+        if (crop && crop.width > 100 && crop.height > 100) {
           try {
             const canvas = document.createElement('canvas');
             const targetW = Math.max(10, Math.min(crop.width, img.width - crop.x));
             const targetH = Math.max(10, Math.min(crop.height, img.height - crop.y));
-            canvas.width = targetW;
-            canvas.height = targetH;
-            const ctx = canvas.getContext('2d');
-
-            ctx.drawImage(
-              img,
-              crop.x,
-              crop.y,
-              targetW,
-              targetH,
-              0,
-              0,
-              targetW,
-              targetH
-            );
-            croppedBase64 = canvas.toDataURL('image/png', 0.95);
+            if (targetW > 100 && targetH > 100 && crop.x < img.width && crop.y < img.height) {
+              canvas.width = targetW;
+              canvas.height = targetH;
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(img, crop.x, crop.y, targetW, targetH, 0, 0, targetW, targetH);
+              finalBase64 = canvas.toDataURL('image/jpeg', 0.92);
+            }
           } catch (err) {
             console.warn('Canvas crop fallback to full snapshot:', err);
-            croppedBase64 = res.dataUrl;
+            finalBase64 = res.dataUrl;
           }
+        }
 
-          sendCompletionPayload(croppedBase64, couponNo, applicantName, mobileNo, aadhaarLast4);
-        };
+        sendCompletionPayload(finalBase64, couponNo, applicantName, mobileNo, aadhaarLast4);
+      };
 
-        img.onerror = () => {
-          sendCompletionPayload('', couponNo, applicantName, mobileNo, aadhaarLast4);
-        };
+      img.onerror = () => {
+        sendCompletionPayload(res.dataUrl, couponNo, applicantName, mobileNo, aadhaarLast4);
+      };
 
-        img.src = res.dataUrl;
-      });
-    }, 500);
+      img.src = res.dataUrl;
+    });
   }
 
   // -----------------------------------------------------------------------

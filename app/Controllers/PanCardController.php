@@ -1134,17 +1134,21 @@ class PanCardController
 
         // Optional base64 receipt/screenshot upload
         $b64 = trim((string)($payload['result_file_base64'] ?? $payload['screenshot'] ?? ''));
-        if ($b64 !== '' && str_starts_with($b64, 'data:')) {
-            if (preg_match('/^data:([^;]+);base64,(.+)$/', $b64, $m)) {
+        if ($b64 !== '') {
+            $decoded = false;
+            $ext = 'jpg';
+            if (str_starts_with($b64, 'data:') && preg_match('/^data:([^;]+);base64,(.+)$/', $b64, $m)) {
+                $ext = str_contains($m[1], 'pdf') ? 'pdf' : (str_contains($m[1], 'png') ? 'png' : 'jpg');
                 $decoded = base64_decode($m[2], true);
-                if ($decoded !== false && strlen($decoded) > 0) {
-                    $ext = str_contains($m[1], 'pdf') ? 'pdf' : (str_contains($m[1], 'jpeg') || str_contains($m[1], 'jpg') ? 'jpg' : 'png');
-                    $resDir = dirname(__DIR__, 2) . '/public/uploads/results';
-                    if (!is_dir($resDir)) @mkdir($resDir, 0755, true);
-                    $fileName = 'uti_res_' . $appId . '_' . date('Ymd_His') . '.' . $ext;
-                    if (@file_put_contents($resDir . '/' . $fileName, $decoded) !== false) {
-                        $resultFileUrl = '/uploads/results/' . $fileName;
-                    }
+            } else {
+                $decoded = base64_decode($b64, true);
+            }
+            if ($decoded !== false && strlen($decoded) > 0) {
+                $resDir = dirname(__DIR__, 2) . '/public/uploads/results';
+                if (!is_dir($resDir)) @mkdir($resDir, 0755, true);
+                $fileName = 'uti_res_' . $appId . '_' . date('Ymd_His') . '.' . $ext;
+                if (@file_put_contents($resDir . '/' . $fileName, $decoded) !== false) {
+                    $resultFileUrl = '/uploads/results/' . $fileName;
                 }
             }
         }
