@@ -1546,6 +1546,43 @@
     });
   }
 
+  // Injects JFIF APP0 Segment with specified DPI (300 or 600) into JPEG binary
+  function injectJfifDpiInJpeg(arrayBuffer, dpi) {
+    const bytes = new Uint8Array(arrayBuffer);
+    if (bytes.length < 4 || bytes[0] !== 0xFF || bytes[1] !== 0xD8) {
+      return arrayBuffer;
+    }
+
+    const dpiHi = (dpi >> 8) & 0xFF;
+    const dpiLo = dpi & 0xFF;
+
+    if (bytes[2] === 0xFF && bytes[3] === 0xE0 && bytes.length >= 18) {
+      bytes[13] = 1; // 1 = dots per inch (DPI)
+      bytes[14] = dpiHi;
+      bytes[15] = dpiLo;
+      bytes[16] = dpiHi;
+      bytes[17] = dpiLo;
+      return bytes.buffer;
+    }
+
+    const app0 = new Uint8Array([
+      0xFF, 0xE0,
+      0x00, 0x10,
+      0x4A, 0x46, 0x49, 0x46, 0x00,
+      0x01, 0x02,
+      0x01,
+      dpiHi, dpiLo,
+      dpiHi, dpiLo,
+      0x00, 0x00
+    ]);
+
+    const result = new Uint8Array(bytes.length + app0.length);
+    result.set(bytes.subarray(0, 2), 0);
+    result.set(app0, 2);
+    result.set(bytes.subarray(2), 2 + app0.length);
+    return result.buffer;
+  }
+
   async function fetchAndFormatPhoto(photoUrl, name) {
     const rawFile = await fetchFileViaBackground(photoUrl, 'temp_photo.jpg', 'image/jpeg');
     const bmp = await createImageBitmap(rawFile);
@@ -1556,9 +1593,27 @@
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, 213, 213);
     ctx.drawImage(bmp, 0, 0, 213, 213);
-    const jpegBlob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.88));
+
+    // UTI requires: 213 x 213 px, 300 DPI, < 30 KB
+    let quality = 0.85;
+    let finalBuffer = null;
+    while (quality >= 0.35) {
+      const jpegBlob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', quality));
+      const buf = await jpegBlob.arrayBuffer();
+      const injected = injectJfifDpiInJpeg(buf, 300);
+      if (injected.byteLength / 1024 < 29) {
+        finalBuffer = injected;
+        break;
+      }
+      quality -= 0.1;
+    }
+    if (!finalBuffer) {
+      const jpegBlob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.5));
+      finalBuffer = injectJfifDpiInJpeg(await jpegBlob.arrayBuffer(), 300);
+    }
+
     const safeName = (name || 'photo').replace(/[^a-zA-Z0-9]/g, '_');
-    return new File([jpegBlob], `${safeName}_photo_213x213.jpg`, { type: 'image/jpeg' });
+    return new File([finalBuffer], `${safeName}_photo_213x213_300dpi.jpg`, { type: 'image/jpeg' });
   }
 
   async function fetchAndFormatSignature(sigUrl, name) {
@@ -1584,9 +1639,26 @@
     }
     ctx.putImageData(imgData, 0, 0);
 
-    const jpegBlob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.85));
+    // UTI requires: 400 x 200 px, 600 DPI, < 60 KB
+    let quality = 0.85;
+    let finalBuffer = null;
+    while (quality >= 0.35) {
+      const jpegBlob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', quality));
+      const buf = await jpegBlob.arrayBuffer();
+      const injected = injectJfifDpiInJpeg(buf, 600);
+      if (injected.byteLength / 1024 < 58) {
+        finalBuffer = injected;
+        break;
+      }
+      quality -= 0.1;
+    }
+    if (!finalBuffer) {
+      const jpegBlob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.5));
+      finalBuffer = injectJfifDpiInJpeg(await jpegBlob.arrayBuffer(), 600);
+    }
+
     const safeName = (name || 'signature').replace(/[^a-zA-Z0-9]/g, '_');
-    return new File([jpegBlob], `${safeName}_signature_400x200.jpg`, { type: 'image/jpeg' });
+    return new File([finalBuffer], `${safeName}_signature_400x200_600dpi.jpg`, { type: 'image/jpeg' });
   }
 
   // Do NOT auto click the modal Upload button (RIOT instructed: "esme per auto click mat karo sirf upload karo")
