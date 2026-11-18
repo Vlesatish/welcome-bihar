@@ -9,7 +9,7 @@
   if (window !== window.top) return;
 
   const WALLET_PASSWORD = 'Satish@824207';
-  const WALLET_PIN = '952596';
+  const WALLET_PIN = '967235';
 
   let passwordSubmitted = false;
   let pinSubmitted = false;
