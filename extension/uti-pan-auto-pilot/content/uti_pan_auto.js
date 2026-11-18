@@ -469,6 +469,8 @@
       handlePrePanForm();
     } else if (url.includes('indmainform') || bodyText.includes('form no. 49a') || bodyText.includes('form 49a')) {
       handleIndMainForm(force);
+    } else if (url.includes('vlehome')) {
+      updateBadge('VLE Home • Open Form 49A to proceed', '#10b981');
     } else if (url.includes('csclogin')) {
       updateBadge('CSC Login Screen • Please sign in', '#fbbf24');
     } else {
