@@ -1864,7 +1864,7 @@
     updateBadge('⏳ Loading Photo, Signature & PDF Form...', '#38bdf8');
 
     try {
-      let activeCand = window._selectedRowCandidate || cand;
+      let activeCand = cand || window._activeRowCandidate || window._selectedRowCandidate || currentCandidate;
       if (!activeCand || !activeCand.photo_url || !activeCand.signature_url) {
         // Query BiharGo for active candidate
         const candSpan = document.getElementById('wb-bar-candidate-name');
@@ -2205,14 +2205,11 @@
         });
       }
 
-      // Hook click on native Upload link
-      uploadEl.addEventListener('click', async () => {
-        window._activeRowAppNo = appNo;
-        window._activeRowCandName = candName;
-
-        let cand = window._docTableCandidateCache[candName.toUpperCase()] || (appNo ? window._docTableCandidateCache[appNo] : null);
+      async function triggerUploadForRow(candObj) {
+        let cand = candObj || window._docTableCandidateCache[candName.toUpperCase()] || (appNo ? window._docTableCandidateCache[appNo] : null);
         if (!cand && candName) cand = await fetchCandidateBySearch(candName);
         if (!cand && appNo) cand = await fetchCandidateBySearch(appNo);
+
         if (cand) {
           window._activeRowCandidate = cand;
           window._selectedRowCandidate = cand;
@@ -2223,7 +2220,45 @@
             barSpan.innerText = cand.full_name;
             barSpan.style.color = '#34d399';
           }
+          updateBadge(`📂 Candidate: ${cand.full_name} • Attaching Documents...`, '#0ea5e9');
+
+          // Open modal if not already open
+          const existingModal = findDocUploadModal();
+          if (!existingModal) {
+            try {
+              uploadEl.click();
+            } catch (err) {
+              uploadEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+            }
+          }
+
+          // Poll up to 25 times (every 80ms) for modal inputs and attach immediately
+          let tries = 0;
+          const pollTimer = setInterval(() => {
+            tries++;
+            const m = findDocUploadModal();
+            if (m) {
+              const inputs = findDocUploadInputs(m);
+              if (inputs.panFormInput && inputs.pictureInput && inputs.signatureInput) {
+                clearInterval(pollTimer);
+                docUploadLock = true;
+                attachDocumentsToModal(inputs, cand, m);
+              }
+            }
+            if (tries >= 25) {
+              clearInterval(pollTimer);
+            }
+          }, 80);
+        } else {
+          updateBadge(`⚠️ Candidate details not found on BiharGo for ${candName || appNo}`, '#f59e0b');
         }
+      }
+
+      // Hook click on native Upload link
+      uploadEl.addEventListener('click', () => {
+        window._activeRowAppNo = appNo;
+        window._activeRowCandName = candName;
+        triggerUploadForRow();
       });
 
       const btn = document.createElement('button');
@@ -2246,38 +2281,11 @@
 
         updateBadge(`🔍 Fetching details for ${candName || appNo} from Welcome Bihar...`, '#0ea5e9');
 
-        let cand = window._docTableCandidateCache[candName.toUpperCase()] || (appNo ? window._docTableCandidateCache[appNo] : null);
-        if (!cand && candName) {
-          cand = await fetchCandidateBySearch(candName);
-        }
-        if (!cand && appNo) {
-          cand = await fetchCandidateBySearch(appNo);
-        }
-
-        if (cand) {
-          window._activeRowCandidate = cand;
-          window._selectedRowCandidate = cand;
-          currentCandidate = cand;
-          chrome.storage.local.set({ currentCandidate: cand });
-          const barSpan = document.getElementById('wb-bar-candidate-name');
-          if (barSpan) {
-            barSpan.innerText = cand.full_name;
-            barSpan.style.color = '#34d399';
-          }
-          updateBadge(`📂 Candidate Found: ${cand.full_name} • Opening Upload Modal...`, '#10b981');
-        } else {
-          updateBadge(`⚠️ Candidate details not found on BiharGo for ${candName || appNo}`, '#f59e0b');
-        }
+        await triggerUploadForRow();
 
         btn.disabled = false;
         btn.innerText = '⚡ Auto Upload';
         btn.style.background = '#10b981';
-
-        try {
-          uploadEl.click();
-        } catch (err) {
-          uploadEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-        }
       });
 
       uploadEl.parentNode.insertBefore(btn, uploadEl.nextSibling);
@@ -2325,7 +2333,7 @@
         }
 
         // Determine specific candidate for this modal
-        let targetCand = window._activeRowCandidate || window._selectedRowCandidate;
+        let targetCand = window._activeRowCandidate || window._selectedRowCandidate || currentCandidate;
         if (!targetCand && window._activeRowCandName) {
           targetCand = window._docTableCandidateCache[window._activeRowCandName.toUpperCase()];
         }
@@ -2333,33 +2341,19 @@
           targetCand = window._docTableCandidateCache[window._activeRowAppNo];
         }
 
-        // If table has only 1 data row, auto-select that single row's candidate
+        // If not found, scan visible table rows
         if (!targetCand) {
           const visibleRows = Array.from(document.querySelectorAll('table tr')).filter((r) => {
             const t = (r.innerText || '').toLowerCase();
             return t.includes('upload') && !t.includes('crop and upload');
           });
-          if (visibleRows.length === 1) {
-            const rowText = (visibleRows[0].innerText || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
-            const mApp = rowText.match(/\b(A\d{8,})\b/);
-            const cells = Array.from(visibleRows[0].querySelectorAll('td'));
+          for (const vr of visibleRows) {
+            const cells = Array.from(vr.querySelectorAll('td'));
             const rName = cells[2] ? cells[2].innerText.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim() : '';
-            if (mApp && window._docTableCandidateCache[mApp[1]]) {
-              targetCand = window._docTableCandidateCache[mApp[1]];
-            } else if (rName && window._docTableCandidateCache[rName.toUpperCase()]) {
+            if (rName && window._docTableCandidateCache[rName.toUpperCase()]) {
               targetCand = window._docTableCandidateCache[rName.toUpperCase()];
+              break;
             }
-          }
-        }
-
-        // Strict verification: Does targetCand belong to the current document list page?
-        const pageText = (document.body ? document.body.innerText : '').toUpperCase();
-        if (targetCand) {
-          const tcName = (targetCand.full_name || '').toUpperCase().trim();
-          const tcCoupon = String(targetCand.coupon_no || targetCand.app_ref || '').replace(/^U-/i, '').trim().toUpperCase();
-          if (!pageText.includes(tcName) && (!tcCoupon || tcCoupon.length < 6 || !pageText.includes(tcCoupon))) {
-            console.warn('Candidate in memory does not match any row in the current table:', tcName);
-            targetCand = null;
           }
         }
 
