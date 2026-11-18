@@ -1647,7 +1647,239 @@
     }
   }
 
+  // Helper to fetch candidate details by Name, App Ref or Coupon from BiharGo (even if already completed)
+  async function fetchCandidateBySearch(searchTerm) {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(['portalUrl'], async (res) => {
+        const portalUrl = (res.portalUrl || 'https://bihargo.xyz').replace(/\/+$/, '');
+        try {
+          if (searchTerm) {
+            const clean = encodeURIComponent(searchTerm.trim());
+            const resp = await fetch(`${portalUrl}/api/pan-card/queue?status=ALL&search=${clean}`);
+            const json = await resp.json();
+            if (json && json.success && Array.isArray(json.data) && json.data.length > 0) {
+              resolve(json.data[0]);
+              return;
+            }
+          }
+          // Fallback: fetch recent 25 applications across ALL statuses
+          const respAll = await fetch(`${portalUrl}/api/pan-card/queue?status=ALL&limit=25`);
+          const jsonAll = await respAll.json();
+          if (jsonAll && jsonAll.success && Array.isArray(jsonAll.data) && jsonAll.data.length > 0) {
+            if (searchTerm) {
+              const stUpper = searchTerm.trim().toUpperCase();
+              const found = jsonAll.data.find((c) => {
+                const cName = (c.full_name || '').toUpperCase();
+                const cRef = (c.app_ref || '').toUpperCase();
+                const cAadh = (c.aadhaar_no || '').replace(/\D/g, '');
+                return cName.includes(stUpper) || stUpper.includes(cName) || cRef.includes(stUpper) || (c.remarks && c.remarks.toUpperCase().includes(stUpper));
+              });
+              if (found) {
+                resolve(found);
+                return;
+              }
+            }
+            resolve(jsonAll.data[0]);
+            return;
+          }
+          resolve(null);
+        } catch (err) {
+          console.error('Error fetching candidate from Welcome Bihar:', err);
+          resolve(null);
+        }
+      });
+    });
+  }
+
+  // Floating helper control bar on Document Upload page
+  function ensureFloatingDocUploadBar() {
+    if (document.getElementById('wb-floating-upload-bar')) return;
+
+    const bar = document.createElement('div');
+    bar.id = 'wb-floating-upload-bar';
+    bar.style.cssText = 'position:fixed;top:10px;right:15px;z-index:999999;background:#0f172a;border:1.5px solid #38bdf8;border-radius:8px;padding:8px 14px;color:#f8fafc;font-family:system-ui,-apple-system,sans-serif;font-size:12px;box-shadow:0 4px 20px rgba(0,0,0,0.5);display:flex;align-items:center;gap:10px;';
+
+    const title = document.createElement('span');
+    title.innerHTML = '<strong style="color:#38bdf8;">📂 Document Upload:</strong>';
+
+    const candSpan = document.createElement('span');
+    candSpan.id = 'wb-bar-candidate-name';
+    candSpan.innerText = currentCandidate ? currentCandidate.full_name : 'No Candidate Active';
+    candSpan.style.color = currentCandidate ? '#34d399' : '#94a3b8';
+    candSpan.style.fontWeight = '600';
+
+    const btnAttach = document.createElement('button');
+    btnAttach.type = 'button';
+    btnAttach.id = 'wb-btn-auto-attach';
+    btnAttach.innerText = '⚡ Auto-Attach Docs';
+    btnAttach.title = 'Attach PDF Form, Photo & Signature into modal';
+    btnAttach.style.cssText = 'background:#10b981;color:#fff;border:none;border-radius:5px;padding:6px 12px;font-size:11.5px;font-weight:700;cursor:pointer;transition:background 0.2s;';
+
+    btnAttach.addEventListener('click', async () => {
+      btnAttach.innerText = '⏳ Working...';
+      btnAttach.disabled = true;
+
+      const modal = findDocUploadModal();
+      if (!modal) {
+        // Try opening first candidate modal
+        const firstBtn = document.querySelector('.wb-auto-upload-btn') || findCandidateUploadRow('', '')?.uploadBtn;
+        if (firstBtn) {
+          firstBtn.click();
+        } else {
+          alert('Please click "Upload" or "⚡ Auto Upload" on the candidate row first!');
+        }
+        btnAttach.disabled = false;
+        btnAttach.innerText = '⚡ Auto-Attach Docs';
+        return;
+      }
+
+      const inputs = findDocUploadInputs(modal);
+      if (!inputs.panFormInput || !inputs.pictureInput || !inputs.signatureInput) {
+        alert('Upload modal file inputs not ready yet!');
+        btnAttach.disabled = false;
+        btnAttach.innerText = '⚡ Auto-Attach Docs';
+        return;
+      }
+
+      if (!currentCandidate || !currentCandidate.photo_url) {
+        const cand = await fetchCandidateBySearch('');
+        if (cand) {
+          currentCandidate = cand;
+          chrome.storage.local.set({ currentCandidate: cand });
+          candSpan.innerText = cand.full_name;
+          candSpan.style.color = '#34d399';
+        }
+      }
+
+      if (currentCandidate && currentCandidate.photo_url && currentCandidate.signature_url) {
+        docUploadLock = true;
+        await attachDocumentsToModal(inputs, currentCandidate, modal);
+      } else {
+        alert('Could not find candidate photo & signature on Welcome Bihar!');
+      }
+
+      btnAttach.disabled = false;
+      btnAttach.innerText = '⚡ Auto-Attach Docs';
+    });
+
+    const btnFetch = document.createElement('button');
+    btnFetch.type = 'button';
+    btnFetch.innerText = '🔄 Load Recent Candidate';
+    btnFetch.style.cssText = 'background:#0284c7;color:#fff;border:none;border-radius:5px;padding:6px 10px;font-size:11px;font-weight:600;cursor:pointer;';
+
+    btnFetch.addEventListener('click', async () => {
+      btnFetch.innerText = '⏳ Fetching...';
+      btnFetch.disabled = true;
+      const cand = await fetchCandidateBySearch('');
+      if (cand) {
+        currentCandidate = cand;
+        chrome.storage.local.set({ currentCandidate: cand });
+        candSpan.innerText = cand.full_name;
+        candSpan.style.color = '#34d399';
+        updateBadge(`✅ Active Candidate: ${cand.full_name}`, '#10b981');
+      } else {
+        candSpan.innerText = 'None found on BiharGo';
+        candSpan.style.color = '#f87171';
+      }
+      btnFetch.disabled = false;
+      btnFetch.innerText = '🔄 Load Recent Candidate';
+    });
+
+    bar.appendChild(title);
+    bar.appendChild(candSpan);
+    bar.appendChild(btnAttach);
+    bar.appendChild(btnFetch);
+    document.body.appendChild(bar);
+  }
+
+  // Inject "⚡ Auto Upload" button into every candidate row in UTI document table
+  function injectDocUploadButtons() {
+    const rows = Array.from(document.querySelectorAll('table tr'));
+    for (const row of rows) {
+      if (row.querySelector('.wb-auto-upload-btn')) continue;
+
+      const cells = Array.from(row.querySelectorAll('td'));
+      if (cells.length < 4) continue;
+
+      const uploadEl = Array.from(row.querySelectorAll('a, button, input[type="button"]')).find((el) => {
+        const t = (el.innerText || el.value || '').trim().toLowerCase();
+        return t === 'upload';
+      });
+
+      if (!uploadEl) continue;
+
+      const text = (row.innerText || '').toUpperCase();
+      const appNoMatch = text.match(/\b(A\d{8,})\b/i);
+      const appNo = appNoMatch ? appNoMatch[1] : '';
+
+      let candName = '';
+      if (cells[2] && cells[2].innerText && !cells[2].innerText.includes('Upload')) {
+        candName = cells[2].innerText.trim();
+      } else if (cells[1] && cells[1].innerText && isNaN(cells[1].innerText)) {
+        candName = cells[1].innerText.trim();
+      }
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'wb-auto-upload-btn';
+      btn.innerText = '⚡ Auto Upload';
+      btn.title = `Auto-attach PDF, Photo & Sign for ${candName || appNo}`;
+      btn.style.cssText = 'background:#10b981;color:#ffffff;border:none;border-radius:4px;padding:3px 8px;font-size:11px;font-weight:700;cursor:pointer;margin-left:6px;box-shadow:0 1px 3px rgba(0,0,0,0.2);display:inline-block;vertical-align:middle;';
+
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        btn.disabled = true;
+        btn.innerText = '⏳ Loading...';
+        btn.style.background = '#0ea5e9';
+
+        updateBadge(`🔍 Fetching details for ${candName || appNo} from Welcome Bihar...`, '#0ea5e9');
+
+        let cand = null;
+        if (candName) {
+          cand = await fetchCandidateBySearch(candName);
+        }
+        if (!cand && appNo) {
+          cand = await fetchCandidateBySearch(appNo);
+        }
+        if (!cand) {
+          cand = await fetchCandidateBySearch('');
+        }
+
+        if (cand) {
+          currentCandidate = cand;
+          chrome.storage.local.set({ currentCandidate: cand });
+          const barSpan = document.getElementById('wb-bar-candidate-name');
+          if (barSpan) {
+            barSpan.innerText = cand.full_name;
+            barSpan.style.color = '#34d399';
+          }
+          updateBadge(`📂 Candidate Found: ${cand.full_name} • Opening Upload Modal...`, '#10b981');
+        } else {
+          updateBadge(`⚠️ Candidate details not found on BiharGo`, '#f59e0b');
+        }
+
+        btn.disabled = false;
+        btn.innerText = '⚡ Auto Upload';
+        btn.style.background = '#10b981';
+
+        try {
+          uploadEl.click();
+        } catch (err) {
+          uploadEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+        }
+      });
+
+      uploadEl.parentNode.insertBefore(btn, uploadEl.nextSibling);
+    }
+  }
+
   function handleDocUploadListPage() {
+    // Inject floating UI and row buttons
+    ensureFloatingDocUploadBar();
+    injectDocUploadButtons();
+
     // 1. Auto-dismiss any success alert popup
     const successDialog = Array.from(document.querySelectorAll('.ui-dialog, .modal, .alert')).find((d) => {
       if (!isVisible(d)) return false;
@@ -1688,13 +1920,37 @@
           attachDocumentsToModal(inputs, currentCandidate, modal);
           return;
         }
+
+        // Candidate data not in memory -> Auto-fetch recent from BiharGo!
+        if (!docUploadLock) {
+          docUploadLock = true;
+          updateBadge('🔍 Auto-fetching candidate data from Welcome Bihar...', '#0ea5e9');
+          fetchCandidateBySearch('').then((cand) => {
+            if (cand && cand.photo_url && cand.signature_url) {
+              currentCandidate = cand;
+              chrome.storage.local.set({ currentCandidate: cand });
+              const barSpan = document.getElementById('wb-bar-candidate-name');
+              if (barSpan) {
+                barSpan.innerText = cand.full_name;
+                barSpan.style.color = '#34d399';
+              }
+              attachDocumentsToModal(inputs, cand, modal);
+            } else {
+              docUploadLock = false;
+              updateBadge('⚠️ Please click "⚡ Auto Upload" on candidate row', '#f59e0b');
+            }
+          }).catch(() => {
+            docUploadLock = false;
+          });
+          return;
+        }
       }
       return;
     }
 
-    // 3. Modal not open yet: Match row by Candidate App No & Name
+    // 3. Modal not open yet: Match row by Candidate App No & Name if available
     if (!currentCandidate) {
-      updateBadge('📄 Document Upload List • Waiting for Candidate Data', '#f59e0b');
+      updateBadge('📄 Document Upload List • Click "⚡ Auto Upload" on any row', '#38bdf8');
       return;
     }
 
@@ -1707,7 +1963,7 @@
 
     const match = findCandidateUploadRow(appNo, candName);
     if (!match) {
-      updateBadge(`🔍 Finding Row for App No: ${appNo || candName}...`, '#38bdf8');
+      updateBadge(`🔍 Ready • Click "⚡ Auto Upload" on any candidate row`, '#38bdf8');
       return;
     }
 

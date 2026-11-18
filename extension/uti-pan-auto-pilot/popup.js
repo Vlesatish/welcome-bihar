@@ -16,6 +16,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnSavePortal = document.getElementById('btnSavePortal');
   const btnCheckNow = document.getElementById('btnCheckNow');
   const btnOpenUti = document.getElementById('btnOpenUti');
+  const btnOpenDocUpload = document.getElementById('btnOpenDocUpload');
   const btnMarkComplete = document.getElementById('btnMarkComplete');
   const btnMarkReject = document.getElementById('btnMarkReject');
   const statusMsg = document.getElementById('statusMsg');
@@ -107,6 +108,11 @@ document.addEventListener('DOMContentLoaded', () => {
     chrome.runtime.sendMessage({ action: 'launchCandidate', candidate: activeCand }, () => {
       setStatus('Opening vleHome.action... 🚀', '#38bdf8');
     });
+  });
+
+  btnOpenDocUpload.addEventListener('click', () => {
+    setStatus('Opening UTI Document Upload Page... 📂', '#0ea5e9');
+    chrome.runtime.sendMessage({ action: 'openDocUploadPage' });
   });
 
   btnMarkComplete.addEventListener('click', () => {

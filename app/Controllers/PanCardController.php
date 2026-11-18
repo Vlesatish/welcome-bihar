@@ -927,20 +927,46 @@ class PanCardController
         try {
             $panDataTypeId = $this->getPanDataTypeId();
             $limit = max(1, min(100, (int)($_GET['limit'] ?? 50)));
+            $statusParam = strtoupper(trim((string)($_GET['status'] ?? '')));
+            $searchParam = trim((string)($_GET['search'] ?? ''));
+
+            $where = ["(a.application_code = 'PAN_CARD' OR a.data_type_id = :pan_dt_id)"];
+            $params = [':pan_dt_id' => $panDataTypeId];
+
+            if ($statusParam === 'ALL') {
+                // Return any status (useful for document upload lookup)
+            } elseif ($statusParam === 'COMPLETED') {
+                $where[] = "a.status = 'COMPLETED'";
+            } elseif ($statusParam !== '') {
+                $where[] = "a.status = :status";
+                $params[':status'] = $statusParam;
+            } else {
+                $where[] = "a.status IN ('PENDING', 'IN_PROCESS', 'UNDER_REVIEW')";
+            }
+
+            if ($searchParam !== '') {
+                $where[] = "(a.applicant_name LIKE :search OR a.app_ref LIKE :search OR a.applicant_identifier LIKE :search OR a.applicant_mobile LIKE :search OR a.remarks LIKE :search)";
+                $params[':search'] = '%' . $searchParam . '%';
+            }
+
+            $order = ($statusParam === 'ALL' || $statusParam === 'COMPLETED' || $searchParam !== '')
+                ? "ORDER BY a.updated_at DESC, a.id DESC"
+                : "ORDER BY a.id ASC";
+
+            $whereSql = implode(' AND ', $where);
 
             $stmt = $this->db->prepare("
                 SELECT a.id, a.app_ref, a.user_id, a.applicant_name, a.applicant_mobile,
-                       a.applicant_identifier, a.status, a.created_at,
+                       a.applicant_identifier, a.status, a.created_at, a.remarks,
                        d.name as district_name, b.name as block_name
                 FROM applications a
                 LEFT JOIN districts d ON d.id = a.district_id
                 LEFT JOIN blocks b ON b.id = a.block_id
-                WHERE (a.application_code = 'PAN_CARD' OR a.data_type_id = :pan_dt_id)
-                  AND a.status IN ('PENDING', 'IN_PROCESS', 'UNDER_REVIEW')
-                ORDER BY a.id ASC
+                WHERE {$whereSql}
+                {$order}
                 LIMIT {$limit}
             ");
-            $stmt->execute([':pan_dt_id' => $panDataTypeId]);
+            $stmt->execute($params);
             $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             $fieldsByApp = [];
