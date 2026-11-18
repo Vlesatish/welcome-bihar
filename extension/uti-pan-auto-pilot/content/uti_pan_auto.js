@@ -28,7 +28,6 @@
   function setInputValue(el, val) {
     if (!el || val === undefined || val === null) return false;
     const str = String(val);
-    if (el.value === str) return true;
     try { el.focus(); } catch (e) {}
     try {
       const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
@@ -112,12 +111,11 @@
     };
   }
 
-  // Find input/select near a label text (works for Angular/Bootstrap/Material/table layouts)
+  // Find input/select near a label text
   function findFieldByLabel(keywords, tagSelector = 'input, select') {
     const keys = Array.isArray(keywords) ? keywords : [keywords];
     const normKeys = keys.map((k) => k.toLowerCase());
 
-    // 1. Direct attribute match (id, name, placeholder, formcontrolname, aria-label)
     const allFields = Array.from(document.querySelectorAll(tagSelector)).filter((el) => {
       return el.type !== 'hidden' && !el.disabled;
     });
@@ -136,7 +134,6 @@
       }
     }
 
-    // 2. Label / text node proximity match
     const labelNodes = Array.from(document.querySelectorAll('label, span, div, td, th, p, b, strong'));
     for (const node of labelNodes) {
       if (node.children.length > 3) continue;
@@ -182,7 +179,6 @@
       }
     }
 
-    // Fallback: match label directly
     const labels = Array.from(document.querySelectorAll('label, span'));
     for (const lbl of labels) {
       const t = (lbl.innerText || '').trim().toLowerCase();
@@ -343,7 +339,6 @@
     let nriNoSelected = false;
     const allRadios = Array.from(document.querySelectorAll('input[type="radio"]'));
 
-    // Find the container block for defence/NRI
     const nriBlock = Array.from(document.querySelectorAll('div, tr, section, fieldset, td, p')).find((el) => {
       const t = (el.innerText || '').toLowerCase();
       return (t.includes('defence/nri') || (t.includes('defence') && t.includes('nri'))) && el.querySelectorAll('input[type="radio"]').length >= 2;
@@ -359,7 +354,6 @@
         return val === 'n' || val === 'no' || id.endsWith('no') || id.includes('_n') || next === 'no' || next.startsWith('no') || lbl === 'no';
       });
 
-      // If not uniquely matched, in a standard Yes/No pair, [1] is always 'No'
       if (!noRadio && radiosInBlock.length >= 2) {
         noRadio = radiosInBlock[1];
       }
@@ -369,7 +363,6 @@
         nriNoSelected = Boolean(noRadio.checked);
       }
     } else {
-      // Fallback: search across all radios
       const nriRadio = allRadios.find((r) => {
         const name = (r.name || '').toLowerCase();
         const id = (r.id || '').toLowerCase();
@@ -415,47 +408,62 @@
   // PAGE 2: IndmainForm (Form No. 93)
   // -----------------------------------------------------------------------
   function dismissReferenceNoModal() {
-    const modals = Array.from(document.querySelectorAll('.modal, [role="dialog"], .ui-dialog, .popup, div'));
-    for (const m of modals) {
-      if (!isVisible(m)) continue;
-      const txt = (m.innerText || '').trim();
-      if (!txt.includes('Reference Number') && !txt.includes('Please note the reference number')) continue;
-
-      const match = txt.match(/Reference\s*Number\s*[:-]*\s*([A-Z0-9]{6,})/i);
+    // 1. Capture Reference Number from hidden input #valno1 / #panValNo or page text
+    const valNoInput = document.getElementById('valno1') || document.getElementById('panValNo');
+    if (valNoInput && valNoInput.value) {
+      const val = valNoInput.value.trim();
+      if (val && currentUtiRefNo !== val) {
+        currentUtiRefNo = val;
+        chrome.storage.local.set({ currentUtiRefNo });
+      }
+    } else {
+      const match = (document.body?.innerText || '').match(/Reference\s*Number\s*[:-]*\s*([A-Z0-9]{6,})/i);
       if (match && match[1] && currentUtiRefNo !== match[1]) {
         currentUtiRefNo = match[1];
         chrome.storage.local.set({ currentUtiRefNo });
       }
-
-      const okBtn = Array.from(m.querySelectorAll('button, input[type="button"], a')).find((b) => {
-        return isVisible(b) && (b.textContent || b.value || '').trim().toLowerCase() === 'ok';
-      });
-      if (okBtn) {
-        okBtn.click();
-        updateBadge(`✅ Ref No: ${currentUtiRefNo || 'captured'} | Modal closed`, '#10b981');
-        return true;
-      }
     }
+
+    // 2. Click Ok button on open jQuery UI dialog or modal
+    const okBtns = Array.from(document.querySelectorAll('.ui-dialog:not([style*="display: none"]) button, .ui-dialog-buttonpane button, .ui-dialog button, button, input[type="button"]')).filter((b) => {
+      if (!isVisible(b)) return false;
+      const t = (b.textContent || b.value || '').trim().toLowerCase();
+      return t === 'ok' || t === 'okay';
+    });
+
+    if (okBtns.length > 0) {
+      for (const btn of okBtns) {
+        try {
+          btn.click();
+        } catch (e) {
+          btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+        }
+      }
+      updateBadge(`✅ Ref No: ${currentUtiRefNo || 'captured'} | Popup OK clicked`, '#10b981');
+      return true;
+    }
+
     return false;
   }
 
   function handleIndMainForm(force = false) {
+    // Always dismiss popup if visible
     dismissReferenceNoModal();
 
     if (!currentCandidate) {
-      updateBadge('Waiting for Welcome Bihar queue data...', '#f59e0b');
+      updateBadge('Form 93 Ready • Waiting for Candidate Data', '#f59e0b');
       return;
     }
 
     // Step 1: Personal Information (First Name, Middle Name, Last Name, Gender)
     const { first, middle, last } = splitFullName(currentCandidate.full_name);
 
-    const firstNameEl = findFieldByLabel(['first name', 'firstname', 'fname'], 'input[type="text"], input:not([type])');
-    const middleNameEl = findFieldByLabel(['middle name', 'middlename', 'mname'], 'input[type="text"], input:not([type])');
-    const lastNameEl = findFieldByLabel(['last name', 'lastname', 'lname', 'surname'], 'input[type="text"], input:not([type])');
-    const genderEl = findFieldByLabel(['gender', 'sex'], 'select');
-
     let filledAny = false;
+
+    // 1. Full Name: firstName, middleName, lastName
+    const firstNameEl = document.getElementById('firstName') || findFieldByLabel(['first name', 'firstname', 'fname']);
+    const middleNameEl = document.getElementById('middleName') || findFieldByLabel(['middle name', 'middlename', 'mname']);
+    const lastNameEl = document.getElementById('lastName') || findFieldByLabel(['last name', 'lastname', 'lname', 'surname']);
 
     if (firstNameEl && (!firstNameEl.value || force)) {
       setInputValue(firstNameEl, first);
@@ -469,16 +477,104 @@
       setInputValue(lastNameEl, last);
       filledAny = true;
     }
-    if (genderEl && currentCandidate.gender) {
-      if (selectOptionByText(genderEl, currentCandidate.gender)) {
-        filledAny = true;
+
+    // 2. Name on Card (panName)
+    const panNameEl = document.getElementById('panName');
+    if (panNameEl && (!panNameEl.value || force)) {
+      const cardName = currentCandidate.full_name ? currentCandidate.full_name.toUpperCase() : [first, middle, last].filter(Boolean).join(' ');
+      setInputValue(panNameEl, cardName);
+    }
+
+    // 3. Gender (gender) -> 'M', 'F', 'T'
+    const genderEl = document.getElementById('gender') || findFieldByLabel(['gender', 'sex'], 'select');
+    if (genderEl && (genderEl.value === '' || force)) {
+      const g = (currentCandidate.gender || '').trim().toLowerCase();
+      let gVal = '';
+      if (g.startsWith('m') || g === 'male') gVal = 'M';
+      else if (g.startsWith('f') || g === 'female') gVal = 'F';
+      else if (g.startsWith('t') || g === 'transgender') gVal = 'T';
+
+      if (gVal) {
+        for (let i = 0; i < genderEl.options.length; i++) {
+          if (genderEl.options[i].value === gVal || (genderEl.options[i].text || '').toLowerCase().startsWith(g)) {
+            genderEl.selectedIndex = i;
+            genderEl.value = genderEl.options[i].value;
+            genderEl.dispatchEvent(new Event('input', { bubbles: true }));
+            genderEl.dispatchEvent(new Event('change', { bubbles: true }));
+            filledAny = true;
+            break;
+          }
+        }
       }
     }
 
+    // 4. Date of Birth (dob) -> DD/MM/YYYY
+    const dobEl = document.getElementById('dob');
+    if (dobEl && (!dobEl.value || force) && currentCandidate.dob) {
+      let formattedDob = String(currentCandidate.dob).trim().replace(/-/g, '/');
+      const parts = formattedDob.split('/');
+      if (parts.length === 3 && parts[0].length === 4) {
+        formattedDob = `${parts[2].padStart(2, '0')}/${parts[1].padStart(2, '0')}/${parts[0]}`;
+      }
+      setInputValue(dobEl, formattedDob);
+      filledAny = true;
+    }
+
+    // 5. Address for Communication (addrFlag) -> strictly 'A' (RESIDENCE)
+    const addrFlagEl = document.getElementById('addrFlag');
+    if (addrFlagEl && (addrFlagEl.value !== 'A' || force)) {
+      for (let i = 0; i < addrFlagEl.options.length; i++) {
+        if (addrFlagEl.options[i].value === 'A' || (addrFlagEl.options[i].text || '').toLowerCase().includes('residence')) {
+          addrFlagEl.selectedIndex = i;
+          addrFlagEl.value = 'A';
+          addrFlagEl.dispatchEvent(new Event('input', { bubbles: true }));
+          addrFlagEl.dispatchEvent(new Event('change', { bubbles: true }));
+          filledAny = true;
+          break;
+        }
+      }
+    }
+
+    // 6. Residential Status (residenceStatus) -> 'R' (RESIDENT)
+    const residenceStatusEl = document.getElementById('residenceStatus');
+    if (residenceStatusEl && (residenceStatusEl.value !== 'R' || force)) {
+      for (let i = 0; i < residenceStatusEl.options.length; i++) {
+        if (residenceStatusEl.options[i].value === 'R' || (residenceStatusEl.options[i].text || '').toLowerCase() === 'resident') {
+          residenceStatusEl.selectedIndex = i;
+          residenceStatusEl.value = 'R';
+          residenceStatusEl.dispatchEvent(new Event('input', { bubbles: true }));
+          residenceStatusEl.dispatchEvent(new Event('change', { bubbles: true }));
+          filledAny = true;
+          break;
+        }
+      }
+    }
+
+    // 7. Residence State (resState) -> Match candidate state (e.g. BIHAR -> 5)
+    const resStateEl = document.getElementById('resState');
+    if (resStateEl && (resStateEl.value === '' || force)) {
+      const stateName = (currentCandidate.state || 'BIHAR').trim().toLowerCase();
+      selectOptionByText(resStateEl, stateName);
+    }
+
+    // 8. Aadhaar Details (aadhaarNo, aadhaarName)
+    const aadhaarNoEl = document.getElementById('aadhaarNo');
+    if (aadhaarNoEl && (!aadhaarNoEl.value || force) && currentCandidate.aadhaar_no) {
+      setInputValue(aadhaarNoEl, String(currentCandidate.aadhaar_no).replace(/\D/g, ''));
+      filledAny = true;
+    }
+
+    const aadhaarNameEl = document.getElementById('aadhaarName');
+    if (aadhaarNameEl && (!aadhaarNameEl.value || force)) {
+      const aName = (currentCandidate.full_name || '').toUpperCase();
+      setInputValue(aadhaarNameEl, aName);
+      filledAny = true;
+    }
+
     if (filledAny) {
-      updateBadge(`✍️ Personal Info filled: ${currentCandidate.full_name}`, '#10b981');
+      updateBadge(`✍️ Personal Info Auto-Filled: ${currentCandidate.full_name}`, '#10b981');
     } else {
-      updateBadge(`Active: ${currentCandidate.full_name}`, '#38bdf8');
+      updateBadge(`Form 93 Ready: ${currentCandidate.full_name}`, '#38bdf8');
     }
   }
 
@@ -490,7 +586,6 @@
   function clickApplicationForNewPanMenu() {
     if (vleMenuClicked) return true;
 
-    // 1. Force show any hidden submenus/dropdowns containing the target link
     const dropdowns = Array.from(document.querySelectorAll('ul, div, table')).filter((d) => {
       const t = (d.innerText || d.textContent || '').toLowerCase();
       return t.includes('application for new pan');
@@ -503,12 +598,11 @@
       } catch (e) {}
     }
 
-    // 2. Find the exact <a> link for "Application for New PAN"
     const allLinks = Array.from(document.querySelectorAll('a'));
     const targetLink = allLinks.find((a) => {
       const txt = (a.innerText || a.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
       const href = (a.href || a.getAttribute('href') || '').toLowerCase();
-      if (txt === 'pan application') return false; // skip heading
+      if (txt === 'pan application') return false;
       return (txt.includes('application for new pan') && !txt.includes('pending')) ||
              (href.includes('prepanform') && !href.includes('error'));
     });
@@ -518,7 +612,6 @@
       try { sessionStorage.setItem('wb_pan_menu_clicked', '1'); } catch (e) {}
       updateBadge('🚀 Launching Form 49A...', '#10b981');
 
-      // Single native click only (prevents double tab opening)
       try {
         targetLink.click();
       } catch (e) {
@@ -546,21 +639,38 @@
   // -----------------------------------------------------------------------
   function runAutoFill(force = false) {
     const url = (window.location.href || '').toLowerCase();
-    const bodyText = (document.body?.innerText || '').toLowerCase();
 
-    if (url.includes('prepanform') || bodyText.includes('status of the applicant') || bodyText.includes('pan card for indian citizen')) {
-      handlePrePanForm();
-    } else if (url.includes('indmainform') || bodyText.includes('form no. 49a') || bodyText.includes('form 49a')) {
+    // 1. Form No. 93 / IndmainForm (Highest Priority)
+    if (url.includes('indmainform') || url.includes('panind.html') || document.getElementById('firstName') || document.getElementById('refNo')) {
       handleIndMainForm(force);
-    } else if (url.includes('vlehome')) {
-      handleVleHomePage();
-    } else if (url.includes('error?errormsg') || bodyText.includes('something went wrong') || bodyText.includes('there is some problem')) {
-      updateBadge('⚠️ Direct Form blocked • Reopen from vleHome', '#ef4444');
-    } else if (url.includes('csclogin')) {
-      updateBadge('CSC Login Screen • Please sign in', '#fbbf24');
-    } else {
-      updateBadge('Ready on UTI PAN Portal', '#38bdf8');
+      return;
     }
+
+    // 2. prePANForm (Only when strictly on prePANForm URL)
+    if (url.includes('prepanform')) {
+      handlePrePanForm();
+      return;
+    }
+
+    // 3. VLE Home
+    if (url.includes('vlehome')) {
+      handleVleHomePage();
+      return;
+    }
+
+    // 4. Error page
+    if (url.includes('error?errormsg') || document.body?.innerText?.toLowerCase().includes('something went wrong')) {
+      updateBadge('⚠️ Direct Form blocked • Reopen from vleHome', '#ef4444');
+      return;
+    }
+
+    // 5. CSC Login
+    if (url.includes('csclogin')) {
+      updateBadge('CSC Login Screen • Please sign in', '#fbbf24');
+      return;
+    }
+
+    updateBadge('Ready on UTI PAN Portal', '#38bdf8');
   }
 
   chrome.storage.local.get(['currentCandidate', 'currentUtiRefNo'], (res) => {
@@ -580,7 +690,7 @@
     }
   });
 
-  // Re-check periodically for Angular dynamic DOM & modals
+  // Re-check periodically for dynamic DOM & modals
   setInterval(() => {
     runAutoFill(false);
   }, 800);
