@@ -1,8 +1,8 @@
 // =========================================================================
 // Welcome Bihar - Gmail OTP Auto-Reader (Fresh / Current-Time Enforcement)
 // Target: https://mail.google.com/*
-// Purpose: Only extract OTP from emails arriving at the CURRENT session time
-// Ignores all stale/old emails from earlier turns or previous attempts
+// Purpose: Automatically click the fresh email row from panonline@utiitsl.com
+// and extract the latest 6-digit verification code from the opened thread.
 // =========================================================================
 
 (function () {
@@ -11,8 +11,9 @@
   let hasFoundOtp = false;
   let pollInterval = null;
   let attempts = 0;
-  const MAX_ATTEMPTS = 50; // 50 * 1000ms = 50s max
+  const MAX_ATTEMPTS = 50; // 50 * 800ms = 40s max
   let targetTriggerTime = Date.now();
+  let rowClicked = false;
 
   function formatClock(ts) {
     const d = new Date(ts);
@@ -60,22 +61,19 @@
     return results;
   }
 
-  // Checks if a timestamp string belongs to the CURRENT time (within 2-3 mins of trigger)
   function isTimestampFresh(rawTimeStr, baseTimeMs) {
     if (!rawTimeStr) return false;
     const s = String(rawTimeStr).trim().toLowerCase();
 
-    // 1. Explicit relative time (e.g. "just now", "0 minutes ago", "1 minute ago")
     if (s.includes('just now') || s.includes('0 min') || s.includes('moments ago')) {
       return true;
     }
     const relMatch = s.match(/(\d+)\s*minutes?\s*ago/);
     if (relMatch) {
       const mins = parseInt(relMatch[1], 10);
-      return mins <= 2; // Only accept if sent within last 0-2 minutes
+      return mins <= 2;
     }
 
-    // 2. Clock time (e.g. "2:23 PM", "02:23 pm", "14:23")
     const clockMatch = s.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?/i);
     if (clockMatch) {
       let h = parseInt(clockMatch[1], 10);
@@ -90,15 +88,12 @@
       const baseTotalMins = baseDate.getHours() * 60 + baseDate.getMinutes();
 
       let diff = baseTotalMins - emailTotalMins;
-      // Midnight boundary wrap
       if (diff < -720) diff += 1440;
       if (diff > 720) diff -= 1440;
 
-      // Accept if difference between current time and email is within -1 to +2 minutes
-      return diff >= -1 && diff <= 2;
+      return diff >= -1 && diff <= 3;
     }
 
-    // 3. Absolute date parse
     const parsed = Date.parse(rawTimeStr);
     if (!isNaN(parsed)) {
       const diffMs = (baseTimeMs || Date.now()) - parsed;
@@ -108,58 +103,89 @@
     return false;
   }
 
-  function getMessageTimestampText(msgContainer) {
-    if (!msgContainer) return '';
-    // Check .g3 (Gmail's standard timestamp class), title attribute, or time elements
-    const timeEls = Array.from(msgContainer.querySelectorAll('.g3, .gH span, span[title], time, .xW span'));
-    for (const el of timeEls) {
-      const title = el.getAttribute('title') || '';
-      const aria = el.getAttribute('aria-label') || '';
-      const text = el.innerText || '';
-      if (isTimestampFresh(title, targetTriggerTime)) return title;
-      if (isTimestampFresh(aria, targetTriggerTime)) return aria;
-      if (isTimestampFresh(text, targetTriggerTime)) return text;
-    }
-    // Also check entire message header text
-    const header = msgContainer.querySelector('.gE, .kv, .adn');
-    if (header) {
-      const t = header.innerText || '';
-      const m = t.match(/(\d{1,2}:\d{2}\s*(?:am|pm)?|\d+\s*minutes?\s*ago|just now)/i);
-      if (m && isTimestampFresh(m[1], targetTriggerTime)) {
-        return m[1];
+  function isRowFresh(row, baseTimeMs) {
+    if (!row) return false;
+    const txt = (row.innerText || '').toLowerCase();
+
+    if (txt.includes('just now') || txt.includes('0 min') || txt.includes('1 min')) return true;
+
+    // Check all clock time matches in row text
+    const matches = txt.match(/(\d{1,2}):(\d{2})\s*(am|pm)?/gi);
+    if (matches && matches.length > 0) {
+      const lastTimeStr = matches[matches.length - 1];
+      if (isTimestampFresh(lastTimeStr, baseTimeMs)) {
+        return true;
       }
     }
-    return '';
+
+    // Check date cell attributes directly
+    const timeEl = row.querySelector('.xW, .bA4, td:last-child');
+    if (timeEl) {
+      const val = timeEl.innerText || timeEl.getAttribute('title') || '';
+      if (isTimestampFresh(val, baseTimeMs)) return true;
+    }
+
+    return false;
   }
 
-  function findFreshOtp() {
+  function clickEmailRow(row) {
+    if (!row) return;
+    const target =
+      row.querySelector('.bog, .y6, .y2, .xS, span[email], .xT, td.yX') ||
+      row;
+
+    ['mousedown', 'mouseup', 'click'].forEach((type) => {
+      try {
+        target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+      } catch (e) {}
+    });
+    try { row.click(); } catch (e) {}
+  }
+
+  function triggerGmailRefresh() {
+    const refreshBtn = document.querySelector(
+      'div[role="button"][data-tooltip*="Refresh" i], div[aria-label*="Refresh" i], ' +
+      'div[data-tooltip="Refresh"], div[aria-label="Refresh"], div[act="20"]'
+    );
+    if (refreshBtn) {
+      try { refreshBtn.click(); } catch (e) {}
+    }
+  }
+
+  function findAndExtractOtp() {
     if (hasFoundOtp) return null;
 
-    // A. Check open email thread: inspect individual message containers (.adn.ads or div[role="listitem"])
-    const messageContainers = Array.from(document.querySelectorAll('.adn, .ads, div[role="listitem"], .ii.gt'));
+    // 1. Check if inside an OPEN EMAIL THREAD
+    const messageContainers = Array.from(document.querySelectorAll('.adn, .ads, div[role="listitem"]'));
     if (messageContainers.length > 0) {
-      // Check from newest (bottom) message upward
+      // Bottom-most container is the newest message
       for (let i = messageContainers.length - 1; i >= 0; i--) {
         const container = messageContainers[i];
-        const timeStr = getMessageTimestampText(container);
 
-        // If message has a fresh timestamp or is explicitly the active newest message with fresh text
-        if (timeStr && isTimestampFresh(timeStr, targetTriggerTime)) {
-          // If collapsed, expand it
-          const expandBtn = container.querySelector('.adx, .kQ, .kv');
-          if (expandBtn) {
-            try { expandBtn.click(); } catch (e) {}
-          }
-          const bodyEl = container.querySelector('.ii.gt, .a3s') || container;
-          const candidates = extractOtpCandidates(bodyEl.innerText || '');
-          if (candidates.length > 0) {
-            return { otp: candidates[candidates.length - 1], time: timeStr };
-          }
+        // If collapsed, expand it
+        const expandBtn = container.querySelector('.adx, .kQ, .kv');
+        if (expandBtn) {
+          try { expandBtn.click(); } catch (e) {}
+        }
+
+        const bodyEl = container.querySelector('.ii.gt, .a3s') || container;
+        const candidates = extractOtpCandidates(bodyEl.innerText || '');
+        if (candidates.length > 0) {
+          return { otp: candidates[candidates.length - 1], source: 'opened_thread' };
         }
       }
     }
 
-    // B. Check Inbox or Search List rows (.zA / tr[role="row"])
+    // Check full view text if on opened email page
+    const fullBody = document.body ? document.body.innerText : '';
+    if (fullBody.includes('panonline@utiitsl.com') && fullBody.includes('Login verification code')) {
+      const fullCandidates = extractOtpCandidates(fullBody);
+      if (fullCandidates.length > 0) {
+        return { otp: fullCandidates[fullCandidates.length - 1], source: 'body_text' };
+      }
+    }
+
+    // 2. Check SEARCH LIST / INBOX ROWS
     const rows = Array.from(document.querySelectorAll('.zA, tr[role="row"]'));
     const utiRows = rows.filter((r) => {
       const t = (r.innerText || '').toLowerCase();
@@ -167,62 +193,51 @@
     });
 
     if (utiRows.length > 0) {
-      // Top row is the most recent
       const topRow = utiRows[0];
-      const rowTimeEl = topRow.querySelector('.xW span, .bA4 span, td:last-child');
-      const rowTimeText = rowTimeEl ? rowTimeEl.innerText : '';
+      const fresh = isRowFresh(topRow, targetTriggerTime);
 
-      if (isTimestampFresh(rowTimeText, targetTriggerTime)) {
-        // Fresh email arrived in list!
-        const rowCandidates = extractOtpCandidates(topRow.innerText || '');
-        if (rowCandidates.length > 0) {
-          return { otp: rowCandidates[rowCandidates.length - 1], time: rowTimeText };
+      if (fresh) {
+        showGmailBadge(`⚡ Fresh email row found (${formatClock(targetTriggerTime)}) • Opening thread...`, '#38bdf8');
+
+        // Check if OTP happens to be in the snippet
+        const snippetCandidates = extractOtpCandidates(topRow.innerText || '');
+        if (snippetCandidates.length > 0) {
+          return { otp: snippetCandidates[snippetCandidates.length - 1], source: 'snippet' };
         }
-        // Click to open thread and read body
-        try {
-          topRow.click();
-        } catch (e) {}
+
+        // Click row to open thread and reveal full OTP
+        if (!rowClicked) {
+          rowClicked = true;
+          clickEmailRow(topRow);
+        }
       }
     }
 
     return null;
   }
 
-  function triggerGmailRefresh() {
-    // Click Gmail standard refresh button
-    const refreshBtn = document.querySelector(
-      'div[role="button"][data-tooltip*="Refresh" i], div[aria-label*="Refresh" i], ' +
-      'div[data-tooltip="Refresh"], div[aria-label="Refresh"], div[act="20"]'
-    );
-    if (refreshBtn) {
-      try {
-        refreshBtn.click();
-      } catch (e) {}
-    }
-  }
-
   function startOtpScanner() {
     if (hasFoundOtp) return;
 
     const clockStr = formatClock(targetTriggerTime);
-    showGmailBadge(`⏳ Waiting for NEW email from panonline@utiitsl.com (Time: ${clockStr})...`, '#38bdf8');
+    showGmailBadge(`⏳ Scanning for email row from panonline@utiitsl.com (${clockStr})...`, '#38bdf8');
 
     if (pollInterval) clearInterval(pollInterval);
 
     pollInterval = setInterval(() => {
       attempts++;
 
-      // Trigger Gmail refresh every 3 seconds to pull incoming email
-      if (attempts % 3 === 0) {
+      // Auto-refresh Gmail every 3 attempts to pull incoming mail
+      if (attempts % 3 === 0 && !rowClicked) {
         triggerGmailRefresh();
       }
 
-      const result = findFreshOtp();
+      const result = findAndExtractOtp();
 
       if (result && result.otp) {
         hasFoundOtp = true;
         clearInterval(pollInterval);
-        showGmailBadge(`✅ Verified Fresh OTP: ${result.otp} (${result.time || clockStr}) • Submitting to UTI...`, '#10b981');
+        showGmailBadge(`✅ Found Fresh OTP: ${result.otp} • Submitting to UTI Portal...`, '#10b981');
 
         try {
           chrome.runtime.sendMessage({ action: 'otpExtracted', code: result.otp }, () => {
@@ -231,23 +246,23 @@
         } catch (e) {}
       } else {
         showGmailBadge(
-          `⏳ Awaiting NEW email for ${clockStr} (${attempts}/${MAX_ATTEMPTS}) • Refreshing inbox...`,
+          `⏳ Awaiting fresh email row for ${clockStr} (${attempts}/${MAX_ATTEMPTS})...`,
           '#38bdf8'
         );
 
         if (attempts >= MAX_ATTEMPTS) {
           clearInterval(pollInterval);
-          showGmailBadge('⚠️ Fresh email not received yet. Check registered email or click Resend OTP.', '#f59e0b');
+          showGmailBadge('⚠️ Could not open email or find OTP. Click the email row manually.', '#f59e0b');
         }
       }
-    }, 1000);
+    }, 800);
   }
 
-  // Listen for trigger from background
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg && msg.action === 'readOtpNow') {
       attempts = 0;
       hasFoundOtp = false;
+      rowClicked = false;
       targetTriggerTime = msg.triggerTime || Date.now();
       startOtpScanner();
       sendResponse({ started: true });
@@ -256,15 +271,13 @@
     return false;
   });
 
-  // Auto-init on page load if waiting
   chrome.storage.local.get(['isWaitingForOtp', 'otpRequestedAt'], (res) => {
     const isWaiting = Boolean(res && res.isWaitingForOtp);
     const reqTime = res && res.otpRequestedAt ? Number(res.otpRequestedAt) : Date.now();
 
-    // Only start if requested in last 2 minutes
-    if (isWaiting && Date.now() - reqTime < 120000) {
+    if (isWaiting && Date.now() - reqTime < 180000) {
       targetTriggerTime = reqTime;
-      setTimeout(startOtpScanner, 500);
+      setTimeout(startOtpScanner, 400);
     }
   });
 })();
