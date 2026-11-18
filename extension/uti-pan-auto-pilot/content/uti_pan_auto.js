@@ -770,18 +770,18 @@
       }
     }
 
-    // 2. Verification Place -> Candidate District
-    const veriPlaceEl = document.getElementById('veriPlace');
-    const district = (currentCandidate?.district_name || currentCandidate?.district || '').trim();
-    if (veriPlaceEl && district && (!veriPlaceEl.value || force)) {
-      setInputValue(veriPlaceEl, district.toUpperCase());
+    // 2. Verification Place -> Candidate District (id="verPlace")
+    const verPlaceEl = document.getElementById('verPlace') || document.getElementById('veriPlace') || findFieldByLabel(['verification place', 'place']);
+    const district = (currentCandidate?.district_name || currentCandidate?.district || currentCandidate?.block_name || currentCandidate?.village || 'GAYA').trim();
+    if (verPlaceEl && district && (!verPlaceEl.value || force)) {
+      setInputValue(verPlaceEl, district.toUpperCase());
       filled = true;
     }
 
-    // 3. Verifier Name if not auto-populated by checkStatus
-    const veriNameEl = document.getElementById('veriName');
-    if (veriNameEl && currentCandidate?.full_name && (!veriNameEl.value || force)) {
-      setInputValue(veriNameEl, currentCandidate.full_name.toUpperCase());
+    // 3. Verifier Name if not auto-populated by checkStatus (id="verName")
+    const verNameEl = document.getElementById('verName') || document.getElementById('veriName');
+    if (verNameEl && currentCandidate?.full_name && (!verNameEl.value || force)) {
+      setInputValue(verNameEl, currentCandidate.full_name.toUpperCase());
     }
 
     // 4. Verification Designation -> SELF if not auto-populated
