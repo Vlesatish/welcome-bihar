@@ -945,8 +945,12 @@ class PanCardController
             }
 
             if ($searchParam !== '') {
-                $where[] = "(a.applicant_name LIKE :search OR a.app_ref LIKE :search OR a.applicant_identifier LIKE :search OR a.applicant_mobile LIKE :search OR a.remarks LIKE :search)";
-                $params[':search'] = '%' . $searchParam . '%';
+                $where[] = "(a.applicant_name LIKE :s1 OR a.app_ref LIKE :s2 OR a.applicant_identifier LIKE :s3 OR a.applicant_mobile LIKE :s4 OR a.remarks LIKE :s5)";
+                $params[':s1'] = '%' . $searchParam . '%';
+                $params[':s2'] = '%' . $searchParam . '%';
+                $params[':s3'] = '%' . $searchParam . '%';
+                $params[':s4'] = '%' . $searchParam . '%';
+                $params[':s5'] = '%' . $searchParam . '%';
             }
 
             $order = ($statusParam === 'ALL' || $statusParam === 'COMPLETED' || $searchParam !== '')
