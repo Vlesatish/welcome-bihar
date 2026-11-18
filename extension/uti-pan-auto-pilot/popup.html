@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Welcome Bihar - UTI PAN Auto-Pilot</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 340px;
+      padding: 14px;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0f172a;
+      color: #f8fafc;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #334155;
+      padding-bottom: 10px;
+      margin-bottom: 12px;
+    }
+    .header h2 { font-size: 14.5px; color: #38bdf8; }
+    .badge {
+      background: #0284c7;
+      color: #fff;
+      font-size: 10.5px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 12px;
+    }
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+    .row-between {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    label {
+      display: block;
+      font-size: 11px;
+      color: #94a3b8;
+      margin-bottom: 4px;
+    }
+    input[type="text"] {
+      width: 100%;
+      padding: 7px 9px;
+      background: #0f172a;
+      border: 1px solid #475569;
+      border-radius: 6px;
+      color: #f8fafc;
+      font-size: 12px;
+      outline: none;
+    }
+    input[type="text"]:focus { border-color: #38bdf8; }
+    .btn {
+      width: 100%;
+      padding: 8px 10px;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #fff;
+      cursor: pointer;
+      margin-top: 6px;
+    }
+    .btn-blue { background: #0284c7; }
+    .btn-green { background: #10b981; }
+    .btn-red { background: #ef4444; }
+    .btn-slate { background: #334155; }
+    .btn-row { display: flex; gap: 6px; margin-top: 6px; }
+    .btn-row .btn { margin-top: 0; }
+    .cand-line {
+      font-size: 11.5px;
+      color: #cbd5e1;
+      margin-bottom: 3px;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .cand-line strong { color: #f8fafc; text-align: right; }
+    .status {
+      font-size: 11px;
+      text-align: center;
+      margin-top: 6px;
+      min-height: 15px;
+      color: #34d399;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h2>🪪 UTI PAN Auto-Pilot</h2>
+    <span id="queueCountBadge" class="badge">Queue: 0</span>
+  </div>
+
+  <div class="card">
+    <div class="row-between">
+      <div>
+        <div style="font-size:12.5px;font-weight:600;">Auto-Poll Welcome Bihar</div>
+        <div id="pollStatusText" style="font-size:10.5px;color:#94a3b8;">Checking every 5s...</div>
+      </div>
+      <input type="checkbox" id="autoPollToggle" checked style="width:18px;height:18px;cursor:pointer;">
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="font-size:11.5px;font-weight:700;color:#38bdf8;margin-bottom:6px;">Active PAN Candidate</div>
+    <div id="candEmpty" style="font-size:11.5px;color:#94a3b8;text-align:center;padding:8px 0;">
+      No pending PAN Card applications
+    </div>
+    <div id="candDetails" style="display:none;">
+      <div class="cand-line"><span>Ref:</span><strong id="cRef">-</strong></div>
+      <div class="cand-line"><span>Name:</span><strong id="cName">-</strong></div>
+      <div class="cand-line"><span>Gender / DOB:</span><strong id="cGenDob">-</strong></div>
+      <div class="cand-line"><span>Father:</span><strong id="cFather">-</strong></div>
+      <div class="cand-line"><span>Aadhaar:</span><strong id="cAadhaar">-</strong></div>
+      <div class="cand-line"><span>Mobile:</span><strong id="cMobile">-</strong></div>
+    </div>
+    <div class="btn-row">
+      <button type="button" id="btnCheckNow" class="btn btn-blue">⚡ Check Queue</button>
+      <button type="button" id="btnOpenUti" class="btn btn-green">🚀 Launch Form</button>
+    </div>
+    <div class="btn-row">
+      <button type="button" id="btnMarkComplete" class="btn btn-slate">✅ Complete</button>
+      <button type="button" id="btnMarkReject" class="btn btn-red">❌ Reject</button>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:0;">
+    <label for="portalUrlInput">Welcome Bihar Portal URL:</label>
+    <input type="text" id="portalUrlInput" placeholder="http://localhost:8080">
+    <button type="button" id="btnSavePortal" class="btn btn-slate">Save Portal URL</button>
+    <div id="statusMsg" class="status"></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

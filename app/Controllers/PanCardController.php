@@ -901,4 +901,245 @@ class PanCardController
 
         require dirname(__DIR__) . '/Views/user/pan_processor.php';
     }
+
+    /**
+     * Send CORS headers for Chrome Extension Worker API
+     */
+    private function sendCorsHeaders(string $methods = 'GET, POST, OPTIONS'): void
+    {
+        header('Access-Control-Allow-Origin: *');
+        header('Access-Control-Allow-Methods: ' . $methods);
+        header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, X-Worker-Key');
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'OPTIONS') {
+            http_response_code(204);
+            exit;
+        }
+        header('Content-Type: application/json; charset=utf-8');
+    }
+
+    /**
+     * GET /api/pan-card/queue - Pending PAN Card applications for UTI Auto-Pilot Extension
+     */
+    public function apiQueue(): void
+    {
+        $this->sendCorsHeaders('GET, OPTIONS');
+
+        try {
+            $panDataTypeId = $this->getPanDataTypeId();
+            $limit = max(1, min(100, (int)($_GET['limit'] ?? 50)));
+
+            $stmt = $this->db->prepare("
+                SELECT a.id, a.app_ref, a.user_id, a.applicant_name, a.applicant_mobile,
+                       a.applicant_identifier, a.status, a.created_at,
+                       d.name as district_name, b.name as block_name
+                FROM applications a
+                LEFT JOIN districts d ON d.id = a.district_id
+                LEFT JOIN blocks b ON b.id = a.block_id
+                WHERE (a.application_code = 'PAN_CARD' OR a.data_type_id = :pan_dt_id)
+                  AND a.status IN ('PENDING', 'IN_PROCESS', 'UNDER_REVIEW')
+                ORDER BY a.id ASC
+                LIMIT {$limit}
+            ");
+            $stmt->execute([':pan_dt_id' => $panDataTypeId]);
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            $fieldsByApp = [];
+            if (!empty($rows)) {
+                $appIds = array_column($rows, 'id');
+                $placeholders = implode(',', array_fill(0, count($appIds), '?'));
+                $fvStmt = $this->db->prepare("
+                    SELECT application_id, field_name, field_value
+                    FROM application_field_values
+                    WHERE application_id IN ({$placeholders})
+                ");
+                $fvStmt->execute($appIds);
+                foreach ($fvStmt->fetchAll(PDO::FETCH_ASSOC) as $fr) {
+                    $fieldsByApp[(int)$fr['application_id']][$fr['field_name']] = $fr['field_value'];
+                }
+            }
+
+            $baseUrl = \App\Config\Config::baseUrl();
+            $queue = [];
+            foreach ($rows as $r) {
+                $appId = (int)$r['id'];
+                $f = $fieldsByApp[$appId] ?? [];
+                $fullName = trim((string)($f['full_name'] ?? $r['applicant_name'] ?? ''));
+
+                $toAbsUrl = static function (?string $rel) use ($baseUrl): ?string {
+                    if (!$rel) return null;
+                    if (preg_match('#^https?://#i', $rel)) return $rel;
+                    return $baseUrl . '/' . ltrim($rel, '/');
+                };
+
+                $queue[] = [
+                    'id' => $appId,
+                    'app_ref' => $r['app_ref'],
+                    'status' => $r['status'],
+                    'created_at' => $r['created_at'],
+                    'full_name' => $fullName,
+                    'gender' => $f['gender'] ?? '',
+                    'dob' => $f['dob'] ?? '',
+                    'state' => $f['state'] ?? 'Bihar',
+                    'aadhaar_no' => $f['aadhaar_no'] ?? $r['applicant_identifier'] ?? '',
+                    'mobile_no' => $f['mobile_no'] ?? $r['applicant_mobile'] ?? '',
+                    'email_id' => $f['email_id'] ?? '',
+                    'father_name' => $f['father_name'] ?? '',
+                    'mother_name' => $f['mother_name'] ?? '',
+                    'husband_name' => $f['husband_name'] ?? '',
+                    'village' => $f['village'] ?? '',
+                    'post_office' => $f['post_office'] ?? '',
+                    'block_name' => $f['block_name'] ?? $r['block_name'] ?? '',
+                    'district_name' => $f['district_name'] ?? $r['district_name'] ?? '',
+                    'pincode' => $f['pincode'] ?? '',
+                    'photo_url' => $toAbsUrl($f['photo'] ?? null),
+                    'signature_url' => $toAbsUrl($f['signature'] ?? null),
+                    'aadhar_card_url' => $toAbsUrl($f['aadhar_card'] ?? null),
+                    'pan_form_url' => $toAbsUrl($f['pan_form'] ?? null),
+                ];
+            }
+
+            echo json_encode([
+                'success' => true,
+                'count' => count($queue),
+                'data' => $queue,
+            ], JSON_UNESCAPED_SLASHES);
+        } catch (\Throwable $e) {
+            http_response_code(500);
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        }
+        exit;
+    }
+
+    /**
+     * Resolve application ID from id or app_ref
+     */
+    private function resolvePanAppId(array $payload): int
+    {
+        $appId = (int)($payload['app_id'] ?? $payload['id'] ?? 0);
+        if ($appId > 0) return $appId;
+
+        $appRef = trim((string)($payload['app_ref'] ?? ''));
+        if ($appRef !== '') {
+            $stmt = $this->db->prepare("SELECT id FROM applications WHERE app_ref = ? LIMIT 1");
+            $stmt->execute([$appRef]);
+            $found = (int)$stmt->fetchColumn();
+            if ($found > 0) return $found;
+        }
+        return 0;
+    }
+
+    /**
+     * POST /api/pan-card/complete - Mark PAN application as COMPLETED from Extension
+     */
+    public function apiComplete(): void
+    {
+        $this->sendCorsHeaders('POST, OPTIONS');
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+            http_response_code(405);
+            echo json_encode(['success' => false, 'error' => 'Method Not Allowed']);
+            exit;
+        }
+
+        $raw = file_get_contents('php://input');
+        $json = json_decode($raw ?: '', true);
+        $payload = is_array($json) ? $json : $_POST;
+
+        $appId = $this->resolvePanAppId($payload);
+        if ($appId <= 0) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'Valid app_id or app_ref is required.']);
+            exit;
+        }
+
+        $utiRef = trim((string)($payload['uti_ref_no'] ?? ''));
+        $remarks = trim((string)($payload['remarks'] ?? ''));
+        if ($remarks === '') {
+            $remarks = $utiRef !== ''
+                ? "UTI PAN processed via Extension (Ref: {$utiRef})"
+                : 'UTI PAN processed via Extension';
+        }
+
+        $resultFileUrl = trim((string)($payload['result_file_url'] ?? ''));
+
+        // Optional base64 receipt/screenshot upload
+        $b64 = trim((string)($payload['result_file_base64'] ?? $payload['screenshot'] ?? ''));
+        if ($b64 !== '' && str_starts_with($b64, 'data:')) {
+            if (preg_match('/^data:([^;]+);base64,(.+)$/', $b64, $m)) {
+                $decoded = base64_decode($m[2], true);
+                if ($decoded !== false && strlen($decoded) > 0) {
+                    $ext = str_contains($m[1], 'pdf') ? 'pdf' : (str_contains($m[1], 'jpeg') || str_contains($m[1], 'jpg') ? 'jpg' : 'png');
+                    $resDir = dirname(__DIR__, 2) . '/public/uploads/results';
+                    if (!is_dir($resDir)) @mkdir($resDir, 0755, true);
+                    $fileName = 'uti_res_' . $appId . '_' . date('Ymd_His') . '.' . $ext;
+                    if (@file_put_contents($resDir . '/' . $fileName, $decoded) !== false) {
+                        $resultFileUrl = '/uploads/results/' . $fileName;
+                    }
+                }
+            }
+        }
+
+        try {
+            $res = \App\Services\ApplicationService::updateStatus(
+                $appId,
+                'COMPLETED',
+                1,
+                'SYSTEM',
+                'UTI Auto-Pilot Extension',
+                $remarks,
+                null,
+                $remarks,
+                $resultFileUrl !== '' ? $resultFileUrl : null
+            );
+            echo json_encode(['success' => true, 'message' => $res['message'] ?? 'Marked as COMPLETED']);
+        } catch (\Throwable $e) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        }
+        exit;
+    }
+
+    /**
+     * POST /api/pan-card/reject - Reject PAN application and refund wallet from Extension
+     */
+    public function apiReject(): void
+    {
+        $this->sendCorsHeaders('POST, OPTIONS');
+        if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+            http_response_code(405);
+            echo json_encode(['success' => false, 'error' => 'Method Not Allowed']);
+            exit;
+        }
+
+        $raw = file_get_contents('php://input');
+        $json = json_decode($raw ?: '', true);
+        $payload = is_array($json) ? $json : $_POST;
+
+        $appId = $this->resolvePanAppId($payload);
+        if ($appId <= 0) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'Valid app_id or app_ref is required.']);
+            exit;
+        }
+
+        $reason = trim((string)($payload['reason'] ?? 'Rejected by UTI Auto-Pilot Extension'));
+
+        try {
+            $res = \App\Services\ApplicationService::updateStatus(
+                $appId,
+                'REJECTED',
+                1,
+                'SYSTEM',
+                'UTI Auto-Pilot Extension',
+                $reason,
+                $reason,
+                $reason,
+                null
+            );
+            echo json_encode(['success' => true, 'message' => $res['message'] ?? 'Marked as REJECTED']);
+        } catch (\Throwable $e) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        }
+        exit;
+    }
 }

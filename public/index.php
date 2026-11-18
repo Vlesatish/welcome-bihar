@@ -702,6 +702,21 @@ try {
             $ctrl->utiCrop();
             break;
 
+        case '/api/pan-card/queue':
+            $ctrl = new \App\Controllers\PanCardController();
+            $ctrl->apiQueue();
+            break;
+
+        case '/api/pan-card/complete':
+            $ctrl = new \App\Controllers\PanCardController();
+            $ctrl->apiComplete();
+            break;
+
+        case '/api/pan-card/reject':
+            $ctrl = new \App\Controllers\PanCardController();
+            $ctrl->apiReject();
+            break;
+
         // Applications
         case '/applications':
             $ctrl = new \App\Controllers\ApplicationController();
