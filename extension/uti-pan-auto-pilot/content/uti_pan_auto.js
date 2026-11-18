@@ -421,6 +421,12 @@
       return true;
     }
 
+    // 0B. Aadhaar Demographic Mismatch ("Authenticate AADHAAR details using Biometric")
+    if (isAadhaarBiometricMismatchModal()) {
+      handleAadhaarBiometricMismatchModal();
+      return true;
+    }
+
     // 1. Re-Enter AADHAAR No modal (#reEnterUid / #reEnterUidField)
     const reEnterInput = document.getElementById('reEnterUidField') ||
       document.querySelector('#reEnterUid input[type="text"], .ui-dialog input[maxlength="12"]');
@@ -2873,6 +2879,51 @@
     });
   }
 
+  let isRejectingBiometricMismatch = false;
+
+  function isAadhaarBiometricMismatchModal() {
+    const bioDialog = Array.from(document.querySelectorAll('.ui-dialog, .modal, div[role="dialog"]')).find((d) => {
+      if (!isVisible(d)) return false;
+      const t = (d.innerText || d.textContent || '').toLowerCase();
+      return (
+        t.includes('authenticate aadhaar details using biometric') ||
+        (t.includes('authenticate aadhaar') && t.includes('biometric'))
+      );
+    });
+    if (bioDialog) return true;
+
+    const pageText = (document.body ? document.body.innerText : '').toLowerCase();
+    return pageText.includes('authenticate aadhaar details using biometric');
+  }
+
+  function handleAadhaarBiometricMismatchModal() {
+    if (isRejectingBiometricMismatch) return;
+    isRejectingBiometricMismatch = true;
+
+    const rejectionComment = 'आधार और नाम मैच नहीं है, सही से एंट्री करें। (Aadhaar aur naam mismatch hai, sahi se entry kare)';
+    updateBadge(`⚠️ ${rejectionComment} • Auto-Rejecting...`, '#ef4444');
+
+    chrome.storage.local.get(['currentCandidate', 'queueList'], (stored) => {
+      const cand = stored?.currentCandidate || (Array.isArray(stored?.queueList) && stored?.queueList[0]) || currentCandidate;
+      const appId = cand ? (cand.id || cand.app_id) : null;
+      const appRef = cand ? String(cand.app_ref || '').replace(/^#+/, '').trim() : null;
+
+      chrome.runtime.sendMessage({
+        action: 'candidateRejected',
+        appId: appId,
+        appRef: appRef,
+        reason: rejectionComment
+      }, () => {
+        updateBadge('❌ Marked as REJECTED on BiharGo (Aadhaar/Name Mismatch) • Closing tab in 1.5s...', '#ef4444');
+
+        // Auto close this UTI tab
+        setTimeout(() => {
+          chrome.runtime.sendMessage({ action: 'closeCurrentTab' });
+        }, 1500);
+      });
+    });
+  }
+
   // -----------------------------------------------------------------------
   // Router & Observers
   // -----------------------------------------------------------------------
@@ -2900,6 +2951,12 @@
     // 00. Check if PAN already exists on this Aadhaar (reGeneration page / dialog)
     if (isPanAlreadyExistsPage()) {
       handlePanAlreadyExistsPage();
+      return;
+    }
+
+    // 00B. Check if Aadhaar Demographic Mismatch ("Authenticate AADHAAR details using Biometric.")
+    if (isAadhaarBiometricMismatchModal()) {
+      handleAadhaarBiometricMismatchModal();
       return;
     }
 
