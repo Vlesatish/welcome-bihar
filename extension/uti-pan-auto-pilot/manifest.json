@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Welcome Bihar - UTI PAN Auto-Pilot",
   "version": "1.0.0",
-  "description": "Auto-polls Welcome Bihar PAN Card queue and auto-fills UTIITSL PAN Form No. 93",
+  "description": "Auto-polls Welcome Bihar PAN Card queue, auto-fills UTIITSL PAN Form No. 93 and executes CSC Wallet payment",
   "permissions": [
     "storage",
     "tabs",
@@ -12,6 +12,7 @@
   "host_permissions": [
     "https://www.myutiitsl.com/*",
     "https://myutiitsl.com/*",
+    "https://wallet.csccloud.in/*",
     "http://localhost/*",
     "http://127.0.0.1/*",
     "https://*/*"
@@ -31,6 +32,16 @@
       ],
       "js": [
         "content/uti_pan_auto.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "https://wallet.csccloud.in/*"
+      ],
+      "js": [
+        "content/csc_wallet_auto.js"
       ],
       "run_at": "document_idle",
       "all_frames": true
