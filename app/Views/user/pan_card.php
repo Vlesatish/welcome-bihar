@@ -492,8 +492,8 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                 <!-- 3. DATE OF BIRTH -->
                 <div class="col-12 col-md-6 col-lg-4 pan-form-group">
                     <label class="pan-label" for="dob">DATE OF BIRTH <span class="req-star">*</span></label>
-                    <input type="text" class="pan-input" id="dob" name="dob" placeholder="E.g. 25-01-1995" pattern="\d{2}-\d{2}-\d{4}" required>
-                    <div class="pan-helper">Format: DD-MM-YYYY, (Eight digits, only numbers/hyphen, valid calendar date)</div>
+                    <input type="text" class="pan-input" id="dob" name="dob" placeholder="E.g. 01-01-2003" pattern="\d{2}-\d{2}-\d{4}" maxlength="10" autocomplete="off" required>
+                    <div class="pan-helper">Format: DD-MM-YYYY (Auto-hyphen applied, e.g. 01-01-2003)</div>
                 </div>
 
                 <!-- 4. SELECT STATE -->
@@ -980,6 +980,80 @@ function closeCameraModal() {
     if (modalInstance) modalInstance.hide();
 }
 
+
+// Auto-Hyphen (-) Formatter for DATE OF BIRTH (DD-MM-YYYY)
+(function initDobAutoMask() {
+    const dobInput = document.getElementById('dob');
+    if (!dobInput) return;
+
+    let isDeleting = false;
+
+    dobInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Backspace' || e.key === 'Delete') {
+            isDeleting = true;
+            if (e.key === 'Backspace') {
+                const cursor = this.selectionStart;
+                // If cursor is directly after a hyphen (e.g. "01-|" or "01-01-|")
+                if ((cursor === 3 || cursor === 6) && this.selectionStart === this.selectionEnd) {
+                    e.preventDefault();
+                    const val = this.value;
+                    this.value = val.slice(0, cursor - 2) + val.slice(cursor);
+                    this.setSelectionRange(cursor - 2, cursor - 2);
+                }
+            }
+        } else {
+            isDeleting = false;
+        }
+    });
+
+    dobInput.addEventListener('input', function() {
+        if (isDeleting) return;
+
+        let digits = this.value.replace(/\D/g, '').slice(0, 8);
+        let formatted = '';
+
+        if (digits.length <= 2) {
+            formatted = digits;
+            if (digits.length === 2) formatted += '-';
+        } else if (digits.length <= 4) {
+            formatted = digits.slice(0, 2) + '-' + digits.slice(2);
+            if (digits.length === 4) formatted += '-';
+        } else {
+            formatted = digits.slice(0, 2) + '-' + digits.slice(2, 4) + '-' + digits.slice(4);
+        }
+
+        this.value = formatted;
+    });
+
+    dobInput.addEventListener('paste', function(e) {
+        e.preventDefault();
+        const text = (e.clipboardData || window.clipboardData).getData('text') || '';
+
+        // Handle YYYY-MM-DD or YYYY/MM/DD
+        const isoMatch = text.trim().match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})$/);
+        if (isoMatch) {
+            const y = isoMatch[1];
+            const m = isoMatch[2].padStart(2, '0');
+            const d = isoMatch[3].padStart(2, '0');
+            this.value = `${d}-${m}-${y}`;
+            return;
+        }
+
+        // Clean digits
+        let digits = text.replace(/\D/g, '').slice(0, 8);
+        let formatted = '';
+        if (digits.length <= 2) {
+            formatted = digits;
+            if (digits.length === 2) formatted += '-';
+        } else if (digits.length <= 4) {
+            formatted = digits.slice(0, 2) + '-' + digits.slice(2);
+            if (digits.length === 4) formatted += '-';
+        } else {
+            formatted = digits.slice(0, 2) + '-' + digits.slice(2, 4) + '-' + digits.slice(4);
+        }
+        this.value = formatted;
+    });
+})();
 
 // Instant submit feedback - disables button and gives feedback while redirecting to list
 document.getElementById('panCardForm')?.addEventListener('submit', function() {
