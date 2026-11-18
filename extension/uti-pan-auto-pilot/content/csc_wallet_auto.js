@@ -14,6 +14,9 @@
   let passwordSubmitted = false;
   let pinSubmitted = false;
   let proceedClicked = false;
+  let lastProceedAttempt = 0;
+  let lastPassAttempt = 0;
+  let lastPinAttempt = 0;
 
   function isVisible(el) {
     if (!el || !el.isConnected) return false;
@@ -59,7 +62,8 @@
   // STEP 1A: "Proceed to Wallet" (When password is not requested)
   // -----------------------------------------------------------------------
   function handleProceedToWallet() {
-    if (proceedClicked) return false;
+    const now = Date.now();
+    if (proceedClicked && (now - lastProceedAttempt < 3500)) return false;
 
     const allButtons = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a.btn, .btn, a'));
     const proceedBtn = allButtons.find((b) => {
@@ -70,9 +74,11 @@
 
     if (proceedBtn) {
       proceedClicked = true;
+      lastProceedAttempt = now;
       updateWalletBadge('🚀 Clicking Proceed to Wallet...', '#10b981');
       setTimeout(() => {
         try {
+          proceedBtn.focus();
           proceedBtn.click();
         } catch (e) {
           proceedBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
@@ -87,7 +93,8 @@
   // STEP 1B: Password & Validate Screen
   // -----------------------------------------------------------------------
   function handlePasswordScreen() {
-    if (passwordSubmitted) return false;
+    const now = Date.now();
+    if (passwordSubmitted && (now - lastPassAttempt < 3500)) return false;
 
     const allInputs = Array.from(document.querySelectorAll('input'));
     const passInput = allInputs.find((el) => {
@@ -111,11 +118,13 @@
       setInputValue(passInput, WALLET_PASSWORD);
 
       passwordSubmitted = true;
+      lastPassAttempt = now;
       sessionStorage.setItem('wb_csc_pass_submitted', '1');
 
       setTimeout(() => {
         updateWalletBadge('🚀 Clicking Validate...', '#10b981');
         try {
+          validateBtn.focus();
           validateBtn.click();
         } catch (e) {
           validateBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
@@ -130,7 +139,8 @@
   // STEP 2: Wallet Pin & Pay Screen
   // -----------------------------------------------------------------------
   function handlePinScreen() {
-    if (pinSubmitted) return false;
+    const now = Date.now();
+    if (pinSubmitted && (now - lastPinAttempt < 3500)) return false;
 
     const allInputs = Array.from(document.querySelectorAll('input'));
 
@@ -163,11 +173,13 @@
       setInputValue(pinInput, WALLET_PIN);
 
       pinSubmitted = true;
+      lastPinAttempt = now;
       sessionStorage.setItem('wb_csc_pin_submitted', '1');
 
       setTimeout(() => {
         updateWalletBadge('💰 Executing ₹97.37 Payment...', '#10b981');
         try {
+          payBtn.focus();
           payBtn.click();
         } catch (e) {
           payBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));

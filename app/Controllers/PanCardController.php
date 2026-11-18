@@ -1011,20 +1011,61 @@ class PanCardController
     }
 
     /**
-     * Resolve application ID from id or app_ref
+     * Resolve application ID from id or app_ref or candidate attributes
      */
     private function resolvePanAppId(array $payload): int
     {
         $appId = (int)($payload['app_id'] ?? $payload['id'] ?? 0);
         if ($appId > 0) return $appId;
 
-        $appRef = trim((string)($payload['app_ref'] ?? ''));
+        $appRef = trim((string)($payload['app_ref'] ?? $payload['appRef'] ?? $payload['ref'] ?? ''));
         if ($appRef !== '') {
             $stmt = $this->db->prepare("SELECT id FROM applications WHERE app_ref = ? LIMIT 1");
             $stmt->execute([$appRef]);
             $found = (int)$stmt->fetchColumn();
             if ($found > 0) return $found;
+
+            $stmt = $this->db->prepare("SELECT id FROM applications WHERE app_ref LIKE ? LIMIT 1");
+            $stmt->execute(['%' . $appRef . '%']);
+            $found = (int)$stmt->fetchColumn();
+            if ($found > 0) return $found;
         }
+
+        // Match by 10-digit mobile number
+        $mob = preg_replace('/\D/', '', (string)($payload['mobile_no'] ?? $payload['mobile'] ?? ''));
+        if ($mob !== '' && strlen($mob) >= 10) {
+            $mob10 = substr($mob, -10);
+            $stmt = $this->db->prepare("SELECT a.id FROM applications a JOIN application_field_values f ON f.application_id = a.id WHERE a.status = 'PENDING' AND f.field_name = 'mobile_no' AND f.field_value LIKE ? ORDER BY a.id DESC LIMIT 1");
+            $stmt->execute(['%' . $mob10 . '%']);
+            $found = (int)$stmt->fetchColumn();
+            if ($found > 0) return $found;
+        }
+
+        // Match by Aadhaar last 4 digits
+        $aadhaar = preg_replace('/\D/', '', (string)($payload['aadhaar_no'] ?? $payload['aadhaar'] ?? ''));
+        if ($aadhaar !== '' && strlen($aadhaar) >= 4) {
+            $last4 = substr($aadhaar, -4);
+            $stmt = $this->db->prepare("SELECT a.id FROM applications a JOIN application_field_values f ON f.application_id = a.id WHERE a.status = 'PENDING' AND f.field_name = 'aadhaar_no' AND f.field_value LIKE ? ORDER BY a.id DESC LIMIT 1");
+            $stmt->execute(['%' . $last4]);
+            $found = (int)$stmt->fetchColumn();
+            if ($found > 0) return $found;
+        }
+
+        // Match by applicant full name
+        $name = trim((string)($payload['applicant_name'] ?? $payload['full_name'] ?? ''));
+        if ($name !== '') {
+            $stmt = $this->db->prepare("SELECT a.id FROM applications a JOIN application_field_values f ON f.application_id = a.id WHERE a.status = 'PENDING' AND f.field_name = 'full_name' AND LOWER(f.field_value) = LOWER(?) ORDER BY a.id DESC LIMIT 1");
+            $stmt->execute([$name]);
+            $found = (int)$stmt->fetchColumn();
+            if ($found > 0) return $found;
+        }
+
+        // Fallback: Latest active PENDING PAN application
+        $stmt = $this->db->prepare("SELECT id FROM applications WHERE status = 'PENDING' ORDER BY id ASC LIMIT 1");
+        $stmt->execute();
+        $found = (int)$stmt->fetchColumn();
+        if ($found > 0) return $found;
+
         return 0;
     }
 

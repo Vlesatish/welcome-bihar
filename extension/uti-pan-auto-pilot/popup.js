@@ -114,7 +114,7 @@ document.addEventListener('DOMContentLoaded', () => {
     chrome.runtime.sendMessage({
       action: 'candidateCompleted',
       appId: activeCand.id,
-      appRef: activeCand.app_ref
+      appRef: String(activeCand.app_ref || '').replace(/^#+/, '').trim()
     }, (res) => {
       setStatus(res?.success ? 'Marked Completed ✅' : (res?.error || 'Failed'), res?.success ? '#34d399' : '#f87171');
     });

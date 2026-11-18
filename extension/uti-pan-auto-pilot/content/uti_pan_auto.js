@@ -485,9 +485,9 @@
     });
 
     if (errorDialog) {
-      const okBtn = Array.from(errorDialog.querySelectorAll('.ui-dialog-buttonpane button, button, input[type="button"]')).find((b) => {
+      const okBtn = Array.from(errorDialog.querySelectorAll('.ui-dialog-buttonpane button, button, input[type="button"], a.ui-dialog-titlebar-close, button.ui-dialog-titlebar-close')).find((b) => {
         const t = (b.textContent || b.value || '').trim().toLowerCase();
-        return t === 'ok' || t === 'okay';
+        return t === 'ok' || t === 'okay' || b.classList.contains('ui-dialog-titlebar-close');
       });
       if (okBtn) {
         try {
@@ -496,6 +496,14 @@
           okBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
         }
         handled = true;
+      }
+      // Re-fill pincode immediately after dismissing popup
+      const resPinEl = document.getElementById('resPin');
+      const pincode = String(currentCandidate?.pincode || currentCandidate?.pin || '').replace(/\D/g, '').slice(0, 6);
+      if (resPinEl && pincode && resPinEl.value !== pincode) {
+        setTimeout(() => {
+          setInputValue(resPinEl, pincode);
+        }, 150);
       }
     }
 
@@ -770,11 +778,22 @@
       }
     }
 
-    // 2. Verification Place -> Candidate District (id="verPlace")
+    // Determine candidate district (from resDistList DOM, candidate object, or fallback)
+    const resDistEl = document.getElementById('resDistList');
+    const selectedDist = (resDistEl && resDistEl.selectedIndex >= 0) ? (resDistEl.options[resDistEl.selectedIndex]?.text || '') : '';
+    const cleanDist = (
+      currentCandidate?.district_name ||
+      currentCandidate?.district ||
+      selectedDist ||
+      currentCandidate?.block_name ||
+      currentCandidate?.village ||
+      'GAYA'
+    ).replace(/[<->]/g, '').trim().toUpperCase();
+
+    // 2. Verification Place -> Must never remain blank (id="verPlace")
     const verPlaceEl = document.getElementById('verPlace') || document.getElementById('veriPlace') || findFieldByLabel(['verification place', 'place']);
-    const district = (currentCandidate?.district_name || currentCandidate?.district || currentCandidate?.block_name || currentCandidate?.village || 'GAYA').trim();
-    if (verPlaceEl && district && (!verPlaceEl.value || force)) {
-      setInputValue(verPlaceEl, district.toUpperCase());
+    if (verPlaceEl && (!verPlaceEl.value || verPlaceEl.value !== cleanDist || force)) {
+      setInputValue(verPlaceEl, cleanDist);
       filled = true;
     }
 
@@ -791,7 +810,7 @@
     }
 
     if (filled) {
-      updateBadge(`✍️ Declaration Set: SELF (${district || 'Verified'})`, '#10b981');
+      updateBadge(`✍️ Declaration Set: SELF (${cleanDist || 'Verified'})`, '#10b981');
     }
     return filled;
   }
@@ -953,6 +972,236 @@
     if (filledAny && !docsFilled && !contactFilled && !addressFilled && !otherFilled) {
       updateBadge(`✍️ Personal Info Auto-Filled: ${currentCandidate.full_name}`, '#10b981');
     }
+
+    // Auto-advance to Next Step once active step is completely filled
+    tryAdvanceStep();
+  }
+
+  // -----------------------------------------------------------------------
+  // STEP AUTO-ADVANCE: Next Step Clicker
+  // "sab fill o jaye to next step click karna ok"
+  // -----------------------------------------------------------------------
+  let isAdvancing = false;
+  let lastAdvancedStep = 0;
+  let lastAdvanceTime = 0;
+
+  function hasVisibleModal() {
+    const dialogs = Array.from(document.querySelectorAll('.ui-dialog, .modal, .swal2-container'));
+    return dialogs.some((d) => isVisible(d));
+  }
+
+  function getActiveWizardStep() {
+    // 1. jquery.steps active tab
+    const activeTab = document.querySelector('li.current a, .wizard .current a, [role="tablist"] li.current');
+    if (activeTab) {
+      const t = (activeTab.textContent || '').toLowerCase();
+      if (t.includes('personal')) return 1;
+      if (t.includes('document') && !t.includes('upload')) return 2;
+      if (t.includes('contact') || t.includes('parent')) return 3;
+      if (t.includes('address')) return 4;
+      if (t.includes('other')) return 5;
+      if (t.includes('upload') || t.includes('documents upload')) return 6;
+    }
+
+    // 2. Visible fields / headings fallback
+    const bodyText = (document.body?.innerText || '').toLowerCase();
+    if (bodyText.includes('applicant photo and signature files') || document.querySelector('a[href="#finish"]')) return 6;
+    if (isVisible(document.getElementById('capacityCd')) || isVisible(document.getElementById('verPlace'))) return 5;
+    if (isVisible(document.getElementById('resAddr1')) || isVisible(document.getElementById('incomeOthSource'))) return 4;
+    if (isVisible(document.getElementById('mobileNo')) || isVisible(document.getElementById('parentNameOnCard'))) return 3;
+    if (isVisible(document.getElementById('identityProofDoc')) || isVisible(document.getElementById('addressProofDoc'))) return 2;
+    if (isVisible(document.getElementById('firstName')) || isVisible(document.getElementById('lastName')) || isVisible(document.getElementById('aadhaarNo'))) return 1;
+
+    return 0;
+  }
+
+  function isStep1Complete() {
+    const lName = document.getElementById('lastName');
+    const dob = document.getElementById('dob');
+    const gender = document.getElementById('gender');
+    const resState = document.getElementById('resState');
+    const aNo = document.getElementById('aadhaarNo');
+    const aName = document.getElementById('aadhaarName');
+
+    if (!lName || !lName.value.trim()) return false;
+    if (!dob || dob.value.trim().length < 8) return false;
+    if (!gender || !gender.value) return false;
+    if (!resState || !resState.value) return false;
+    if (currentCandidate?.aadhaar_no) {
+      const cleanAadhaar = String(currentCandidate.aadhaar_no).replace(/\D/g, '');
+      if (!aNo || aNo.value.replace(/\D/g, '') !== cleanAadhaar) return false;
+    }
+    if (!aName || !aName.value.trim()) return false;
+    return true;
+  }
+
+  function isStep2Complete() {
+    const poi = document.getElementById('identityProofDoc');
+    const poa = document.getElementById('addressProofDoc');
+    const podob = document.getElementById('dobProofDoc');
+    if (!poi || !poi.value) return false;
+    if (!poa || !poa.value) return false;
+    if (!podob || !podob.value) return false;
+    return true;
+  }
+
+  function isStep3Complete() {
+    const mobCountry = document.getElementById('mobileCountryCd') || document.getElementById('telCountryCd');
+    const mob = document.getElementById('mobileNo');
+    const pCard = document.getElementById('parentNameOnCard');
+    const fthLast = document.getElementById('fthLast');
+
+    if (mobCountry && mobCountry.value !== '91') return false;
+    if (!mob || mob.value.replace(/\D/g, '').length < 10) return false;
+    if (!pCard || !pCard.value) return false;
+    if (currentCandidate?.father_name) {
+      if (!fthLast || !fthLast.value.trim()) return false;
+    }
+    return true;
+  }
+
+  function isStep4Complete() {
+    const inc = document.getElementById('incomeOthSource');
+    const addr1 = document.getElementById('resAddr1');
+    const dist = document.getElementById('resDistList');
+    const pin = document.getElementById('resPin');
+
+    if (inc && !inc.checked) return false;
+    if (!addr1 || !addr1.value.trim()) return false;
+    if (!dist || !dist.value) return false;
+    if (!pin || pin.value.replace(/\D/g, '').length < 6) return false;
+    return true;
+  }
+
+  function isStep5Complete() {
+    const cap = document.getElementById('capacityCd');
+    const place = document.getElementById('verPlace') || document.getElementById('veriPlace');
+    const name = document.getElementById('verName') || document.getElementById('veriName');
+
+    if (!cap || cap.value !== '1') return false;
+    if (!place || !place.value.trim()) return false;
+    if (!name || !name.value.trim()) return false;
+    return true;
+  }
+
+  function isStep6Complete() {
+    const submitBtn = findSubmitButton();
+    return Boolean(submitBtn);
+  }
+
+  function findSubmitButton() {
+    // 1. Direct jquery.steps 'Submit' link
+    const finishLink = document.querySelector('a[href="#finish"]');
+    if (finishLink && isVisible(finishLink)) {
+      const parentLi = finishLink.closest('li');
+      if (!parentLi || (!parentLi.classList.contains('disabled') && parentLi.getAttribute('aria-disabled') !== 'true')) {
+        return finishLink;
+      }
+    }
+
+    // 2. Any button or input with text "Submit"
+    const allBtns = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"]'));
+    const submitBtn = allBtns.find((b) => {
+      if (!isVisible(b) || b.disabled) return false;
+      if (b.closest('li')?.classList.contains('disabled')) return false;
+      const t = (b.textContent || b.value || '').trim().toLowerCase();
+      return t === 'submit' || t.startsWith('submit');
+    });
+    if (submitBtn) return submitBtn;
+
+    return null;
+  }
+
+  function findAdvanceButton() {
+    // 1. Direct jquery.steps 'Next Step'
+    const nextLink = document.querySelector('a[href="#next"]');
+    if (nextLink && isVisible(nextLink)) {
+      const parentLi = nextLink.closest('li');
+      if (!parentLi || (!parentLi.classList.contains('disabled') && parentLi.getAttribute('aria-disabled') !== 'true')) {
+        return nextLink;
+      }
+    }
+
+    // 2. Make Payment button if present (Step 2)
+    const allBtns = Array.from(document.querySelectorAll('a, button, input[type="button"], input[type="submit"]'));
+    const payBtn = allBtns.find((b) => {
+      if (!isVisible(b) || b.disabled) return false;
+      const t = (b.textContent || b.value || '').trim().toLowerCase();
+      return t.includes('make payment') || t === 'pay';
+    });
+    if (payBtn) return payBtn;
+
+    // 3. Fallback: Any visible button / link containing "Next Step" or "Next"
+    const nextBtn = allBtns.find((b) => {
+      if (!isVisible(b) || b.disabled) return false;
+      if (b.closest('li')?.classList.contains('disabled')) return false;
+      const t = (b.textContent || b.value || '').trim().toLowerCase();
+      return t === 'next step' || t === 'next';
+    });
+    if (nextBtn) return nextBtn;
+
+    return null;
+  }
+
+  function tryAdvanceStep() {
+    if (isAdvancing || hasVisibleModal()) return;
+
+    const currentStep = getActiveWizardStep();
+    if (!currentStep) return;
+
+    const now = Date.now();
+    // Do not repeat click on the exact same step within 4.5 seconds
+    if (lastAdvancedStep === currentStep && (now - lastAdvanceTime < 4500)) {
+      return;
+    }
+
+    let stepValid = false;
+    let targetBtn = null;
+
+    if (currentStep === 1) {
+      stepValid = isStep1Complete();
+      targetBtn = findAdvanceButton();
+    } else if (currentStep === 2) {
+      stepValid = isStep2Complete();
+      targetBtn = findAdvanceButton();
+    } else if (currentStep === 3) {
+      stepValid = isStep3Complete();
+      targetBtn = findAdvanceButton();
+    } else if (currentStep === 4) {
+      stepValid = isStep4Complete();
+      targetBtn = findAdvanceButton();
+    } else if (currentStep === 5) {
+      stepValid = isStep5Complete();
+      targetBtn = findAdvanceButton();
+    } else if (currentStep === 6) {
+      stepValid = isStep6Complete();
+      targetBtn = findSubmitButton();
+    }
+
+    if (!stepValid || !targetBtn) return;
+
+    isAdvancing = true;
+    lastAdvancedStep = currentStep;
+    lastAdvanceTime = now;
+
+    if (currentStep === 6) {
+      updateBadge('🚀 Final Step (Documents Upload) • Submitting Form...', '#10b981');
+    } else {
+      const stepNames = ['', 'Personal Information', 'Documents & Payment', 'Contact & Parents', 'Address Details', 'Other Details'];
+      updateBadge(`⚡ ${stepNames[currentStep] || 'Step ' + currentStep} Complete • Clicking Next Step...`, '#10b981');
+    }
+
+    setTimeout(() => {
+      try {
+        targetBtn.focus();
+        targetBtn.click();
+      } catch (e) {
+        targetBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+      }
+      setTimeout(() => {
+        isAdvancing = false;
+      }, 1500);
+    }, 700);
   }
 
   // -----------------------------------------------------------------------
@@ -1012,10 +1261,187 @@
   }
 
   // -----------------------------------------------------------------------
+  // PAGE 7: redirectSuccess -> Receipt Capture & Candidate Complete
+  // "jaise hi ye page aata hai 2 image me jitna screen shot hai utna screen shot
+  //  karke welcome bihar wale me attach karke complete kar do"
+  // -----------------------------------------------------------------------
+  let receiptHandling = false;
+  let receiptCompleted = false;
+
+  function findReceiptElement() {
+    // 1. Check for specific table that has the receipt rows and parent with header
+    const tables = Array.from(document.querySelectorAll('table'));
+    for (const tbl of tables) {
+      if (!isVisible(tbl)) continue;
+      const t = (tbl.innerText || tbl.textContent || '');
+      if (t.includes('Received Rs.') && (t.includes('Coupon No') || t.includes('Application No'))) {
+        const p = tbl.closest('div.card, div.container, div#printArea, div[id*="receipt" i], div[class*="receipt" i], table, div');
+        if (p && isVisible(p) && (p.innerText || '').includes('PAN Application Acknowledgment Receipt')) {
+          const pr = p.getBoundingClientRect();
+          if (pr.width > 300 && pr.height > 200) {
+            return p;
+          }
+        }
+        return tbl;
+      }
+    }
+
+    // 2. Search any container holding the receipt header & details
+    const allContainers = Array.from(document.querySelectorAll('div, table, section, form'));
+    const matches = allContainers.filter((el) => {
+      if (!isVisible(el)) return false;
+      const txt = (el.innerText || el.textContent || '');
+      return txt.includes('PAN Application Acknowledgment Receipt') &&
+             (txt.includes('Application No./Coupon No') || txt.includes('Received Rs.'));
+    });
+
+    if (matches.length > 0) {
+      matches.sort((a, b) => {
+        const ra = a.getBoundingClientRect();
+        const rb = b.getBoundingClientRect();
+        return (ra.width * ra.height) - (rb.width * rb.height);
+      });
+      return matches[0];
+    }
+
+    return null;
+  }
+
+  function handleReceiptSuccessPage() {
+    if (receiptCompleted || receiptHandling) return;
+
+    const pageText = document.body?.innerText || '';
+    const couponMatch = pageText.match(/(?:Application\s*No\.?\s*\/?\s*Coupon\s*No\.?|Coupon\s*No\.?)\s*[:\s]*([Uu]-[A-Za-z0-9]+|[A-Za-z0-9]{8,})/i) ||
+                        pageText.match(/\b(U-[A-Za-z0-9]{8,})\b/i);
+    const couponNo = couponMatch ? couponMatch[1].trim() : (currentUtiRefNo || '');
+
+    // Extract demographic details directly from the on-screen receipt table
+    const nameMatch = pageText.match(/Received\s*Rs\.[^\n]*from\s*([A-Za-z\s]+)/i) || pageText.match(/Name\s*as\s*per\s*Aadhaar\s*([A-Za-z\s]+)/i);
+    const applicantName = nameMatch ? nameMatch[1].replace(/\n/g, ' ').trim() : '';
+
+    const mobMatch = pageText.match(/Contact\s*details[^\n]*\b(\d{10})\b/i) || pageText.match(/\b([6-9]\d{9})\b/);
+    const mobileNo = mobMatch ? mobMatch[1].trim() : '';
+
+    const aadhMatch = pageText.match(/Aadhaar\s*Number\s*([xX0-9\-]+)/i);
+    const aadhaarLast4 = aadhMatch ? aadhMatch[1].replace(/\D/g, '').slice(-4) : '';
+
+    const receiptEl = findReceiptElement();
+    if (!receiptEl) {
+      updateBadge('📄 Receipt Page Detected • Locating Receipt Box...', '#38bdf8');
+      return;
+    }
+
+    receiptHandling = true;
+    // Auto-unlock after 7 seconds to prevent any permanent lock
+    const safetyTimer = setTimeout(() => {
+      receiptHandling = false;
+    }, 7000);
+
+    updateBadge(`📸 Capturing Receipt (${couponNo || 'Form 93'})...`, '#38bdf8');
+
+    // Scroll receipt smoothly into view
+    try {
+      receiptEl.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
+    } catch (e) {}
+
+    setTimeout(() => {
+      const rect = receiptEl.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+
+      const crop = {
+        x: Math.max(0, Math.floor((rect.left - 4) * dpr)),
+        y: Math.max(0, Math.floor((rect.top - 4) * dpr)),
+        width: Math.min(window.innerWidth * dpr, Math.ceil((rect.width + 8) * dpr)),
+        height: Math.min(window.innerHeight * dpr, Math.ceil((rect.height + 8) * dpr))
+      };
+
+      // Request tab screenshot from background
+      chrome.runtime.sendMessage({ action: 'captureTab' }, (res) => {
+        clearTimeout(safetyTimer);
+        if (!res || !res.dataUrl) {
+          receiptHandling = false;
+          updateBadge(`⚠️ Screenshot error: ${res?.error || 'Retrying...'}`, '#f59e0b');
+          return;
+        }
+
+        const img = new Image();
+        img.onload = () => {
+          let croppedBase64 = '';
+          try {
+            const canvas = document.createElement('canvas');
+            const targetW = Math.max(10, Math.min(crop.width, img.width - crop.x));
+            const targetH = Math.max(10, Math.min(crop.height, img.height - crop.y));
+            canvas.width = targetW;
+            canvas.height = targetH;
+            const ctx = canvas.getContext('2d');
+
+            ctx.drawImage(
+              img,
+              crop.x,
+              crop.y,
+              targetW,
+              targetH,
+              0,
+              0,
+              targetW,
+              targetH
+            );
+            croppedBase64 = canvas.toDataURL('image/png', 0.95);
+          } catch (err) {
+            console.warn('Canvas crop fallback to full snapshot:', err);
+            croppedBase64 = res.dataUrl;
+          }
+
+          const appId = currentCandidate ? (currentCandidate.id || currentCandidate.app_id) : null;
+          const appRef = currentCandidate ? String(currentCandidate.app_ref || '').replace(/^#+/, '').trim() : null;
+
+          updateBadge(`📤 Attaching Receipt to Welcome Bihar...`, '#38bdf8');
+
+          chrome.runtime.sendMessage({
+            action: 'candidateCompleted',
+            appId: appId,
+            appRef: appRef,
+            applicantName: applicantName,
+            mobileNo: mobileNo,
+            aadhaarNo: aadhaarLast4,
+            utiRefNo: couponNo || currentUtiRefNo,
+            remarks: `UTI PAN Form 93 Completed. Coupon: ${couponNo || 'Attached'}`,
+            screenshot: croppedBase64,
+            result_file_base64: croppedBase64
+          }, (resp) => {
+            receiptHandling = false;
+            if (resp && resp.success) {
+              receiptCompleted = true;
+              updateBadge(`🎉 Candidate COMPLETED! Receipt Uploaded (${couponNo})`, '#10b981');
+            } else {
+              updateBadge(`⚠️ Complete update: ${resp?.error || 'Retrying...'}`, '#f59e0b');
+            }
+          });
+        };
+
+        img.onerror = () => {
+          receiptHandling = false;
+        };
+
+        img.src = res.dataUrl;
+      });
+    }, 600);
+  }
+
+  // -----------------------------------------------------------------------
   // Router & Observers
   // -----------------------------------------------------------------------
   function runAutoFill(force = false) {
     const url = (window.location.href || '').toLowerCase();
+
+    // 0. Receipt / redirectSuccess page (Success Screen)
+    if (
+      url.includes('redirectsuccess') ||
+      (document.body?.innerText || '').includes('PAN Application Acknowledgment Receipt')
+    ) {
+      handleReceiptSuccessPage();
+      return;
+    }
 
     // 1. Form No. 93 / IndmainForm (Highest Priority)
     if (

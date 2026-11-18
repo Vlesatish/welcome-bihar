@@ -104,6 +104,14 @@ async function checkQueueAndLaunch(forceRestart = false) {
     return { success: false, reason: 'paused' };
   }
 
+  // Hold queue if current candidate is awaiting Photo / Signature / PDF upload
+  const storedState = await new Promise((resolve) => {
+    chrome.storage.local.get(['awaitingDocUpload', 'currentCandidate'], resolve);
+  });
+  if (storedState && storedState.awaitingDocUpload && !forceRestart) {
+    return { success: false, reason: 'awaiting_doc_upload' };
+  }
+
   try {
     const res = await fetch(`${cfg.portalUrl}/api/pan-card/queue`, {
       method: 'GET',
@@ -197,19 +205,79 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.action === 'captureTab') {
+    const tabId = sender.tab ? sender.tab.id : null;
+    const winId = sender.tab ? sender.tab.windowId : null;
+
+    const doCapture = () => {
+      try {
+        if (typeof winId === 'number') {
+          chrome.tabs.captureVisibleTab(winId, { format: 'png' }, (dataUrl) => {
+            if (chrome.runtime.lastError || !dataUrl) {
+              chrome.tabs.captureVisibleTab({ format: 'png' }, (dataUrl2) => {
+                void chrome.runtime.lastError;
+                sendResponse({ dataUrl: dataUrl2 || null });
+              });
+            } else {
+              sendResponse({ dataUrl });
+            }
+          });
+        } else {
+          chrome.tabs.captureVisibleTab({ format: 'png' }, (dataUrl) => {
+            void chrome.runtime.lastError;
+            sendResponse({ dataUrl: dataUrl || null });
+          });
+        }
+      } catch (e) {
+        sendResponse({ dataUrl: null, error: e.message });
+      }
+    };
+
+    if (tabId) {
+      chrome.tabs.update(tabId, { active: true }, () => {
+        void chrome.runtime.lastError;
+        setTimeout(doCapture, 150);
+      });
+    } else {
+      doCapture();
+    }
+    return true;
+  }
+
   if (msg.action === 'candidateCompleted') {
     (async () => {
       try {
-        const data = await postPortalAction('/api/pan-card/complete', {
-          app_id: msg.appId,
-          app_ref: msg.appRef,
-          uti_ref_no: msg.utiRefNo || '',
-          remarks: msg.remarks || ''
+        const stored = await new Promise((resolve) => {
+          chrome.storage.local.get(['currentCandidate', 'queueList', 'currentUtiRefNo'], resolve);
         });
-        activeCandidateKey = null;
-        lastLaunchedCandKey = null;
-        await chrome.storage.local.remove(['currentCandidate', 'currentUtiRefNo']);
-        setTimeout(() => checkQueueAndLaunch(true), 1000);
+
+        const cand = stored.currentCandidate || (Array.isArray(stored.queueList) && stored.queueList[0]) || {};
+        const appId = msg.appId || cand.id || cand.app_id;
+        const rawRef = msg.appRef || cand.app_ref || (cand.id ? `WB-${cand.id}` : '');
+        const appRef = String(rawRef || '').replace(/^#+/, '').trim();
+        const utiRef = msg.utiRefNo || stored.currentUtiRefNo || '';
+
+        const data = await postPortalAction('/api/pan-card/complete', {
+          app_id: appId,
+          app_ref: appRef,
+          applicant_name: msg.applicantName || cand.full_name || '',
+          mobile_no: msg.mobileNo || cand.mobile_no || '',
+          aadhaar_no: msg.aadhaarNo || cand.aadhaar_no || '',
+          uti_ref_no: utiRef,
+          remarks: msg.remarks || `UTI PAN Form 93 Completed. Coupon: ${utiRef}`,
+          screenshot: msg.screenshot || msg.result_file_base64 || '',
+          result_file_base64: msg.result_file_base64 || msg.screenshot || ''
+        });
+
+        // Hold candidate active for Photo, Signature & Document Upload
+        // Do NOT auto-launch next candidate until user uploads photo/sig/pdf
+        await chrome.storage.local.set({
+          awaitingDocUpload: true,
+          completedReceiptNo: utiRef,
+          lastStatus: `📸 Receipt Saved (${utiRef || 'Done'}) • Paused for Photo & Signature Upload`,
+          lastStatusColor: '#10b981'
+        });
+
         sendResponse({ success: Boolean(data && data.success), data });
       } catch (err) {
         sendResponse({ success: false, error: err.message });
