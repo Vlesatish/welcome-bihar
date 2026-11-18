@@ -314,13 +314,13 @@ class PanCardController
 
             // 3. Process File Uploads (Photo, Signature, Aadhar Card, Date Of Birth Proof [Optional])
             $trackedFiles = [];
-            $photoPath = $this->saveUploadedDocument('photo', 'Photo', ['jpg', 'jpeg', 'png', 'pdf'], 2, $trackedFiles);
-            $sigPath = $this->saveUploadedDocument('signature', 'Signature', ['jpg', 'jpeg', 'png', 'pdf'], 2, $trackedFiles);
+            $photoPath = $this->saveUploadedDocument('photo', 'Photo', ['jpg', 'jpeg', 'png'], 2, $trackedFiles);
+            $sigPath = $this->saveUploadedDocument('signature', 'Signature', ['jpg', 'jpeg', 'png'], 2, $trackedFiles);
             $aadharPath = $this->saveUploadedDocument('aadhar_card', 'Aadhar Card', ['pdf', 'jpg', 'jpeg', 'png'], 2, $trackedFiles);
             $panFormPath = $this->saveUploadedDocument('pan_form', 'Date Of Birth Proof', ['pdf', 'jpg', 'jpeg', 'png'], 2, $trackedFiles);
 
-            if (empty($photoPath)) throw new Exception('PHOTO is required (JPG, PNG, PDF max 2MB).');
-            if (empty($sigPath)) throw new Exception('SIGNATURE is required (JPG, PNG, PDF max 2MB).');
+            if (empty($photoPath)) throw new Exception('PHOTO is required (JPG, PNG max 2MB).');
+            if (empty($sigPath)) throw new Exception('SIGNATURE is required (JPG, PNG max 2MB).');
             if (empty($aadharPath)) throw new Exception('AADHAR CARD is required (PDF, JPG, PNG max 2MB).');
             // Date of birth proof / PAN Form is optional (defaults to standard format in auto-pilot if omitted)
 

@@ -621,8 +621,8 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                         <div class="pan-upload-zone" id="drop_photo" onclick="triggerFileInput('file_photo')">
                             <i class="bi bi-person-bounding-box pan-upload-icon"></i>
                             <div class="pan-upload-title">Upload Document / Photo</div>
-                            <div class="pan-upload-subtitle">(PDF / JPG / PNG max 2MB)</div>
-                            <input type="file" id="file_photo" name="photo" accept=".jpg,.jpeg,.png,.pdf" style="display:none;" onchange="handleFileSelected(this, 'photo')">
+                            <div class="pan-upload-subtitle">(JPG / PNG max 2MB)</div>
+                            <input type="file" id="file_photo" name="photo" accept=".jpg,.jpeg,.png" style="display:none;" onchange="handleFileSelected(this, 'photo')">
                             <button type="button" class="pan-snap-btn" onclick="openCameraModal(event, 'photo')">
                                 <i class="bi bi-camera-fill text-danger"></i> Snap Photo / फोटो खींचे
                             </button>
@@ -645,8 +645,8 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                         <div class="pan-upload-zone" id="drop_signature" onclick="triggerFileInput('file_signature')">
                             <i class="bi bi-pen-fill pan-upload-icon"></i>
                             <div class="pan-upload-title">Upload Document / Signature</div>
-                            <div class="pan-upload-subtitle">(PDF / JPG / PNG max 2MB)</div>
-                            <input type="file" id="file_signature" name="signature" accept=".jpg,.jpeg,.png,.pdf" style="display:none;" onchange="handleFileSelected(this, 'signature')">
+                            <div class="pan-upload-subtitle">(JPG / PNG max 2MB)</div>
+                            <input type="file" id="file_signature" name="signature" accept=".jpg,.jpeg,.png" style="display:none;" onchange="handleFileSelected(this, 'signature')">
                             <button type="button" class="pan-snap-btn" onclick="openCameraModal(event, 'signature')">
                                 <i class="bi bi-camera-fill text-danger"></i> Snap Photo / फोटो खींचे
                             </button>
@@ -804,6 +804,12 @@ function triggerFileInput(inputId) {
 function handleFileSelected(input, fieldKey) {
     if (!input.files || input.files.length === 0) return;
     const file = input.files[0];
+
+    if ((fieldKey === 'photo' || fieldKey === 'signature') && !file.type.startsWith('image/')) {
+        alert('Photo and Signature must be a JPG or PNG image file. PDF is not allowed.');
+        input.value = '';
+        return;
+    }
     
     // Validate size (2MB max)
     if (file.size > 2 * 1024 * 1024) {
