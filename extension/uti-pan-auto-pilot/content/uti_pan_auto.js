@@ -1742,7 +1742,7 @@
     updateBadge('⏳ Loading Photo, Signature & PDF Form...', '#38bdf8');
 
     try {
-      let activeCand = cand;
+      let activeCand = window._selectedRowCandidate || cand;
       if (!activeCand || !activeCand.photo_url || !activeCand.signature_url) {
         // Query BiharGo for active candidate
         const candSpan = document.getElementById('wb-bar-candidate-name');
@@ -1752,27 +1752,6 @@
 
       if (!activeCand || !activeCand.photo_url || !activeCand.signature_url) {
         throw new Error('Candidate photo or signature URL missing from Welcome Bihar');
-      }
-
-      // Strict safety guard: Validate against table candidate name
-      const tableRows = Array.from(document.querySelectorAll('table tr'));
-      let tableRowName = '';
-      for (const r of tableRows) {
-        const cells = Array.from(r.querySelectorAll('td'));
-        if (cells.length >= 4 && cells[2] && cells[2].innerText && !cells[2].innerText.includes('Upload')) {
-          tableRowName = cells[2].innerText.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
-          break;
-        }
-      }
-
-      if (tableRowName && activeCand) {
-        const candUpper = (activeCand.full_name || '').toUpperCase().trim();
-        if (!tableRowName.includes(candUpper) && !candUpper.includes(tableRowName)) {
-          alert(`⚠️ CANDIDATE MISMATCH BLOCKED!\n\nUTI Table is for: ${tableRowName}\nAttempted to attach: ${candUpper}\n\nOperation stopped to guarantee 100% correct candidate upload.`);
-          updateBadge(`❌ Mismatch blocked: ${tableRowName} vs ${candUpper}`, '#ef4444');
-          docUploadLock = false;
-          return;
-        }
       }
 
       // 1. User-Provided Standard PAN Form PDF (assets/default_pan_form.pdf via background)
@@ -1808,12 +1787,23 @@
         throw new Error('PAN form input failed to receive file');
       }
 
+      // Convert formatted files to local Base64 data URLs for 100% reliable preview
+      const toBase64 = (file) => new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => resolve('');
+        reader.readAsDataURL(file);
+      });
+
+      const photoDataUrl = await toBase64(photoFile);
+      const sigDataUrl = await toBase64(sigFile);
+
       // Render Visual Confirmation Card directly inside the UTI modal
       let previewBox = modal.querySelector('#wb-modal-preview-box');
       if (!previewBox) {
         previewBox = document.createElement('div');
         previewBox.id = 'wb-modal-preview-box';
-        previewBox.style.cssText = 'margin:10px 0;padding:10px 14px;background:#f8fafc;border:2px solid #10b981;border-radius:8px;font-family:sans-serif;box-shadow:0 2px 10px rgba(0,0,0,0.06);';
+        previewBox.style.cssText = 'margin:10px 0;padding:12px 16px;background:#f8fafc;border:2px solid #10b981;border-radius:8px;font-family:sans-serif;box-shadow:0 3px 12px rgba(0,0,0,0.08);';
         const actionRow = modal.querySelector('.ui-dialog-buttonpane, .modal-footer, div[style*="text-align: center"], div[style*="text-align:center"]') || modal;
         if (actionRow && actionRow !== modal) {
           actionRow.parentNode.insertBefore(previewBox, actionRow);
@@ -1823,23 +1813,23 @@
       }
 
       previewBox.innerHTML = `
-        <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e2e8f0;padding-bottom:5px;margin-bottom:8px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e2e8f0;padding-bottom:6px;margin-bottom:10px;">
           <div>
-            <strong style="color:#0f172a;font-size:13px;">✅ Candidate: <span style="color:#0284c7;">${activeCand.full_name}</span></strong>
-            <span style="font-size:11px;color:#64748b;margin-left:6px;">(Father: ${activeCand.father_name || '-'})</span>
+            <strong style="color:#0f172a;font-size:14px;">✅ Candidate: <span style="color:#0284c7;">${activeCand.full_name}</span></strong>
+            <span style="font-size:11.5px;color:#64748b;margin-left:8px;">(Father: ${activeCand.father_name || '-'})</span>
           </div>
-          <span style="background:#dcfce7;color:#15803d;font-weight:700;font-size:11px;padding:2px 8px;border-radius:12px;">Verified Candidate Match</span>
+          <span style="background:#dcfce7;color:#15803d;font-weight:700;font-size:11px;padding:3px 10px;border-radius:12px;">Verified Match</span>
         </div>
-        <div style="display:flex;align-items:center;gap:14px;">
+        <div style="display:flex;align-items:center;gap:18px;">
           <div style="text-align:center;">
-            <div style="font-size:10px;font-weight:700;color:#64748b;margin-bottom:3px;">PHOTO (300 DPI)</div>
-            <img src="${activeCand.photo_url}" style="width:50px;height:50px;object-fit:cover;border:1.5px solid #cbd5e1;border-radius:4px;" />
+            <div style="font-size:10px;font-weight:700;color:#64748b;margin-bottom:4px;">PHOTO (300 DPI)</div>
+            ${photoDataUrl ? `<img src="${photoDataUrl}" style="width:60px;height:60px;object-fit:cover;border:2px solid #10b981;border-radius:6px;display:block;" />` : `<div style="width:60px;height:60px;background:#cbd5e1;line-height:60px;font-size:10px;">No Photo</div>`}
           </div>
           <div style="text-align:center;">
-            <div style="font-size:10px;font-weight:700;color:#64748b;margin-bottom:3px;">SIGNATURE (600 DPI)</div>
-            <img src="${activeCand.signature_url}" style="width:90px;height:40px;object-fit:contain;background:#fff;border:1.5px solid #cbd5e1;border-radius:4px;" />
+            <div style="font-size:10px;font-weight:700;color:#64748b;margin-bottom:4px;">SIGNATURE (600 DPI)</div>
+            ${sigDataUrl ? `<img src="${sigDataUrl}" style="width:115px;height:50px;object-fit:contain;background:#fff;border:2px solid #10b981;border-radius:6px;display:block;" />` : `<div style="width:115px;height:50px;background:#cbd5e1;line-height:50px;font-size:10px;">No Signature</div>`}
           </div>
-          <div style="flex:1;font-size:11px;color:#334155;line-height:1.4;">
+          <div style="flex:1;font-size:11.5px;color:#334155;line-height:1.5;">
             <div>📄 <b>Form:</b> PAN_Form_Alongwith_Documents.pdf</div>
             <div>📷 <b>Photo:</b> ${photoFile.name}</div>
             <div>✍️ <b>Sign:</b> ${sigFile.name}</div>
@@ -1929,20 +1919,11 @@
     const title = document.createElement('span');
     title.innerHTML = '<strong style="color:#38bdf8;">📂 Document Upload:</strong>';
 
-    let initialName = 'No Candidate Active';
-    const firstDataRows = Array.from(document.querySelectorAll('table tr'));
-    for (const r of firstDataRows) {
-      const cells = Array.from(r.querySelectorAll('td'));
-      if (cells.length >= 4 && cells[2] && cells[2].innerText && !cells[2].innerText.includes('Upload')) {
-        initialName = cells[2].innerText.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
-        break;
-      }
-    }
-
+    const activeCand = window._selectedRowCandidate || currentCandidate;
     const candSpan = document.createElement('span');
     candSpan.id = 'wb-bar-candidate-name';
-    candSpan.innerText = initialName !== 'No Candidate Active' ? initialName : (currentCandidate ? currentCandidate.full_name : 'No Candidate Active');
-    candSpan.style.color = '#38bdf8';
+    candSpan.innerText = activeCand ? activeCand.full_name : 'Click ⚡ Auto Upload on Candidate Row';
+    candSpan.style.color = activeCand ? '#34d399' : '#94a3b8';
     candSpan.style.fontWeight = '600';
 
     const btnAttach = document.createElement('button');
@@ -1978,11 +1959,14 @@
         return;
       }
 
-      const activeName = (candSpan?.innerText || '').replace(/no candidate active/i, '').trim();
-      let cand = currentCandidate;
+      const activeName = (candSpan?.innerText || '').replace(/no candidate active/i, '').replace(/click.*row/i, '').trim();
+      let cand = window._selectedRowCandidate || currentCandidate;
       if (!cand || !cand.photo_url || !cand.signature_url) {
-        cand = await fetchCandidateBySearch(activeName);
+        if (activeName) {
+          cand = await fetchCandidateBySearch(activeName);
+        }
         if (cand) {
+          window._selectedRowCandidate = cand;
           currentCandidate = cand;
           chrome.storage.local.set({ currentCandidate: cand });
           candSpan.innerText = cand.full_name;
@@ -2063,6 +2047,23 @@
         candName = cells[1].innerText.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
       }
 
+      // Hook click on native Upload link
+      uploadEl.addEventListener('click', async () => {
+        let cand = null;
+        if (candName) cand = await fetchCandidateBySearch(candName);
+        if (!cand && appNo) cand = await fetchCandidateBySearch(appNo);
+        if (cand) {
+          window._selectedRowCandidate = cand;
+          currentCandidate = cand;
+          chrome.storage.local.set({ currentCandidate: cand });
+          const barSpan = document.getElementById('wb-bar-candidate-name');
+          if (barSpan) {
+            barSpan.innerText = cand.full_name;
+            barSpan.style.color = '#34d399';
+          }
+        }
+      });
+
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'wb-auto-upload-btn';
@@ -2089,6 +2090,7 @@
         }
 
         if (cand) {
+          window._selectedRowCandidate = cand;
           currentCandidate = cand;
           chrome.storage.local.set({ currentCandidate: cand });
           const barSpan = document.getElementById('wb-bar-candidate-name');
@@ -2120,50 +2122,6 @@
     // Inject floating UI and row buttons
     ensureFloatingDocUploadBar();
     injectDocUploadButtons();
-
-    // Auto-detect candidate from the visible table rows to prevent candidate mismatch
-    const tableRows = Array.from(document.querySelectorAll('table tr'));
-    let tableCandName = '';
-    let tableAppNo = '';
-    for (const r of tableRows) {
-      const cells = Array.from(r.querySelectorAll('td'));
-      if (cells.length >= 4) {
-        const rowText = (r.innerText || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
-        const mApp = rowText.match(/\b(A\d{8,})\b/i);
-        if (mApp) tableAppNo = mApp[1];
-        if (cells[2] && cells[2].innerText && !cells[2].innerText.includes('Upload')) {
-          tableCandName = cells[2].innerText.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
-          break;
-        } else if (cells[1] && cells[1].innerText && isNaN(cells[1].innerText)) {
-          tableCandName = cells[1].innerText.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
-          break;
-        }
-      }
-    }
-
-    const curNameUpper = (currentCandidate?.full_name || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
-    const tableUpper = tableCandName.toUpperCase().trim();
-
-    if (tableUpper && (!currentCandidate || (!curNameUpper.includes(tableUpper) && !tableUpper.includes(curNameUpper)))) {
-      fetchCandidateBySearch(tableCandName).then((cand) => {
-        if (cand) {
-          currentCandidate = cand;
-          chrome.storage.local.set({ currentCandidate: cand });
-          const barSpan = document.getElementById('wb-bar-candidate-name');
-          if (barSpan) {
-            barSpan.innerText = cand.full_name;
-            barSpan.style.color = '#34d399';
-          }
-          updateBadge(`📂 Synced Candidate with Table: ${cand.full_name}`, '#10b981');
-        } else {
-          const barSpan = document.getElementById('wb-bar-candidate-name');
-          if (barSpan) {
-            barSpan.innerText = tableCandName;
-            barSpan.style.color = '#fbbf24';
-          }
-        }
-      });
-    }
 
     // 1. Auto-dismiss any success alert popup
     const successDialog = Array.from(document.querySelectorAll('.ui-dialog, .modal, .alert')).find((d) => {
@@ -2200,36 +2158,14 @@
           return;
         }
 
-        if (currentCandidate && currentCandidate.photo_url && currentCandidate.signature_url) {
+        const targetCand = window._selectedRowCandidate || currentCandidate;
+        if (targetCand && targetCand.photo_url && targetCand.signature_url) {
           docUploadLock = true;
-          attachDocumentsToModal(inputs, currentCandidate, modal);
+          attachDocumentsToModal(inputs, targetCand, modal);
           return;
         }
 
-        // Candidate data not in memory -> Auto-fetch recent from BiharGo!
-        if (!docUploadLock) {
-          docUploadLock = true;
-          updateBadge('🔍 Auto-fetching candidate data from Welcome Bihar...', '#0ea5e9');
-          const barSpan = document.getElementById('wb-bar-candidate-name');
-          const term = (barSpan?.innerText || '').replace(/no candidate active/i, '').trim();
-          fetchCandidateBySearch(term).then((cand) => {
-            if (cand && cand.photo_url && cand.signature_url) {
-              currentCandidate = cand;
-              chrome.storage.local.set({ currentCandidate: cand });
-              if (barSpan) {
-                barSpan.innerText = cand.full_name;
-                barSpan.style.color = '#34d399';
-              }
-              attachDocumentsToModal(inputs, cand, modal);
-            } else {
-              docUploadLock = false;
-              updateBadge('⚠️ Please click "⚡ Auto Upload" on candidate row', '#f59e0b');
-            }
-          }).catch(() => {
-            docUploadLock = false;
-          });
-          return;
-        }
+        updateBadge('⚠️ Please click "⚡ Auto Upload" on the candidate row', '#f59e0b');
       }
       return;
     }
