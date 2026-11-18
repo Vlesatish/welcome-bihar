@@ -289,6 +289,18 @@
     if (refEl) {
       refEl.textContent = currentUtiRefNo ? `UTI: ${currentUtiRefNo}` : '';
     }
+
+    const refillBtn = document.getElementById('wb-btn-refill');
+    const u = (window.location.href || '').toLowerCase();
+    if (refillBtn) {
+      if (u.includes('vlehome')) {
+        refillBtn.textContent = '🚀 Open Form 49A';
+        refillBtn.style.background = '#10b981';
+      } else {
+        refillBtn.textContent = '🔄 Refill';
+        refillBtn.style.background = '#0284c7';
+      }
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -477,47 +489,68 @@
   let vleMenuClicked = false;
 
   function clickApplicationForNewPanMenu() {
-    // 1. Open "Apply New PAN" top menu
-    const topMenus = Array.from(document.querySelectorAll('a, li, span, td, div')).filter((el) => {
-      const t = (el.innerText || el.textContent || '').trim().toLowerCase();
-      return t === 'apply new pan' || t.startsWith('apply new pan');
+    // 1. Force show any hidden submenus/dropdowns containing the target link
+    const dropdowns = Array.from(document.querySelectorAll('ul, div, table')).filter((d) => {
+      const t = (d.innerText || d.textContent || '').toLowerCase();
+      return t.includes('application for new pan');
     });
-    for (const m of topMenus) {
+    for (const d of dropdowns) {
       try {
-        m.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-        m.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+        d.style.display = 'block';
+        d.style.visibility = 'visible';
+        d.style.opacity = '1';
       } catch (e) {}
     }
 
-    // 2. Find target link: "Application for New PAN"
-    const allLinks = Array.from(document.querySelectorAll('a, button, li, span, td'));
-    const target = allLinks.find((el) => {
-      const txt = (el.innerText || el.textContent || '').trim().toLowerCase();
+    // 2. Simulate mouseover on top menu "Apply New PAN"
+    const topMenu = Array.from(document.querySelectorAll('a, li, th, td, span')).find((el) => {
+      const t = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      return t === 'apply new pan';
+    });
+    if (topMenu) {
+      ['mouseover', 'mouseenter', 'mousedown', 'mouseup', 'click'].forEach((evt) => {
+        try { topMenu.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window })); } catch (e) {}
+      });
+      try { topMenu.click(); } catch (e) {}
+    }
+
+    // 3. Find the exact <a> link for "Application for New PAN"
+    const allLinks = Array.from(document.querySelectorAll('a'));
+    const targetLink = allLinks.find((a) => {
+      const txt = (a.innerText || a.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      const href = (a.href || a.getAttribute('href') || '').toLowerCase();
       if (txt === 'pan application') return false; // skip heading
-      return txt === 'application for new pan' ||
-             txt.includes('application for new pan') ||
-             txt.includes('new pan (49a)');
+      return (txt.includes('application for new pan') && !txt.includes('pending')) ||
+             (href.includes('prepanform') && !href.includes('error'));
     });
 
-    if (target) {
-      updateBadge('🚀 Launching Application for New PAN...', '#10b981');
+    if (targetLink) {
+      updateBadge('🚀 Launching Form 49A...', '#10b981');
       ['mouseover', 'mouseenter', 'mousedown', 'mouseup', 'click'].forEach((evt) => {
-        try { target.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window })); } catch (e) {}
+        try { targetLink.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window })); } catch (e) {}
       });
-      try { target.click(); } catch (e) {}
+      try { targetLink.click(); } catch (e) {}
+
+      const onclickAttr = targetLink.getAttribute('onclick');
+      if (onclickAttr) {
+        try { window.eval(onclickAttr); } catch (e) {}
+      }
       return true;
     }
     return false;
   }
 
   function handleVleHomePage() {
-    updateBadge('VLE Home • Launching Form 49A...', '#10b981');
+    updateBadge('VLE Home • Open "Apply New PAN" ➔ "Application for New PAN"', '#10b981');
 
     if (!vleMenuClicked) {
       vleMenuClicked = true;
       setTimeout(() => {
-        clickApplicationForNewPanMenu();
-      }, 800);
+        if (!clickApplicationForNewPanMenu()) {
+          setTimeout(clickApplicationForNewPanMenu, 600);
+          setTimeout(clickApplicationForNewPanMenu, 1500);
+        }
+      }, 500);
     }
   }
 
