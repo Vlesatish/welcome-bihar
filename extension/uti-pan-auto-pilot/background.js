@@ -108,8 +108,8 @@ async function openVleHomeOnly(cand) {
         });
       });
     } else {
-      // Tab pehle se khula hai, focus karo
-      chrome.tabs.update(vleTabs[0].id, { active: true });
+      // Tab pehle se khula hai, vleHome par navigate karo aur focus karo taaki auto-process shuru ho
+      chrome.tabs.update(vleTabs[0].id, { url: VLE_HOME_URL, active: true });
     }
   } finally {
     setTimeout(() => {
@@ -156,6 +156,11 @@ async function checkQueueAndLaunch(forceRestart = false) {
     if (queue.length === 0) {
       activeCandidateKey = null;
       lastLaunchedCandKey = null;
+      await chrome.storage.local.remove(['currentCandidate', 'currentUtiRefNo', 'completedReceiptNo', 'awaitingDocUpload']);
+      await chrome.storage.local.set({
+        lastStatus: 'Idle • Waiting for new PAN applications from BiharGo...',
+        lastStatusColor: '#94a3b8'
+      });
       return { success: true, count: 0 };
     }
 
@@ -163,16 +168,16 @@ async function checkQueueAndLaunch(forceRestart = false) {
     const candKey = String(firstCand.app_ref || firstCand.id);
     activeCandidateKey = candKey;
 
+    await chrome.storage.local.set({
+      currentCandidate: firstCand,
+      lastStatus: `🚀 Processing: ${firstCand.full_name || 'Candidate'} (${firstCand.app_ref || firstCand.id})`,
+      lastStatusColor: '#38bdf8'
+    });
+
     // Naya data detect hone par ya force button dabane par vleHome open karo
-    const vleTabs = await getVleHomeTabs();
-    if (forceRestart || (lastLaunchedCandKey !== candKey && vleTabs.length === 0)) {
+    if (forceRestart || lastLaunchedCandKey !== candKey) {
       lastLaunchedCandKey = candKey;
       await openVleHomeOnly(firstCand);
-    } else {
-      // Update candidate details in local storage for badge
-      await chrome.storage.local.set({
-        currentCandidate: firstCand
-      });
     }
 
     return { success: true, count: queue.length, active: firstCand };
@@ -307,23 +312,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           result_file_base64: msg.result_file_base64 || msg.screenshot || ''
         });
 
-        // Hold candidate active for Photo, Signature & Document Upload
-        // Do NOT auto-launch next candidate until user uploads photo/sig/pdf
-        await chrome.storage.local.set({
-          awaitingDocUpload: true,
-          completedReceiptNo: utiRef,
-          lastStatus: `📸 Receipt Saved (${utiRef || 'Done'}) • Opening Document Upload...`,
-          lastStatusColor: '#10b981'
-        });
-
-        sendResponse({ success: Boolean(data && data.success), data });
-
-        // Cut success page and open document upload list page
         if (data && data.success) {
+          activeCandidateKey = null;
+          lastLaunchedCandKey = null;
+          // Completed candidate ko storage se completely remove karo
+          await chrome.storage.local.remove(['currentCandidate', 'currentUtiRefNo', 'completedReceiptNo', 'awaitingDocUpload']);
+          await chrome.storage.local.set({
+            lastStatus: `✅ Candidate Completed & Receipt Attached (${utiRef || 'Done'})`,
+            lastStatusColor: '#10b981'
+          });
+
+          sendResponse({ success: true, data });
+
+          // Cut success page and open document upload list page
           const successTabId = sender && sender.tab ? sender.tab.id : null;
           setTimeout(() => {
             openDocUploadAndCloseSuccess(successTabId);
           }, 800);
+
+          // Re-check queue: agar koi naya application aaya hoga toh turant auto-start hoga
+          setTimeout(() => {
+            checkQueueAndLaunch(false);
+          }, 1500);
+        } else {
+          sendResponse({ success: false, data, error: data?.error || 'Portal update failed' });
         }
       } catch (err) {
         sendResponse({ success: false, error: err.message });

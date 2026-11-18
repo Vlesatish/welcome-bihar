@@ -51,8 +51,17 @@ document.addEventListener('DOMContentLoaded', () => {
         pollStatusText.style.color = autoPollToggle.checked ? '#34d399' : '#94a3b8';
       }
 
-      activeCand = res.currentCandidate || (Array.isArray(res.queueList) && res.queueList[0]) || null;
-      if (activeCand) {
+      const queueItems = Array.isArray(res.queueList) ? res.queueList : [];
+      if (count === 0 || queueItems.length === 0 || !res.currentCandidate) {
+        activeCand = null;
+        candEmpty.style.display = 'block';
+        candEmpty.innerHTML = '✨ <b>Queue is Empty</b><br><span style="font-size:10.5px;color:#94a3b8;">No active application. Extension will automatically start when a new application is submitted on Welcome Bihar.</span>';
+        candDetails.style.display = 'none';
+        btnOpenUti.style.opacity = '0.5';
+        btnMarkComplete.style.opacity = '0.5';
+        btnMarkReject.style.opacity = '0.5';
+      } else {
+        activeCand = res.currentCandidate || queueItems[0];
         candEmpty.style.display = 'none';
         candDetails.style.display = 'block';
         cRef.textContent = activeCand.app_ref || `#${activeCand.id}`;
@@ -61,9 +70,9 @@ document.addEventListener('DOMContentLoaded', () => {
         cFather.textContent = activeCand.father_name || '-';
         cAadhaar.textContent = activeCand.aadhaar_no || '-';
         cMobile.textContent = activeCand.mobile_no || '-';
-      } else {
-        candEmpty.style.display = 'block';
-        candDetails.style.display = 'none';
+        btnOpenUti.style.opacity = '1';
+        btnMarkComplete.style.opacity = '1';
+        btnMarkReject.style.opacity = '1';
       }
 
       if (res.lastStatus) {
@@ -97,6 +106,9 @@ document.addEventListener('DOMContentLoaded', () => {
     chrome.runtime.sendMessage({ action: 'checkQueueNow', force: false }, (res) => {
       if (res && res.success) {
         setStatus(`Queue checked (${res.count} pending) ✅`);
+        if (res.count === 0) {
+          chrome.storage.local.remove(['currentCandidate', 'currentUtiRefNo'], renderState);
+        }
       } else {
         setStatus(res?.error || 'Check failed', '#f87171');
       }
@@ -105,6 +117,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   btnOpenUti.addEventListener('click', () => {
+    if (!activeCand) return;
     chrome.runtime.sendMessage({ action: 'launchCandidate', candidate: activeCand }, () => {
       setStatus('Opening vleHome.action... 🚀', '#38bdf8');
     });
@@ -122,7 +135,8 @@ document.addEventListener('DOMContentLoaded', () => {
       appId: activeCand.id,
       appRef: String(activeCand.app_ref || '').replace(/^#+/, '').trim()
     }, (res) => {
-      setStatus(res?.success ? 'Marked Completed ✅' : (res?.error || 'Failed'), res?.success ? '#34d399' : '#f87171');
+      setStatus(res?.success ? 'Marked Completed & Cleared ✅' : (res?.error || 'Failed'), res?.success ? '#34d399' : '#f87171');
+      chrome.storage.local.remove(['currentCandidate', 'currentUtiRefNo'], renderState);
     });
   });
 
