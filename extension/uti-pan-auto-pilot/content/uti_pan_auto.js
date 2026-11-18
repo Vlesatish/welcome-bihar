@@ -465,47 +465,22 @@
   }
 
   // -----------------------------------------------------------------------
-  // PAGE 0: vleHome.action -> Auto-click "Application for New PAN"
+  // PAGE 0: vleHome.action -> Wait for home session, then open prePANForm in new tab
   // -----------------------------------------------------------------------
-  let vleNavigated = false;
+  let prePanTabRequested = false;
   function handleVleHomePage() {
-    if (vleNavigated) return;
+    if (prePanTabRequested) return;
+    prePanTabRequested = true;
 
-    updateBadge('VLE Home • Launching Application for New PAN...', '#38bdf8');
+    updateBadge('VLE Home active • Opening prePANForm in new tab...', '#38bdf8');
 
-    // 1. Hover/Focus "Apply New PAN" menu dropdown
-    const menuHeaders = Array.from(document.querySelectorAll('a, li, div, span, td, th')).filter((el) => {
-      const t = (el.innerText || el.textContent || '').trim().toLowerCase();
-      return t === 'apply new pan' || t.startsWith('apply new pan');
-    });
-    for (const m of menuHeaders) {
-      try {
-        m.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-        m.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-      } catch (e) {}
-    }
-
-    // 2. Find "Application for New PAN" link
-    const allLinks = Array.from(document.querySelectorAll('a, button, li, span, td'));
-    const targetLink = allLinks.find((el) => {
-      const txt = (el.innerText || el.textContent || '').trim().toLowerCase();
-      if (txt === 'pan application') return false; // Skip the category heading
-      return txt === 'application for new pan' ||
-             txt.includes('application for new pan') ||
-             txt.includes('new pan (49a)');
-    });
-
-    if (targetLink) {
-      vleNavigated = true;
-      updateBadge('🚀 Opening Application for New PAN...', '#10b981');
-      setTimeout(() => {
-        try { targetLink.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch (e) {}
-        try { targetLink.click(); } catch (e) {}
-        if (targetLink.tagName === 'A' && targetLink.href && !targetLink.href.startsWith('javascript:')) {
-          window.location.href = targetLink.href;
+    setTimeout(() => {
+      chrome.runtime.sendMessage({ action: 'openPrePanTab' }, (res) => {
+        if (res && res.success) {
+          updateBadge('🚀 prePANForm tab opened in new tab', '#10b981');
         }
-      }, 500);
-    }
+      });
+    }, 1200);
   }
 
   // -----------------------------------------------------------------------
