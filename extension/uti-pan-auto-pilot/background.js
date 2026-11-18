@@ -52,7 +52,20 @@ function getAllUtiTabs() {
   });
 }
 
-async function openDocUploadAndCloseSuccess(successTabId) {
+let lastDocUploadTriggerKey = '';
+let lastDocUploadTriggerTime = 0;
+
+async function openDocUploadAndCloseSuccess(successTabId, triggerKey = '') {
+  const now = Date.now();
+  if (triggerKey && triggerKey === lastDocUploadTriggerKey && (now - lastDocUploadTriggerTime < 8000)) {
+    console.log(`[Background] Deduplicated openDocUpload request for ${triggerKey}`);
+    return;
+  }
+  if (triggerKey) {
+    lastDocUploadTriggerKey = triggerKey;
+    lastDocUploadTriggerTime = now;
+  }
+
   const allTabs = await new Promise((resolve) => chrome.tabs.query({}, resolve));
   const matched = (allTabs || []).filter((t) => {
     const u = (t.url || t.pendingUrl || '').toLowerCase();
@@ -60,8 +73,15 @@ async function openDocUploadAndCloseSuccess(successTabId) {
   });
 
   if (matched.length > 0) {
-    await chrome.tabs.update(matched[0].id, { url: DOC_UPLOAD_URL, active: true });
-    if (successTabId && successTabId !== matched[0].id) {
+    const targetTab = matched[0];
+    const curUrl = (targetTab.url || targetTab.pendingUrl || '').toLowerCase();
+    // Tab already exists! Only activate/focus it, NEVER reset the URL if already on docUploadList
+    if (curUrl.includes('docuploadlistpanapp') || curUrl.includes('docupload')) {
+      await chrome.tabs.update(targetTab.id, { active: true });
+    } else {
+      await chrome.tabs.update(targetTab.id, { url: DOC_UPLOAD_URL, active: true });
+    }
+    if (successTabId && successTabId !== targetTab.id) {
       chrome.tabs.remove(successTabId, () => void chrome.runtime.lastError);
     }
   } else {
@@ -334,8 +354,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // Auto-close and proceed only if autoClose is true
           if (msg.autoClose !== false) {
             const successTabId = sender && sender.tab ? sender.tab.id : null;
+            const triggerKey = String(appRef || appId || utiRef || 'cand_completed');
             setTimeout(() => {
-              openDocUploadAndCloseSuccess(successTabId);
+              openDocUploadAndCloseSuccess(successTabId, triggerKey);
             }, 1200);
           }
 
@@ -421,7 +442,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg.action === 'openDocUploadPage') {
     const tabId = sender && sender.tab ? sender.tab.id : null;
-    openDocUploadAndCloseSuccess(tabId);
+    const triggerKey = String(msg.appRef || msg.appId || msg.utiRefNo || 'manual_open');
+    openDocUploadAndCloseSuccess(tabId, triggerKey);
     sendResponse({ success: true });
     return true;
   }

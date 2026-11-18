@@ -1687,12 +1687,7 @@
           if (banner) banner.remove();
 
           updateBadge(`🎉 Receiving SAVED on BiharGo for ${applicantName || 'Candidate'}! Opening Upload List...`, '#10b981');
-
-          setTimeout(() => {
-            try {
-              chrome.runtime.sendMessage({ action: 'openDocUploadPage' });
-            } catch (e) {}
-          }, 1200);
+          // Note: Single-path navigation - background.js candidateCompleted automatically handles openDocUploadAndCloseSuccess.
         } else {
           const err = resp?.error || (resp?.data && resp.data.error) || 'Receiving screenshot could not be attached.';
           updateBadge(`⚠️ Receiving Save Failed: ${err}`, '#ef4444');
@@ -1714,6 +1709,36 @@
   let docUploadLock = false;
   let lastUploadedAppNo = '';
 
+  function clickWithoutNavigation(el) {
+    if (!el) return;
+
+    // 1. If it has an inline onclick attribute, execute it directly
+    const onclickAttr = el.getAttribute('onclick');
+    if (onclickAttr) {
+      try {
+        const fn = new Function('event', onclickAttr);
+        const fakeEvt = { preventDefault: () => {}, stopPropagation: () => {}, target: el };
+        fn.call(el, fakeEvt);
+        return;
+      } catch (err) {
+        console.warn('inline onclick execution failed, falling back to safe event dispatch', err);
+      }
+    }
+
+    // 2. Prevent default anchor navigation on this click
+    const preventNav = (e) => {
+      e.preventDefault();
+      el.removeEventListener('click', preventNav, true);
+    };
+    el.addEventListener('click', preventNav, true);
+
+    try {
+      el.click();
+    } catch (err) {
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    }
+  }
+
   function findCandidateUploadRow(appNo, candidateName) {
     const cleanAppNo = String(appNo || '').replace(/^U-/i, '').trim().toUpperCase();
     const cleanName = String(candidateName || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
@@ -1729,10 +1754,11 @@
         const actionLinks = Array.from(row.querySelectorAll('a, button, input[type="button"]'));
         const uploadBtn = actionLinks.find((el) => {
           const t = (el.innerText || el.value || '').trim().toLowerCase();
-          return t === 'upload' || (t.includes('upload') && !t.includes('crop'));
+          return (t === 'upload' || (t.includes('upload') && !t.includes('crop'))) && !el.classList.contains('wb-auto-upload-btn');
         });
-        if (uploadBtn) {
-          return { row, uploadBtn, cleanAppNo, cleanName };
+        const autoUploadBtn = row.querySelector('.wb-auto-upload-btn');
+        if (uploadBtn || autoUploadBtn) {
+          return { row, uploadBtn: uploadBtn || autoUploadBtn, autoUploadBtn, cleanAppNo, cleanName };
         }
       }
     }
@@ -1740,12 +1766,21 @@
   }
 
   function findDocUploadModal() {
-    const dialogs = Array.from(document.querySelectorAll('.ui-dialog, .modal, div.popup, div[role="dialog"], div')).filter((d) => {
+    const dialogs = Array.from(document.querySelectorAll('.ui-dialog, .modal, div.popup, div[role="dialog"], form, div')).filter((d) => {
       if (!isVisible(d)) return false;
+      const fileInputs = d.querySelectorAll('input[type="file"]');
+      if (fileInputs.length >= 2) return true;
       const t = (d.innerText || '').toLowerCase();
-      return t.includes('upload documents') && (t.includes('pan form alongwith') || d.querySelector('input[type="file"]'));
+      return (t.includes('upload documents') || t.includes('pan form alongwith')) && fileInputs.length > 0;
     });
-    return dialogs.length > 0 ? dialogs[0] : null;
+    if (dialogs.length > 0) return dialogs[0];
+
+    // Direct check for any visible file inputs
+    const visibleInputs = Array.from(document.querySelectorAll('input[type="file"]')).filter(isVisible);
+    if (visibleInputs.length >= 2) {
+      return visibleInputs[0].closest('form, table, div') || document.body;
+    }
+    return null;
   }
 
   function findDocUploadInputs(modalContainer) {
@@ -2512,14 +2547,9 @@
           // Open modal if not already open
           const existingModal = findDocUploadModal();
           if (!existingModal) {
-            try {
-              uploadEl._isScriptClicking = true;
-              uploadEl.click();
-              uploadEl._isScriptClicking = false;
-            } catch (err) {
-              uploadEl._isScriptClicking = false;
-              uploadEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-            }
+            uploadEl._isScriptClicking = true;
+            clickWithoutNavigation(uploadEl);
+            setTimeout(() => { uploadEl._isScriptClicking = false; }, 600);
           }
 
           // Poll up to 25 times (every 80ms) for modal inputs and attach immediately
@@ -2544,9 +2574,13 @@
         }
       }
 
-      // Hook click on native Upload link
+      // Hook click on native Upload link - prevent reload navigation
       uploadEl.addEventListener('click', (e) => {
         if (uploadEl._isScriptClicking) return;
+        const href = (uploadEl.getAttribute('href') || '').toLowerCase();
+        if (href.includes('docuploadlistpanapp') || href === '#' || href === '') {
+          e.preventDefault();
+        }
         window._activeRowAppNo = appNo;
         window._activeRowCandName = candName;
         triggerUploadForRow();
@@ -2691,7 +2725,15 @@
           }
         }
 
-        if (rowMatch && rowMatch.uploadBtn) {
+        if (rowMatch) {
+          const rowAppKey = `wb_upload_autotriggered_${targetAppNo || targetName || 'row1'}`;
+          if (sessionStorage.getItem(rowAppKey)) {
+            // Already triggered once in this session for this candidate - do not trigger again!
+            updateBadge(`⚡ Ready for ${targetName || targetAppNo} • Click "⚡ Auto Upload" if modal not open`, '#10b981');
+            return;
+          }
+
+          sessionStorage.setItem(rowAppKey, '1');
           autoRowUploadTriggered = true;
           updateBadge(`⚡ Auto-opening Upload for ${targetName || targetAppNo}...`, '#0ea5e9');
 
@@ -2710,12 +2752,12 @@
           }
 
           setTimeout(() => {
-            try {
-              rowMatch.uploadBtn.click();
-            } catch (err) {
-              rowMatch.uploadBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+            if (rowMatch.autoUploadBtn) {
+              rowMatch.autoUploadBtn.click();
+            } else if (rowMatch.uploadBtn) {
+              clickWithoutNavigation(rowMatch.uploadBtn);
             }
-          }, 400);
+          }, 500);
           return;
         }
 
