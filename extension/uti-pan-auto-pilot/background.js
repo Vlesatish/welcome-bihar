@@ -497,7 +497,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return u.includes('mail.google.com');
         });
 
-        const targetGmailUrl = 'https://mail.google.com/mail/u/0/#search/from%3Apanonline%40utiitsl.com';
+        const targetGmailUrl = 'https://mail.google.com/mail/u/0/#inbox';
 
         if (gmailTabs.length > 0) {
           createdGmailTabId = null; // Do not close pre-existing tab

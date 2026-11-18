@@ -1,8 +1,10 @@
 // =========================================================================
-// Welcome Bihar - Gmail OTP Auto-Reader (Fresh / Current-Time Enforcement)
-// Target: https://mail.google.com/*
-// Purpose: Automatically click the fresh email row from panonline@utiitsl.com
-// and extract the latest 6-digit verification code from the opened thread.
+// Welcome Bihar - Gmail OTP Auto-Reader
+// Target: https://mail.google.com/mail/u/0/#inbox
+// Requested by RIOT:
+// 1. Open https://mail.google.com/mail/u/0/#inbox
+// 2. Click the latest panonline / UTI email row
+// 3. Extract the 6-digit OTP from the "Code Requested" widget at the top
 // =========================================================================
 
 (function () {
@@ -11,18 +13,9 @@
   let hasFoundOtp = false;
   let pollInterval = null;
   let attempts = 0;
-  const MAX_ATTEMPTS = 50; // 50 * 800ms = 40s max
+  const MAX_ATTEMPTS = 50; // 50 * 500ms = 25s max
   let targetTriggerTime = Date.now();
   let rowClicked = false;
-
-  function formatClock(ts) {
-    const d = new Date(ts);
-    let h = d.getHours();
-    const m = String(d.getMinutes()).padStart(2, '0');
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    h = h % 12 || 12;
-    return `${h}:${m} ${ampm}`;
-  }
 
   function showGmailBadge(msg, color = '#10b981') {
     let badge = document.getElementById('wb-gmail-otp-badge');
@@ -39,9 +32,45 @@
     badge.innerHTML = `<span>${msg}</span>`;
   }
 
-  function extractOtpCandidates(text) {
-    if (!text) return [];
-    const results = [];
+  // 1. Extract from the top "Code Requested" widget in Gmail (Image 2)
+  function extractFromCodeRequestedWidget() {
+    const allElements = Array.from(document.querySelectorAll('div, section, article, tr, td'));
+    const codeCard = allElements.find((el) => {
+      const txt = (el.innerText || '').trim();
+      return (
+        txt.includes('Code Requested') &&
+        (txt.includes('Copy code') || /\d\s+\d\s+\d/.test(txt))
+      );
+    });
+
+    if (codeCard) {
+      const text = codeCard.innerText || '';
+
+      // Pattern 1: Separate digit boxes (e.g. "5  9  5  2  8  9")
+      const digitMatch = text.match(/(\d)\s+(\d)\s+(\d)\s+(\d)\s+(\d)\s+(\d)/);
+      if (digitMatch) {
+        return `${digitMatch[1]}${digitMatch[2]}${digitMatch[3]}${digitMatch[4]}${digitMatch[5]}${digitMatch[6]}`;
+      }
+
+      // Pattern 2: Single 6-digit sequence near "Code Requested"
+      const singleMatch = text.match(/Code\s+Requested[\s\S]*?\b(\d{6})\b/i);
+      if (singleMatch) {
+        return singleMatch[1];
+      }
+
+      // Pattern 3: Any 6 digits inside the card
+      const genericMatch = text.match(/\b(\d{6})\b/);
+      if (genericMatch) {
+        return genericMatch[1];
+      }
+    }
+
+    return null;
+  }
+
+  // 2. Fallback: Extract from message body / general text
+  function extractFromGeneralText(text) {
+    if (!text) return null;
     const regexes = [
       /login\s+verification\s+code\s+is\s*[:\-]?\s*(\d{6})/gi,
       /verification\s+code\s+is\s*[:\-]?\s*(\d{6})/gi,
@@ -49,6 +78,7 @@
       /OTP\s+is\s*[:\-]?\s*(\d{6})/gi
     ];
 
+    const results = [];
     regexes.forEach((rgx) => {
       let match;
       while ((match = rgx.exec(text)) !== null) {
@@ -58,74 +88,7 @@
       }
     });
 
-    return results;
-  }
-
-  function isTimestampFresh(rawTimeStr, baseTimeMs) {
-    if (!rawTimeStr) return false;
-    const s = String(rawTimeStr).trim().toLowerCase();
-
-    if (s.includes('just now') || s.includes('0 min') || s.includes('moments ago')) {
-      return true;
-    }
-    const relMatch = s.match(/(\d+)\s*minutes?\s*ago/);
-    if (relMatch) {
-      const mins = parseInt(relMatch[1], 10);
-      return mins <= 2;
-    }
-
-    const clockMatch = s.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?/i);
-    if (clockMatch) {
-      let h = parseInt(clockMatch[1], 10);
-      const m = parseInt(clockMatch[2], 10);
-      const ampm = (clockMatch[4] || '').toLowerCase();
-
-      if (ampm === 'pm' && h < 12) h += 12;
-      if (ampm === 'am' && h === 12) h = 0;
-
-      const baseDate = new Date(baseTimeMs || Date.now());
-      const emailTotalMins = h * 60 + m;
-      const baseTotalMins = baseDate.getHours() * 60 + baseDate.getMinutes();
-
-      let diff = baseTotalMins - emailTotalMins;
-      if (diff < -720) diff += 1440;
-      if (diff > 720) diff -= 1440;
-
-      return diff >= -1 && diff <= 3;
-    }
-
-    const parsed = Date.parse(rawTimeStr);
-    if (!isNaN(parsed)) {
-      const diffMs = (baseTimeMs || Date.now()) - parsed;
-      return diffMs >= -60000 && diffMs <= 180000;
-    }
-
-    return false;
-  }
-
-  function isRowFresh(row, baseTimeMs) {
-    if (!row) return false;
-    const txt = (row.innerText || '').toLowerCase();
-
-    if (txt.includes('just now') || txt.includes('0 min') || txt.includes('1 min')) return true;
-
-    // Check all clock time matches in row text
-    const matches = txt.match(/(\d{1,2}):(\d{2})\s*(am|pm)?/gi);
-    if (matches && matches.length > 0) {
-      const lastTimeStr = matches[matches.length - 1];
-      if (isTimestampFresh(lastTimeStr, baseTimeMs)) {
-        return true;
-      }
-    }
-
-    // Check date cell attributes directly
-    const timeEl = row.querySelector('.xW, .bA4, td:last-child');
-    if (timeEl) {
-      const val = timeEl.innerText || timeEl.getAttribute('title') || '';
-      if (isTimestampFresh(val, baseTimeMs)) return true;
-    }
-
-    return false;
+    return results.length > 0 ? results[results.length - 1] : null;
   }
 
   function clickEmailRow(row) {
@@ -148,68 +111,54 @@
       'div[data-tooltip="Refresh"], div[aria-label="Refresh"], div[act="20"]'
     );
     if (refreshBtn) {
-      try { refreshBtn.click(); } catch (e) {}
+      try {
+        refreshBtn.click();
+      } catch (e) {}
     }
   }
 
-  function findAndExtractOtp() {
+  function scanAndExtract() {
     if (hasFoundOtp) return null;
 
-    // 1. Check if inside an OPEN EMAIL THREAD
-    const messageContainers = Array.from(document.querySelectorAll('.adn, .ads, div[role="listitem"]'));
-    if (messageContainers.length > 0) {
-      // Bottom-most container is the newest message
-      for (let i = messageContainers.length - 1; i >= 0; i--) {
-        const container = messageContainers[i];
+    // STEP A: Check for the "Code Requested" top widget (Image 2)
+    const widgetCode = extractFromCodeRequestedWidget();
+    if (widgetCode) {
+      return { otp: widgetCode, source: 'code_requested_widget' };
+    }
 
-        // If collapsed, expand it
-        const expandBtn = container.querySelector('.adx, .kQ, .kv');
-        if (expandBtn) {
-          try { expandBtn.click(); } catch (e) {}
-        }
-
-        const bodyEl = container.querySelector('.ii.gt, .a3s') || container;
-        const candidates = extractOtpCandidates(bodyEl.innerText || '');
-        if (candidates.length > 0) {
-          return { otp: candidates[candidates.length - 1], source: 'opened_thread' };
+    // STEP B: Check open email thread / messages
+    const openMessages = Array.from(document.querySelectorAll('.ii.gt, .a3s'));
+    if (openMessages.length > 0) {
+      for (let i = openMessages.length - 1; i >= 0; i--) {
+        const bodyTxt = openMessages[i].innerText || '';
+        const code = extractFromGeneralText(bodyTxt);
+        if (code) {
+          return { otp: code, source: 'open_message_body' };
         }
       }
     }
 
-    // Check full view text if on opened email page
-    const fullBody = document.body ? document.body.innerText : '';
-    if (fullBody.includes('panonline@utiitsl.com') && fullBody.includes('Login verification code')) {
-      const fullCandidates = extractOtpCandidates(fullBody);
-      if (fullCandidates.length > 0) {
-        return { otp: fullCandidates[fullCandidates.length - 1], source: 'body_text' };
-      }
-    }
-
-    // 2. Check SEARCH LIST / INBOX ROWS
+    // STEP C: If on Inbox / List View, locate and click the latest UTI email row
     const rows = Array.from(document.querySelectorAll('.zA, tr[role="row"]'));
     const utiRows = rows.filter((r) => {
       const t = (r.innerText || '').toLowerCase();
-      return t.includes('panonline') || t.includes('login verification code');
+      return (
+        t.includes('panonline') ||
+        t.includes('utiitsl') ||
+        t.includes('login verification code')
+      );
     });
 
-    if (utiRows.length > 0) {
+    if (utiRows.length > 0 && !rowClicked) {
       const topRow = utiRows[0];
-      const fresh = isRowFresh(topRow, targetTriggerTime);
+      rowClicked = true;
+      showGmailBadge('⚡ Clicking latest UTI email row...', '#38bdf8');
+      clickEmailRow(topRow);
 
-      if (fresh) {
-        showGmailBadge(`⚡ Fresh email row found (${formatClock(targetTriggerTime)}) • Opening thread...`, '#38bdf8');
-
-        // Check if OTP happens to be in the snippet
-        const snippetCandidates = extractOtpCandidates(topRow.innerText || '');
-        if (snippetCandidates.length > 0) {
-          return { otp: snippetCandidates[snippetCandidates.length - 1], source: 'snippet' };
-        }
-
-        // Click row to open thread and reveal full OTP
-        if (!rowClicked) {
-          rowClicked = true;
-          clickEmailRow(topRow);
-        }
+      // Re-check snippet in case code is also visible
+      const snippetCode = extractFromGeneralText(topRow.innerText || '');
+      if (snippetCode) {
+        return { otp: snippetCode, source: 'row_snippet' };
       }
     }
 
@@ -218,46 +167,38 @@
 
   function startOtpScanner() {
     if (hasFoundOtp) return;
-
-    const clockStr = formatClock(targetTriggerTime);
-    showGmailBadge(`⏳ Scanning for email row from panonline@utiitsl.com (${clockStr})...`, '#38bdf8');
+    showGmailBadge('🔍 Scanning for UTI login email in Inbox...', '#38bdf8');
 
     if (pollInterval) clearInterval(pollInterval);
 
     pollInterval = setInterval(() => {
       attempts++;
 
-      // Auto-refresh Gmail every 3 attempts to pull incoming mail
-      if (attempts % 3 === 0 && !rowClicked) {
+      // Auto-refresh inbox if row not opened after 4 attempts
+      if (attempts % 4 === 0 && !rowClicked) {
         triggerGmailRefresh();
       }
 
-      const result = findAndExtractOtp();
+      const res = scanAndExtract();
 
-      if (result && result.otp) {
+      if (res && res.otp) {
         hasFoundOtp = true;
         clearInterval(pollInterval);
-        showGmailBadge(`✅ Found Fresh OTP: ${result.otp} • Submitting to UTI Portal...`, '#10b981');
+        showGmailBadge(`✅ Found Top OTP: ${res.otp} • Submitting to UTI Portal...`, '#10b981');
 
         try {
-          chrome.runtime.sendMessage({ action: 'otpExtracted', code: result.otp }, () => {
+          chrome.runtime.sendMessage({ action: 'otpExtracted', code: res.otp }, () => {
             void chrome.runtime.lastError;
           });
         } catch (e) {}
-      } else {
-        showGmailBadge(
-          `⏳ Awaiting fresh email row for ${clockStr} (${attempts}/${MAX_ATTEMPTS})...`,
-          '#38bdf8'
-        );
-
-        if (attempts >= MAX_ATTEMPTS) {
-          clearInterval(pollInterval);
-          showGmailBadge('⚠️ Could not open email or find OTP. Click the email row manually.', '#f59e0b');
-        }
+      } else if (attempts >= MAX_ATTEMPTS) {
+        clearInterval(pollInterval);
+        showGmailBadge('⚠️ Could not auto-detect OTP. Please open the email and enter code.', '#f59e0b');
       }
-    }, 800);
+    }, 500);
   }
 
+  // Listener for background signal
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg && msg.action === 'readOtpNow') {
       attempts = 0;
@@ -271,13 +212,14 @@
     return false;
   });
 
+  // Auto-init on page load if waiting
   chrome.storage.local.get(['isWaitingForOtp', 'otpRequestedAt'], (res) => {
     const isWaiting = Boolean(res && res.isWaitingForOtp);
     const reqTime = res && res.otpRequestedAt ? Number(res.otpRequestedAt) : Date.now();
 
     if (isWaiting && Date.now() - reqTime < 180000) {
       targetTriggerTime = reqTime;
-      setTimeout(startOtpScanner, 400);
+      setTimeout(startOtpScanner, 300);
     }
   });
 })();
