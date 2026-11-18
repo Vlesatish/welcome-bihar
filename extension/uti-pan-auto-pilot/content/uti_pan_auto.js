@@ -1754,6 +1754,27 @@
         throw new Error('Candidate photo or signature URL missing from Welcome Bihar');
       }
 
+      // Strict safety guard: Validate against table candidate name
+      const tableRows = Array.from(document.querySelectorAll('table tr'));
+      let tableRowName = '';
+      for (const r of tableRows) {
+        const cells = Array.from(r.querySelectorAll('td'));
+        if (cells.length >= 4 && cells[2] && cells[2].innerText && !cells[2].innerText.includes('Upload')) {
+          tableRowName = cells[2].innerText.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+          break;
+        }
+      }
+
+      if (tableRowName && activeCand) {
+        const candUpper = (activeCand.full_name || '').toUpperCase().trim();
+        if (!tableRowName.includes(candUpper) && !candUpper.includes(tableRowName)) {
+          alert(`⚠️ CANDIDATE MISMATCH BLOCKED!\n\nUTI Table is for: ${tableRowName}\nAttempted to attach: ${candUpper}\n\nOperation stopped to guarantee 100% correct candidate upload.`);
+          updateBadge(`❌ Mismatch blocked: ${tableRowName} vs ${candUpper}`, '#ef4444');
+          docUploadLock = false;
+          return;
+        }
+      }
+
       // 1. User-Provided Standard PAN Form PDF (assets/default_pan_form.pdf via background)
       const panFormFile = await fetchFileViaBackground('assets/default_pan_form.pdf', 'PAN_Form_Alongwith_Documents.pdf', 'application/pdf');
 
@@ -1786,6 +1807,45 @@
       if (!inputs.panFormInput.files || inputs.panFormInput.files.length === 0) {
         throw new Error('PAN form input failed to receive file');
       }
+
+      // Render Visual Confirmation Card directly inside the UTI modal
+      let previewBox = modal.querySelector('#wb-modal-preview-box');
+      if (!previewBox) {
+        previewBox = document.createElement('div');
+        previewBox.id = 'wb-modal-preview-box';
+        previewBox.style.cssText = 'margin:10px 0;padding:10px 14px;background:#f8fafc;border:2px solid #10b981;border-radius:8px;font-family:sans-serif;box-shadow:0 2px 10px rgba(0,0,0,0.06);';
+        const actionRow = modal.querySelector('.ui-dialog-buttonpane, .modal-footer, div[style*="text-align: center"], div[style*="text-align:center"]') || modal;
+        if (actionRow && actionRow !== modal) {
+          actionRow.parentNode.insertBefore(previewBox, actionRow);
+        } else {
+          modal.appendChild(previewBox);
+        }
+      }
+
+      previewBox.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e2e8f0;padding-bottom:5px;margin-bottom:8px;">
+          <div>
+            <strong style="color:#0f172a;font-size:13px;">✅ Candidate: <span style="color:#0284c7;">${activeCand.full_name}</span></strong>
+            <span style="font-size:11px;color:#64748b;margin-left:6px;">(Father: ${activeCand.father_name || '-'})</span>
+          </div>
+          <span style="background:#dcfce7;color:#15803d;font-weight:700;font-size:11px;padding:2px 8px;border-radius:12px;">Verified Candidate Match</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:14px;">
+          <div style="text-align:center;">
+            <div style="font-size:10px;font-weight:700;color:#64748b;margin-bottom:3px;">PHOTO (300 DPI)</div>
+            <img src="${activeCand.photo_url}" style="width:50px;height:50px;object-fit:cover;border:1.5px solid #cbd5e1;border-radius:4px;" />
+          </div>
+          <div style="text-align:center;">
+            <div style="font-size:10px;font-weight:700;color:#64748b;margin-bottom:3px;">SIGNATURE (600 DPI)</div>
+            <img src="${activeCand.signature_url}" style="width:90px;height:40px;object-fit:contain;background:#fff;border:1.5px solid #cbd5e1;border-radius:4px;" />
+          </div>
+          <div style="flex:1;font-size:11px;color:#334155;line-height:1.4;">
+            <div>📄 <b>Form:</b> PAN_Form_Alongwith_Documents.pdf</div>
+            <div>📷 <b>Photo:</b> ${photoFile.name}</div>
+            <div>✍️ <b>Sign:</b> ${sigFile.name}</div>
+          </div>
+        </div>
+      `;
 
       if (AUTO_CLICK_MODAL_UPLOAD) {
         updateBadge('✅ All 3 Files Attached • Submitting Upload...', '#10b981');
