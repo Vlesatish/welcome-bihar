@@ -101,7 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   btnOpenUti.addEventListener('click', () => {
     chrome.runtime.sendMessage({ action: 'launchCandidate', candidate: activeCand }, () => {
-      setStatus('Opening UTI PAN Form... 🚀', '#38bdf8');
+      setStatus('Opening vleHome.action... 🚀', '#38bdf8');
     });
   });
 

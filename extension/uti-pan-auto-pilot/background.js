@@ -1,6 +1,6 @@
 // =========================================================================
 // Welcome Bihar - UTI PAN Auto-Pilot (Background Service Worker, MV3)
-// Polls /api/pan-card/queue and opens vleHome.action ONLY when data arrives
+// ONLY ONE LINK: https://www.myutiitsl.com/panonlineservices/vleHome.action
 // =========================================================================
 
 const DEFAULT_PORTAL_URL = 'https://bihargo.xyz';
@@ -23,6 +23,19 @@ function getConfig() {
   });
 }
 
+function getVleHomeTabs() {
+  return new Promise((resolve) => {
+    chrome.tabs.query({}, (allTabs) => {
+      void chrome.runtime.lastError;
+      const matched = (allTabs || []).filter((t) => {
+        const u = (t.url || t.pendingUrl || '').toLowerCase();
+        return u.includes('vlehome');
+      });
+      resolve(matched);
+    });
+  });
+}
+
 function getAllUtiTabs() {
   return new Promise((resolve) => {
     chrome.tabs.query({}, (allTabs) => {
@@ -36,16 +49,15 @@ function getAllUtiTabs() {
   });
 }
 
-async function closeAllUtiTabs() {
-  const tabs = await getAllUtiTabs();
-  const tabIds = tabs.map((t) => t.id).filter(Boolean);
-  if (tabIds.length > 0) {
-    await new Promise((resolve) => {
-      chrome.tabs.remove(tabIds, () => {
-        void chrome.runtime.lastError;
-        resolve();
-      });
-    });
+async function closeErrorTabs() {
+  const allTabs = await getAllUtiTabs();
+  const errorTabs = allTabs.filter((t) => {
+    const u = (t.url || t.pendingUrl || '').toLowerCase();
+    return u.includes('error') || u.includes('something+went+wrong');
+  });
+  const ids = errorTabs.map((t) => t.id).filter(Boolean);
+  if (ids.length > 0) {
+    chrome.tabs.remove(ids, () => void chrome.runtime.lastError);
   }
 }
 
@@ -60,9 +72,13 @@ async function openVleHomeOnly(cand) {
       });
     }
 
-    const openTabs = await getAllUtiTabs();
-    if (openTabs.length === 0) {
-      // Sirf aur sirf vleHome.action open karo jab koi tab na khula ho
+    // Close any dead error tabs first
+    await closeErrorTabs();
+
+    // Check if vleHome.action is already open
+    const vleTabs = await getVleHomeTabs();
+    if (vleTabs.length === 0) {
+      // Sirf aur sirf vleHome.action open karo
       await new Promise((resolve) => {
         chrome.tabs.create({ url: VLE_HOME_URL, active: true }, () => {
           void chrome.runtime.lastError;
@@ -70,8 +86,8 @@ async function openVleHomeOnly(cand) {
         });
       });
     } else {
-      // Agar UTI ka tab pehle se khula hai, duplicate mat banao — usi tab ko focus karo
-      chrome.tabs.update(openTabs[0].id, { active: true });
+      // Tab pehle se khula hai, focus karo
+      chrome.tabs.update(vleTabs[0].id, { active: true });
     }
   } finally {
     setTimeout(() => {
@@ -125,13 +141,13 @@ async function checkQueueAndLaunch(forceRestart = false) {
     const candKey = String(firstCand.app_ref || firstCand.id);
     activeCandidateKey = candKey;
 
-    // Sirf naya data detect hone par ya force button dabane par vleHome open hoga
-    const openTabs = await getAllUtiTabs();
-    if (forceRestart || (lastLaunchedCandKey !== candKey && openTabs.length === 0)) {
+    // Naya data detect hone par ya force button dabane par vleHome open karo
+    const vleTabs = await getVleHomeTabs();
+    if (forceRestart || (lastLaunchedCandKey !== candKey && vleTabs.length === 0)) {
       lastLaunchedCandKey = candKey;
       await openVleHomeOnly(firstCand);
     } else {
-      // Candidate data update karo taaki badge me dikhta rahe
+      // Update candidate details in local storage for badge
       await chrome.storage.local.set({
         currentCandidate: firstCand
       });
@@ -193,7 +209,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         activeCandidateKey = null;
         lastLaunchedCandKey = null;
         await chrome.storage.local.remove(['currentCandidate', 'currentUtiRefNo']);
-        await closeAllUtiTabs();
         setTimeout(() => checkQueueAndLaunch(true), 1000);
         sendResponse({ success: Boolean(data && data.success), data });
       } catch (err) {
@@ -214,7 +229,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         activeCandidateKey = null;
         lastLaunchedCandKey = null;
         await chrome.storage.local.remove(['currentCandidate', 'currentUtiRefNo']);
-        await closeAllUtiTabs();
         setTimeout(() => checkQueueAndLaunch(true), 1000);
         sendResponse({ success: Boolean(data && data.success), data });
       } catch (err) {
