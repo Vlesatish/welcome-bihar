@@ -1709,34 +1709,66 @@
   let docUploadLock = false;
   let lastUploadedAppNo = '';
 
+  function openDocUploadModalSafe(uploadEl, appNo) {
+    if (!uploadEl) return;
+
+    // 1. If inline onclick attribute exists, run it in main world
+    const onclickStr = uploadEl.getAttribute('onclick');
+    if (onclickStr) {
+      try {
+        const s = document.createElement('script');
+        s.textContent = `(function() { try { ${onclickStr} } catch(e){ console.error(e); } })();`;
+        (document.head || document.documentElement).appendChild(s);
+        s.remove();
+        return;
+      } catch (e) {}
+    }
+
+    // 2. If href is javascript:
+    const href = (uploadEl.getAttribute('href') || '').trim();
+    if (href.toLowerCase().startsWith('javascript:')) {
+      try {
+        const s = document.createElement('script');
+        s.textContent = href.replace(/^javascript:/i, '');
+        (document.head || document.documentElement).appendChild(s);
+        s.remove();
+        return;
+      } catch (e) {}
+    }
+
+    // 3. Safe click dispatch in page context with preventDefault on navigation
+    try {
+      const s = document.createElement('script');
+      s.textContent = `
+        (function() {
+          const rows = Array.from(document.querySelectorAll('table tr'));
+          for (const r of rows) {
+            if (!'${appNo}' || r.innerText.includes('${appNo}')) {
+              const links = Array.from(r.querySelectorAll('a, button, input'));
+              const el = links.find(l => (l.innerText || l.value || '').trim().toLowerCase() === 'upload');
+              if (el) {
+                const prevent = (e) => {
+                  const h = (el.getAttribute('href') || '').toLowerCase();
+                  if (h.includes('docuploadlistpanapp') || h === '#' || h === '') {
+                    e.preventDefault();
+                  }
+                };
+                el.addEventListener('click', prevent, { once: true });
+                el.click();
+                break;
+              }
+            }
+          }
+        })();
+      `;
+      (document.head || document.documentElement).appendChild(s);
+      s.remove();
+    } catch (e) {}
+  }
+
   function clickWithoutNavigation(el) {
     if (!el) return;
-
-    // 1. If it has an inline onclick attribute, execute it directly
-    const onclickAttr = el.getAttribute('onclick');
-    if (onclickAttr) {
-      try {
-        const fn = new Function('event', onclickAttr);
-        const fakeEvt = { preventDefault: () => {}, stopPropagation: () => {}, target: el };
-        fn.call(el, fakeEvt);
-        return;
-      } catch (err) {
-        console.warn('inline onclick execution failed, falling back to safe event dispatch', err);
-      }
-    }
-
-    // 2. Prevent default anchor navigation on this click
-    const preventNav = (e) => {
-      e.preventDefault();
-      el.removeEventListener('click', preventNav, true);
-    };
-    el.addEventListener('click', preventNav, true);
-
-    try {
-      el.click();
-    } catch (err) {
-      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-    }
+    openDocUploadModalSafe(el, '');
   }
 
   function findCandidateUploadRow(appNo, candidateName) {
@@ -2544,15 +2576,21 @@
           }
           updateBadge(`📂 Candidate: ${cand.full_name} • Attaching Documents...`, '#0ea5e9');
 
-          // Open modal if not already open
+          // Check if modal already open
           const existingModal = findDocUploadModal();
-          if (!existingModal) {
-            uploadEl._isScriptClicking = true;
-            clickWithoutNavigation(uploadEl);
-            setTimeout(() => { uploadEl._isScriptClicking = false; }, 600);
+          if (existingModal) {
+            const inputs = findDocUploadInputs(existingModal);
+            if (inputs.panFormInput && inputs.pictureInput && inputs.signatureInput) {
+              docUploadLock = true;
+              attachDocumentsToModal(inputs, cand, existingModal);
+              return;
+            }
           }
 
-          // Poll up to 25 times (every 80ms) for modal inputs and attach immediately
+          // Trigger native upload modal without navigating the page
+          openDocUploadModalSafe(uploadEl, appNo);
+
+          // Poll up to 35 times (every 80ms) for modal inputs and attach immediately
           let tries = 0;
           const pollTimer = setInterval(() => {
             tries++;
@@ -2565,7 +2603,7 @@
                 attachDocumentsToModal(inputs, cand, m);
               }
             }
-            if (tries >= 25) {
+            if (tries >= 35) {
               clearInterval(pollTimer);
             }
           }, 80);
@@ -2574,16 +2612,29 @@
         }
       }
 
-      // Hook click on native Upload link - prevent reload navigation
-      uploadEl.addEventListener('click', (e) => {
-        if (uploadEl._isScriptClicking) return;
-        const href = (uploadEl.getAttribute('href') || '').toLowerCase();
-        if (href.includes('docuploadlistpanapp') || href === '#' || href === '') {
-          e.preventDefault();
-        }
+      // Hook click on native Upload link - cache active candidate and start watcher (no recursion)
+      uploadEl.addEventListener('click', () => {
         window._activeRowAppNo = appNo;
         window._activeRowCandName = candName;
-        triggerUploadForRow();
+        let tries = 0;
+        const pollTimer = setInterval(() => {
+          tries++;
+          const m = findDocUploadModal();
+          if (m) {
+            const inputs = findDocUploadInputs(m);
+            if (inputs.panFormInput && inputs.pictureInput && inputs.signatureInput) {
+              clearInterval(pollTimer);
+              const c = window._docTableCandidateCache[candName.toUpperCase()] || (appNo ? window._docTableCandidateCache[appNo] : null) || window._activeRowCandidate;
+              if (c) {
+                docUploadLock = true;
+                attachDocumentsToModal(inputs, c, m);
+              }
+            }
+          }
+          if (tries >= 35) {
+            clearInterval(pollTimer);
+          }
+        }, 80);
       });
 
       const btn = document.createElement('button');
@@ -2703,67 +2754,11 @@
       return;
     }
 
-    // 3. Modal not open yet: Match candidate in table and auto-click row Upload button!
-    if (!autoRowUploadTriggered) {
-      chrome.storage.local.get(['currentCandidate', 'queueList', 'currentUtiRefNo'], async (res) => {
-        let cand = res.currentCandidate || (Array.isArray(res.queueList) && res.queueList[0]) || null;
-        let targetName = cand ? (cand.full_name || cand.applicant_name) : '';
-        let targetAppNo = res.currentUtiRefNo ? String(res.currentUtiRefNo).replace(/^U-/i, '').trim() : '';
-
-        // Match row in the table
-        let rowMatch = (targetName || targetAppNo) ? findCandidateUploadRow(targetAppNo, targetName) : null;
-
-        // If not matched, pick first pending row in visible table
-        if (!rowMatch) {
-          const firstInfo = getFirstVisibleTableRowCandInfo();
-          if (firstInfo && (firstInfo.candName || firstInfo.appNo)) {
-            rowMatch = findCandidateUploadRow(firstInfo.appNo, firstInfo.candName);
-            if (rowMatch) {
-              targetName = firstInfo.candName;
-              targetAppNo = firstInfo.appNo;
-            }
-          }
-        }
-
-        if (rowMatch) {
-          const rowAppKey = `wb_upload_autotriggered_${targetAppNo || targetName || 'row1'}`;
-          if (sessionStorage.getItem(rowAppKey)) {
-            // Already triggered once in this session for this candidate - do not trigger again!
-            updateBadge(`⚡ Ready for ${targetName || targetAppNo} • Click "⚡ Auto Upload" if modal not open`, '#10b981');
-            return;
-          }
-
-          sessionStorage.setItem(rowAppKey, '1');
-          autoRowUploadTriggered = true;
-          updateBadge(`⚡ Auto-opening Upload for ${targetName || targetAppNo}...`, '#0ea5e9');
-
-          if (cand) {
-            window._activeRowCandidate = cand;
-            window._selectedRowCandidate = cand;
-            window._activeRowCandName = targetName;
-            window._activeRowAppNo = targetAppNo;
-          } else if (targetName) {
-            fetchCandidateBySearch(targetName).then((c) => {
-              if (c) {
-                window._activeRowCandidate = c;
-                window._selectedRowCandidate = c;
-              }
-            });
-          }
-
-          setTimeout(() => {
-            if (rowMatch.autoUploadBtn) {
-              rowMatch.autoUploadBtn.click();
-            } else if (rowMatch.uploadBtn) {
-              clickWithoutNavigation(rowMatch.uploadBtn);
-            }
-          }, 500);
-          return;
-        }
-
-        updateBadge('📄 Document Upload List • Waiting for candidate row', '#38bdf8');
-      });
-    }
+    // 3. Modal not open yet: Standby stably on the table, update badge, NO AUTO-CLICK to prevent any refresh!
+    const firstInfo = getFirstVisibleTableRowCandInfo();
+    const candName = firstInfo?.candName || '';
+    const candAppNo = firstInfo?.appNo || '';
+    updateBadge(`📄 Document Upload List • Candidate: ${candName || candAppNo} • Click "⚡ Auto Upload" to attach files`, '#10b981');
   }
 
   // -----------------------------------------------------------------------
