@@ -132,8 +132,11 @@ class PanCardController
         }
 
         if ($search !== '') {
-            $where[] = "(a.app_ref LIKE :search OR a.applicant_name LIKE :search OR a.applicant_identifier LIKE :search OR a.applicant_mobile LIKE :search)";
-            $params[':search'] = '%' . $search . '%';
+            $where[] = "(a.app_ref LIKE :s1 OR a.applicant_name LIKE :s2 OR a.applicant_identifier LIKE :s3 OR a.applicant_mobile LIKE :s4)";
+            $params[':s1'] = '%' . $search . '%';
+            $params[':s2'] = '%' . $search . '%';
+            $params[':s3'] = '%' . $search . '%';
+            $params[':s4'] = '%' . $search . '%';
         }
 
         $whereSql = implode(' AND ', $where);
@@ -997,8 +1000,14 @@ class PanCardController
 
                 $toAbsUrl = static function (?string $rel) use ($baseUrl): ?string {
                     if (!$rel) return null;
-                    if (preg_match('#^https?://#i', $rel)) return $rel;
-                    return $baseUrl . '/' . ltrim($rel, '/');
+                    $url = $rel;
+                    if (!preg_match('#^https?://#i', $url)) {
+                        $url = 'https://www.bihargo.xyz/' . ltrim($url, '/');
+                    }
+                    // Fix outdated domain/subdomain mappings
+                    $url = preg_replace('#^https?://welcome\.bihargo\.xyz#i', 'https://www.bihargo.xyz', $url);
+                    $url = preg_replace('#^https?://localhost(:\d+)?#i', 'https://www.bihargo.xyz', $url);
+                    return $url;
                 };
 
                 $queue[] = [
@@ -1041,7 +1050,7 @@ class PanCardController
     }
 
     /**
-     * Resolve application ID from id or app_ref or candidate attributes
+     * Resolve application ID from id, app_ref, coupon_no, mobile, aadhaar, or applicant name
      */
     private function resolvePanAppId(array $payload): int
     {
@@ -1061,12 +1070,27 @@ class PanCardController
             if ($found > 0) return $found;
         }
 
-        // Match by 10-digit mobile number
+        // Match by Coupon Number / UTI Ref No in remarks or portal_tracking_json
+        $coupon = trim((string)($payload['uti_ref_no'] ?? $payload['coupon_no'] ?? ''));
+        if ($coupon !== '') {
+            $cleanCoupon = preg_replace('/^U-/i', '', $coupon);
+            $stmt = $this->db->prepare("SELECT id FROM applications WHERE remarks LIKE ? OR portal_tracking_json LIKE ? ORDER BY id DESC LIMIT 1");
+            $stmt->execute(['%' . $cleanCoupon . '%', '%' . $cleanCoupon . '%']);
+            $found = (int)$stmt->fetchColumn();
+            if ($found > 0) return $found;
+        }
+
+        // Match by 10-digit mobile number (across all active statuses)
         $mob = preg_replace('/\D/', '', (string)($payload['mobile_no'] ?? $payload['mobile'] ?? ''));
         if ($mob !== '' && strlen($mob) >= 10) {
             $mob10 = substr($mob, -10);
-            $stmt = $this->db->prepare("SELECT a.id FROM applications a JOIN application_field_values f ON f.application_id = a.id WHERE a.status = 'PENDING' AND f.field_name = 'mobile_no' AND f.field_value LIKE ? ORDER BY a.id DESC LIMIT 1");
-            $stmt->execute(['%' . $mob10 . '%']);
+            $stmt = $this->db->prepare("SELECT id FROM applications WHERE applicant_mobile LIKE ? ORDER BY id DESC LIMIT 1");
+            $stmt->execute(['%' . $mob10]);
+            $found = (int)$stmt->fetchColumn();
+            if ($found > 0) return $found;
+
+            $stmt = $this->db->prepare("SELECT a.id FROM applications a JOIN application_field_values f ON f.application_id = a.id WHERE f.field_name = 'mobile_no' AND f.field_value LIKE ? ORDER BY a.id DESC LIMIT 1");
+            $stmt->execute(['%' . $mob10]);
             $found = (int)$stmt->fetchColumn();
             if ($found > 0) return $found;
         }
@@ -1075,23 +1099,33 @@ class PanCardController
         $aadhaar = preg_replace('/\D/', '', (string)($payload['aadhaar_no'] ?? $payload['aadhaar'] ?? ''));
         if ($aadhaar !== '' && strlen($aadhaar) >= 4) {
             $last4 = substr($aadhaar, -4);
-            $stmt = $this->db->prepare("SELECT a.id FROM applications a JOIN application_field_values f ON f.application_id = a.id WHERE a.status = 'PENDING' AND f.field_name = 'aadhaar_no' AND f.field_value LIKE ? ORDER BY a.id DESC LIMIT 1");
+            $stmt = $this->db->prepare("SELECT id FROM applications WHERE applicant_identifier LIKE ? ORDER BY id DESC LIMIT 1");
+            $stmt->execute(['%' . $last4]);
+            $found = (int)$stmt->fetchColumn();
+            if ($found > 0) return $found;
+
+            $stmt = $this->db->prepare("SELECT a.id FROM applications a JOIN application_field_values f ON f.application_id = a.id WHERE f.field_name = 'aadhaar_no' AND f.field_value LIKE ? ORDER BY a.id DESC LIMIT 1");
             $stmt->execute(['%' . $last4]);
             $found = (int)$stmt->fetchColumn();
             if ($found > 0) return $found;
         }
 
-        // Match by applicant full name
+        // Match by applicant name (direct on applications table and field values)
         $name = trim((string)($payload['applicant_name'] ?? $payload['full_name'] ?? ''));
         if ($name !== '') {
-            $stmt = $this->db->prepare("SELECT a.id FROM applications a JOIN application_field_values f ON f.application_id = a.id WHERE a.status = 'PENDING' AND f.field_name = 'full_name' AND LOWER(f.field_value) = LOWER(?) ORDER BY a.id DESC LIMIT 1");
+            $stmt = $this->db->prepare("SELECT id FROM applications WHERE LOWER(TRIM(applicant_name)) = LOWER(?) ORDER BY id DESC LIMIT 1");
+            $stmt->execute([$name]);
+            $found = (int)$stmt->fetchColumn();
+            if ($found > 0) return $found;
+
+            $stmt = $this->db->prepare("SELECT a.id FROM applications a JOIN application_field_values f ON f.application_id = a.id WHERE f.field_name = 'full_name' AND LOWER(TRIM(f.field_value)) = LOWER(?) ORDER BY a.id DESC LIMIT 1");
             $stmt->execute([$name]);
             $found = (int)$stmt->fetchColumn();
             if ($found > 0) return $found;
         }
 
-        // Fallback: Latest active PENDING PAN application
-        $stmt = $this->db->prepare("SELECT id FROM applications WHERE status = 'PENDING' ORDER BY id ASC LIMIT 1");
+        // Fallback: Latest active PAN application
+        $stmt = $this->db->prepare("SELECT id FROM applications WHERE status IN ('PENDING', 'IN_PROCESS', 'UNDER_REVIEW') ORDER BY id ASC LIMIT 1");
         $stmt->execute();
         $found = (int)$stmt->fetchColumn();
         if ($found > 0) return $found;

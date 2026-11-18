@@ -154,6 +154,11 @@ async function checkQueueAndLaunch(forceRestart = false) {
     });
 
     if (queue.length === 0) {
+      // If a candidate is actively in progress or awaiting document upload, DO NOT wipe storage!
+      const stored = await new Promise((r) => chrome.storage.local.get(['currentCandidate', 'awaitingDocUpload'], r));
+      if (stored.currentCandidate || stored.awaitingDocUpload) {
+        return { success: true, count: 0, inFlight: true };
+      }
       activeCandidateKey = null;
       lastLaunchedCandKey = null;
       await chrome.storage.local.remove(['currentCandidate', 'currentUtiRefNo', 'completedReceiptNo', 'awaitingDocUpload']);
@@ -347,18 +352,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'fetchAssetData') {
     (async () => {
       try {
-        let cleanUrl = String(msg.url || '');
+        let cleanUrl = String(msg.url || '').trim();
         if (cleanUrl.startsWith('assets/')) {
           cleanUrl = chrome.runtime.getURL(cleanUrl);
         } else {
-          cleanUrl = cleanUrl.replace(/welcome\.bihargo\.xyz/gi, 'bihargo.xyz');
+          cleanUrl = cleanUrl.replace(/^https?:\/\/welcome\.bihargo\.xyz/i, 'https://www.bihargo.xyz');
+          cleanUrl = cleanUrl.replace(/^https?:\/\/localhost(:\d+)?/i, 'https://www.bihargo.xyz');
+          if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
+            const cfg = await getConfig();
+            const base = (cfg.portalUrl || 'https://www.bihargo.xyz').replace(/\/+$/, '');
+            cleanUrl = `${base}/${cleanUrl.replace(/^\/+/, '')}`;
+          }
         }
 
         const res = await fetch(cleanUrl, { cache: 'no-cache' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status} when fetching ${cleanUrl}`);
 
         const buf = await res.arrayBuffer();
         const bytes = new Uint8Array(buf);
+
+        // Sanity check: Ensure not 404/500 HTML error page
+        if (bytes.length > 10 && bytes[0] === 0x3C && (bytes[1] === 0x21 || bytes[1] === 0x68 || bytes[1] === 0x48)) {
+          throw new Error(`File at ${cleanUrl} returned HTML error page instead of binary media`);
+        }
+
         let binary = '';
         const len = bytes.byteLength;
         const chunkSize = 8192;

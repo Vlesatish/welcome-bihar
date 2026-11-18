@@ -1853,6 +1853,26 @@
     }
   }
 
+  function fixMediaUrl(url) {
+    if (!url) return '';
+    let u = String(url).trim();
+    u = u.replace(/^https?:\/\/welcome\.bihargo\.xyz/i, 'https://www.bihargo.xyz');
+    u = u.replace(/^https?:\/\/localhost(:\d+)?/i, 'https://www.bihargo.xyz');
+    if (u.startsWith('/')) {
+      u = 'https://www.bihargo.xyz' + u;
+    }
+    return u;
+  }
+
+  function sanitizeCandidate(c) {
+    if (!c) return null;
+    c.photo_url = fixMediaUrl(c.photo_url);
+    c.signature_url = fixMediaUrl(c.signature_url);
+    c.aadhar_card_url = fixMediaUrl(c.aadhar_card_url);
+    c.pan_form_url = fixMediaUrl(c.pan_form_url);
+    return c;
+  }
+
   // Helper to fetch candidate details by Name, App Ref or Coupon from BiharGo (even if already completed)
   async function fetchCandidateBySearch(searchTerm) {
     return new Promise((resolve) => {
@@ -1866,7 +1886,7 @@
             const resp = await fetch(`${portalUrl}/api/pan-card/queue?status=ALL&search=${clean}`);
             const json = await resp.json();
             if (json && json.success && Array.isArray(json.data) && json.data.length > 0) {
-              resolve(json.data[0]);
+              resolve(sanitizeCandidate(json.data[0]));
               return;
             }
 
@@ -1881,7 +1901,7 @@
                   return fn.includes(cleanTerm.toUpperCase()) || cleanTerm.toUpperCase().includes(fn);
                 });
                 if (found) {
-                  resolve(found);
+                  resolve(sanitizeCandidate(found));
                   return;
                 }
               }
@@ -1896,7 +1916,7 @@
           const respAll = await fetch(`${portalUrl}/api/pan-card/queue?status=ALL&limit=25`);
           const jsonAll = await respAll.json();
           if (jsonAll && jsonAll.success && Array.isArray(jsonAll.data) && jsonAll.data.length > 0) {
-            resolve(jsonAll.data[0]);
+            resolve(sanitizeCandidate(jsonAll.data[0]));
             return;
           }
           resolve(null);
@@ -2020,6 +2040,9 @@
     document.body.appendChild(bar);
   }
 
+  // Cache of candidates found in the current UTI table
+  window._docTableCandidateCache = window._docTableCandidateCache || {};
+
   // Inject "⚡ Auto Upload" button into every candidate row in UTI document table
   function injectDocUploadButtons() {
     const rows = Array.from(document.querySelectorAll('table tr'));
@@ -2047,12 +2070,29 @@
         candName = cells[1].innerText.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
       }
 
+      uploadEl.dataset.appNo = appNo;
+      uploadEl.dataset.candName = candName;
+
+      // Pre-fetch candidate details for this row so clicking is instantaneous
+      if (candName && !window._docTableCandidateCache[candName.toUpperCase()]) {
+        fetchCandidateBySearch(candName).then((c) => {
+          if (c) {
+            window._docTableCandidateCache[candName.toUpperCase()] = c;
+            if (appNo) window._docTableCandidateCache[appNo] = c;
+          }
+        });
+      }
+
       // Hook click on native Upload link
       uploadEl.addEventListener('click', async () => {
-        let cand = null;
-        if (candName) cand = await fetchCandidateBySearch(candName);
+        window._activeRowAppNo = appNo;
+        window._activeRowCandName = candName;
+
+        let cand = window._docTableCandidateCache[candName.toUpperCase()] || (appNo ? window._docTableCandidateCache[appNo] : null);
+        if (!cand && candName) cand = await fetchCandidateBySearch(candName);
         if (!cand && appNo) cand = await fetchCandidateBySearch(appNo);
         if (cand) {
+          window._activeRowCandidate = cand;
           window._selectedRowCandidate = cand;
           currentCandidate = cand;
           chrome.storage.local.set({ currentCandidate: cand });
@@ -2079,10 +2119,13 @@
         btn.innerText = '⏳ Loading...';
         btn.style.background = '#0ea5e9';
 
+        window._activeRowAppNo = appNo;
+        window._activeRowCandName = candName;
+
         updateBadge(`🔍 Fetching details for ${candName || appNo} from Welcome Bihar...`, '#0ea5e9');
 
-        let cand = null;
-        if (candName) {
+        let cand = window._docTableCandidateCache[candName.toUpperCase()] || (appNo ? window._docTableCandidateCache[appNo] : null);
+        if (!cand && candName) {
           cand = await fetchCandidateBySearch(candName);
         }
         if (!cand && appNo) {
@@ -2090,6 +2133,7 @@
         }
 
         if (cand) {
+          window._activeRowCandidate = cand;
           window._selectedRowCandidate = cand;
           currentCandidate = cand;
           chrome.storage.local.set({ currentCandidate: cand });
@@ -2158,7 +2202,45 @@
           return;
         }
 
-        const targetCand = window._selectedRowCandidate || currentCandidate;
+        // Determine specific candidate for this modal
+        let targetCand = window._activeRowCandidate || window._selectedRowCandidate;
+        if (!targetCand && window._activeRowCandName) {
+          targetCand = window._docTableCandidateCache[window._activeRowCandName.toUpperCase()];
+        }
+        if (!targetCand && window._activeRowAppNo) {
+          targetCand = window._docTableCandidateCache[window._activeRowAppNo];
+        }
+
+        // If table has only 1 data row, auto-select that single row's candidate
+        if (!targetCand) {
+          const visibleRows = Array.from(document.querySelectorAll('table tr')).filter((r) => {
+            const t = (r.innerText || '').toLowerCase();
+            return t.includes('upload') && !t.includes('crop and upload');
+          });
+          if (visibleRows.length === 1) {
+            const rowText = (visibleRows[0].innerText || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+            const mApp = rowText.match(/\b(A\d{8,})\b/);
+            const cells = Array.from(visibleRows[0].querySelectorAll('td'));
+            const rName = cells[2] ? cells[2].innerText.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim() : '';
+            if (mApp && window._docTableCandidateCache[mApp[1]]) {
+              targetCand = window._docTableCandidateCache[mApp[1]];
+            } else if (rName && window._docTableCandidateCache[rName.toUpperCase()]) {
+              targetCand = window._docTableCandidateCache[rName.toUpperCase()];
+            }
+          }
+        }
+
+        // Strict verification: Does targetCand belong to the current document list page?
+        const pageText = (document.body ? document.body.innerText : '').toUpperCase();
+        if (targetCand) {
+          const tcName = (targetCand.full_name || '').toUpperCase().trim();
+          const tcCoupon = String(targetCand.coupon_no || targetCand.app_ref || '').replace(/^U-/i, '').trim().toUpperCase();
+          if (!pageText.includes(tcName) && (!tcCoupon || tcCoupon.length < 6 || !pageText.includes(tcCoupon))) {
+            console.warn('Candidate in memory does not match any row in the current table:', tcName);
+            targetCand = null;
+          }
+        }
+
         if (targetCand && targetCand.photo_url && targetCand.signature_url) {
           docUploadLock = true;
           attachDocumentsToModal(inputs, targetCand, modal);
