@@ -396,18 +396,17 @@
 
     // 5. Submit once Individual and NRI No are configured
     if (individualSelected && nriNoSelected) {
-      const submitBtn = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a.btn')).find((b) => {
-        if (!isVisible(b)) return false;
+      const submitBtn = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a.btn, .btn')).find((b) => {
         const txt = (b.textContent || b.value || '').trim().toLowerCase();
-        return txt === 'submit';
+        return txt === 'submit' || txt.startsWith('submit') || (txt.includes('submit') && !txt.includes('cancel'));
       });
 
       if (submitBtn && !prePanSubmitted) {
         prePanSubmitted = true;
-        updateBadge('🚀 prePANForm ready! Auto-submitting...', '#10b981');
+        updateBadge('🚀 prePANForm ready! Submitting...', '#10b981');
         setTimeout(() => {
-          submitBtn.click();
-        }, 350);
+          try { submitBtn.click(); } catch (e) {}
+        }, 400);
       }
     }
   }
@@ -489,6 +488,8 @@
   let vleMenuClicked = false;
 
   function clickApplicationForNewPanMenu() {
+    if (vleMenuClicked) return true;
+
     // 1. Force show any hidden submenus/dropdowns containing the target link
     const dropdowns = Array.from(document.querySelectorAll('ul, div, table')).filter((d) => {
       const t = (d.innerText || d.textContent || '').toLowerCase();
@@ -502,19 +503,7 @@
       } catch (e) {}
     }
 
-    // 2. Simulate mouseover on top menu "Apply New PAN"
-    const topMenu = Array.from(document.querySelectorAll('a, li, th, td, span')).find((el) => {
-      const t = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
-      return t === 'apply new pan';
-    });
-    if (topMenu) {
-      ['mouseover', 'mouseenter', 'mousedown', 'mouseup', 'click'].forEach((evt) => {
-        try { topMenu.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window })); } catch (e) {}
-      });
-      try { topMenu.click(); } catch (e) {}
-    }
-
-    // 3. Find the exact <a> link for "Application for New PAN"
+    // 2. Find the exact <a> link for "Application for New PAN"
     const allLinks = Array.from(document.querySelectorAll('a'));
     const targetLink = allLinks.find((a) => {
       const txt = (a.innerText || a.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -525,15 +514,15 @@
     });
 
     if (targetLink) {
+      vleMenuClicked = true;
+      try { sessionStorage.setItem('wb_pan_menu_clicked', '1'); } catch (e) {}
       updateBadge('🚀 Launching Form 49A...', '#10b981');
-      ['mouseover', 'mouseenter', 'mousedown', 'mouseup', 'click'].forEach((evt) => {
-        try { targetLink.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true, view: window })); } catch (e) {}
-      });
-      try { targetLink.click(); } catch (e) {}
 
-      const onclickAttr = targetLink.getAttribute('onclick');
-      if (onclickAttr) {
-        try { window.eval(onclickAttr); } catch (e) {}
+      // Single native click only (prevents double tab opening)
+      try {
+        targetLink.click();
+      } catch (e) {
+        targetLink.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
       }
       return true;
     }
@@ -541,16 +530,14 @@
   }
 
   function handleVleHomePage() {
-    updateBadge('VLE Home • Open "Apply New PAN" ➔ "Application for New PAN"', '#10b981');
+    updateBadge('VLE Home • Form 49A Ready', '#10b981');
 
-    if (!vleMenuClicked) {
-      vleMenuClicked = true;
+    if (!vleMenuClicked && !sessionStorage.getItem('wb_pan_menu_clicked')) {
       setTimeout(() => {
-        if (!clickApplicationForNewPanMenu()) {
-          setTimeout(clickApplicationForNewPanMenu, 600);
-          setTimeout(clickApplicationForNewPanMenu, 1500);
+        if (!vleMenuClicked) {
+          clickApplicationForNewPanMenu();
         }
-      }, 500);
+      }, 700);
     }
   }
 
