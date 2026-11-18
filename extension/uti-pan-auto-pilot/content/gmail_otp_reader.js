@@ -1,21 +1,19 @@
 // =========================================================================
-// Welcome Bihar - Gmail OTP Auto-Reader
+// Welcome Bihar - Gmail OTP Auto-Reader (5-Second Settle & Freshness Gate)
 // Target: https://mail.google.com/mail/u/0/#inbox
 // Requested by RIOT:
-// 1. Open https://mail.google.com/mail/u/0/#inbox
-// 2. Click the latest panonline / UTI email row
-// 3. Extract the 6-digit OTP from the "Code Requested" widget at the top
+// - Email open hone ke 5 second BAAD OTP uthana taaki naya email aa sake
+// - Purana OTP kabhi nahi uthana
 // =========================================================================
 
 (function () {
   'use strict';
 
   let hasFoundOtp = false;
-  let pollInterval = null;
-  let attempts = 0;
-  const MAX_ATTEMPTS = 50; // 50 * 500ms = 25s max
-  let targetTriggerTime = Date.now();
+  let isSettling = false;
+  let countdownTimer = null;
   let rowClicked = false;
+  let lastUsedOtp = '';
 
   function showGmailBadge(msg, color = '#10b981') {
     let badge = document.getElementById('wb-gmail-otp-badge');
@@ -32,7 +30,7 @@
     badge.innerHTML = `<span>${msg}</span>`;
   }
 
-  // 1. Extract from the top "Code Requested" widget in Gmail (Image 2)
+  // 1. Extract from the top "Code Requested" widget (Image 2)
   function extractFromCodeRequestedWidget() {
     const allElements = Array.from(document.querySelectorAll('div, section, article, tr, td'));
     const codeCard = allElements.find((el) => {
@@ -68,27 +66,31 @@
     return null;
   }
 
-  // 2. Fallback: Extract from message body / general text
-  function extractFromGeneralText(text) {
-    if (!text) return null;
-    const regexes = [
-      /login\s+verification\s+code\s+is\s*[:\-]?\s*(\d{6})/gi,
-      /verification\s+code\s+is\s*[:\-]?\s*(\d{6})/gi,
-      /code\s+is\s*[:\-]?\s*(\d{6})/gi,
-      /OTP\s+is\s*[:\-]?\s*(\d{6})/gi
-    ];
-
-    const results = [];
-    regexes.forEach((rgx) => {
-      let match;
-      while ((match = rgx.exec(text)) !== null) {
-        if (match[1] && /^\d{6}$/.test(match[1])) {
-          results.push(match[1]);
+  // 2. Fallback: Extract from latest message body in thread
+  function extractFromOpenThread() {
+    const openMessages = Array.from(document.querySelectorAll('.ii.gt, .a3s'));
+    if (openMessages.length > 0) {
+      for (let i = openMessages.length - 1; i >= 0; i--) {
+        const bodyTxt = openMessages[i].innerText || '';
+        const regexes = [
+          /login\s+verification\s+code\s+is\s*[:\-]?\s*(\d{6})/gi,
+          /verification\s+code\s+is\s*[:\-]?\s*(\d{6})/gi,
+          /code\s+is\s*[:\-]?\s*(\d{6})/gi,
+          /OTP\s+is\s*[:\-]?\s*(\d{6})/gi
+        ];
+        for (const rgx of regexes) {
+          let match;
+          let last = null;
+          while ((match = rgx.exec(bodyTxt)) !== null) {
+            if (match[1] && /^\d{6}$/.test(match[1])) {
+              last = match[1];
+            }
+          }
+          if (last) return last;
         }
       }
-    });
-
-    return results.length > 0 ? results[results.length - 1] : null;
+    }
+    return null;
   }
 
   function clickEmailRow(row) {
@@ -117,28 +119,89 @@
     }
   }
 
-  function scanAndExtract() {
-    if (hasFoundOtp) return null;
+  function isOpenEmailView() {
+    const widget = document.querySelector('div, section');
+    const hasWidget = document.body && document.body.innerText.includes('Code Requested');
+    const hasOpenMsgs = document.querySelectorAll('.ii.gt, .a3s').length > 0;
+    const hasSubjectHeader = Boolean(document.querySelector('h2.hP, .ha h2'));
+    return hasWidget || hasOpenMsgs || hasSubjectHeader;
+  }
 
-    // STEP A: Check for the "Code Requested" top widget (Image 2)
-    const widgetCode = extractFromCodeRequestedWidget();
-    if (widgetCode) {
-      return { otp: widgetCode, source: 'code_requested_widget' };
+  function executeExtractionAfterWait() {
+    if (hasFoundOtp) return;
+
+    // A. Check top Code Requested widget
+    let code = extractFromCodeRequestedWidget();
+
+    // B. Fallback to latest message body in thread
+    if (!code) {
+      code = extractFromOpenThread();
     }
 
-    // STEP B: Check open email thread / messages
-    const openMessages = Array.from(document.querySelectorAll('.ii.gt, .a3s'));
-    if (openMessages.length > 0) {
-      for (let i = openMessages.length - 1; i >= 0; i--) {
-        const bodyTxt = openMessages[i].innerText || '';
-        const code = extractFromGeneralText(bodyTxt);
-        if (code) {
-          return { otp: code, source: 'open_message_body' };
-        }
+    if (code) {
+      // Check if it's identical to previously submitted OTP
+      if (lastUsedOtp && code === lastUsedOtp) {
+        showGmailBadge(`⏳ Detected previous OTP (${code}) • Refreshing for fresh email...`, '#f59e0b');
+        triggerGmailRefresh();
+        setTimeout(executeExtractionAfterWait, 2000);
+        return;
       }
+
+      hasFoundOtp = true;
+      lastUsedOtp = code;
+      chrome.storage.local.set({ lastSubmittedOtp: code });
+
+      showGmailBadge(`✅ Verified Fresh OTP: ${code} • Submitting to UTI Portal...`, '#10b981');
+
+      try {
+        chrome.runtime.sendMessage({ action: 'otpExtracted', code }, () => {
+          void chrome.runtime.lastError;
+        });
+      } catch (e) {}
+    } else {
+      showGmailBadge('⏳ Waiting for email content to render... Refreshing...', '#38bdf8');
+      triggerGmailRefresh();
+      setTimeout(executeExtractionAfterWait, 1500);
+    }
+  }
+
+  function startSettlingCountdown(seconds = 5) {
+    if (isSettling) return;
+    isSettling = true;
+
+    let remaining = seconds;
+    showGmailBadge(`⏳ Email open • Waiting ${remaining}s for newest email to arrive...`, '#38bdf8');
+
+    if (countdownTimer) clearInterval(countdownTimer);
+
+    countdownTimer = setInterval(() => {
+      remaining--;
+
+      // Halfway refresh to ensure Google fetches new email
+      if (remaining === 2) {
+        triggerGmailRefresh();
+      }
+
+      if (remaining > 0) {
+        showGmailBadge(`⏳ Email open • Waiting ${remaining}s for newest email to arrive...`, '#38bdf8');
+      } else {
+        clearInterval(countdownTimer);
+        showGmailBadge('⚡ 5s completed! Extracting fresh OTP code now...', '#10b981');
+        setTimeout(executeExtractionAfterWait, 300);
+      }
+    }, 1000);
+  }
+
+  function monitorAndTriggerFlow() {
+    if (hasFoundOtp || isSettling) return;
+
+    // Check if we are already inside the open email view
+    if (isOpenEmailView()) {
+      startSettlingCountdown(5);
+      return;
     }
 
-    // STEP C: If on Inbox / List View, locate and click the latest UTI email row
+    // Check if on Inbox list view
     const rows = Array.from(document.querySelectorAll('.zA, tr[role="row"]'));
     const utiRows = rows.filter((r) => {
       const t = (r.innerText || '').toLowerCase();
@@ -150,62 +213,34 @@
     });
 
     if (utiRows.length > 0 && !rowClicked) {
-      const topRow = utiRows[0];
       rowClicked = true;
-      showGmailBadge('⚡ Clicking latest UTI email row...', '#38bdf8');
-      clickEmailRow(topRow);
+      showGmailBadge('⚡ Clicking latest UTI email in Inbox...', '#38bdf8');
+      clickEmailRow(utiRows[0]);
 
-      // Re-check snippet in case code is also visible
-      const snippetCode = extractFromGeneralText(topRow.innerText || '');
-      if (snippetCode) {
-        return { otp: snippetCode, source: 'row_snippet' };
-      }
+      // Start 5 second wait right after clicking row
+      setTimeout(() => {
+        startSettlingCountdown(5);
+      }, 500);
+    } else {
+      showGmailBadge('🔍 Locating latest UTI email in Inbox...', '#38bdf8');
+      triggerGmailRefresh();
     }
-
-    return null;
-  }
-
-  function startOtpScanner() {
-    if (hasFoundOtp) return;
-    showGmailBadge('🔍 Scanning for UTI login email in Inbox...', '#38bdf8');
-
-    if (pollInterval) clearInterval(pollInterval);
-
-    pollInterval = setInterval(() => {
-      attempts++;
-
-      // Auto-refresh inbox if row not opened after 4 attempts
-      if (attempts % 4 === 0 && !rowClicked) {
-        triggerGmailRefresh();
-      }
-
-      const res = scanAndExtract();
-
-      if (res && res.otp) {
-        hasFoundOtp = true;
-        clearInterval(pollInterval);
-        showGmailBadge(`✅ Found Top OTP: ${res.otp} • Submitting to UTI Portal...`, '#10b981');
-
-        try {
-          chrome.runtime.sendMessage({ action: 'otpExtracted', code: res.otp }, () => {
-            void chrome.runtime.lastError;
-          });
-        } catch (e) {}
-      } else if (attempts >= MAX_ATTEMPTS) {
-        clearInterval(pollInterval);
-        showGmailBadge('⚠️ Could not auto-detect OTP. Please open the email and enter code.', '#f59e0b');
-      }
-    }, 500);
   }
 
   // Listener for background signal
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg && msg.action === 'readOtpNow') {
-      attempts = 0;
       hasFoundOtp = false;
+      isSettling = false;
       rowClicked = false;
-      targetTriggerTime = msg.triggerTime || Date.now();
-      startOtpScanner();
+      if (countdownTimer) clearInterval(countdownTimer);
+
+      chrome.storage.local.get(['lastSubmittedOtp'], (res) => {
+        lastUsedOtp = res.lastSubmittedOtp || '';
+        showGmailBadge('🚀 Starting OTP extraction with 5s freshness delay...', '#38bdf8');
+        monitorAndTriggerFlow();
+      });
+
       sendResponse({ started: true });
       return true;
     }
@@ -213,13 +248,20 @@
   });
 
   // Auto-init on page load if waiting
-  chrome.storage.local.get(['isWaitingForOtp', 'otpRequestedAt'], (res) => {
+  chrome.storage.local.get(['isWaitingForOtp', 'otpRequestedAt', 'lastSubmittedOtp'], (res) => {
     const isWaiting = Boolean(res && res.isWaitingForOtp);
     const reqTime = res && res.otpRequestedAt ? Number(res.otpRequestedAt) : Date.now();
+    lastUsedOtp = res && res.lastSubmittedOtp ? res.lastSubmittedOtp : '';
 
     if (isWaiting && Date.now() - reqTime < 180000) {
-      targetTriggerTime = reqTime;
-      setTimeout(startOtpScanner, 300);
+      setTimeout(monitorAndTriggerFlow, 600);
     }
   });
+
+  // Re-check every 1.5 seconds if waiting
+  setInterval(() => {
+    if (!hasFoundOtp && !isSettling) {
+      monitorAndTriggerFlow();
+    }
+  }, 1500);
 })();
