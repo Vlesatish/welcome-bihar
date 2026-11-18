@@ -566,6 +566,32 @@
       }
     }
 
+    // 4. Message / Error Dialog (#errorDiv, #errorDialog, "Kindly enter pincode.")
+    const errorDialog = Array.from(document.querySelectorAll('.ui-dialog')).find((d) => {
+      if (!isVisible(d)) return false;
+      const t = (d.innerText || d.textContent || '').toLowerCase();
+      return (
+        t.includes('kindly enter pincode') ||
+        t.includes('enter pincode') ||
+        (t.includes('message') && !t.includes('re-enter aadhaar') && !t.includes('reference number'))
+      );
+    });
+
+    if (errorDialog) {
+      const okBtn = Array.from(errorDialog.querySelectorAll('.ui-dialog-buttonpane button, button, input[type="button"]')).find((b) => {
+        const t = (b.textContent || b.value || '').trim().toLowerCase();
+        return t === 'ok' || t === 'okay';
+      });
+      if (okBtn) {
+        try {
+          okBtn.click();
+        } catch (e) {
+          okBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+        }
+        handled = true;
+      }
+    }
+
     return handled;
   }
 
@@ -788,18 +814,28 @@
     // 6. District (resDistList)
     const resDistListEl = document.getElementById('resDistList');
     const district = (currentCandidate?.district_name || currentCandidate?.district || '').trim();
+    let districtChanged = false;
     if (resDistListEl && district && (!resDistListEl.value || force)) {
       if (selectOptionByText(resDistListEl, district, false)) {
         filled = true;
+        districtChanged = true;
       }
     }
 
-    // 7. Pin/Zip Code (resPin)
+    // 7. Pin/Zip Code (resPin) - STRICTLY FILLED LAST
     const resPinEl = document.getElementById('resPin');
     const pincode = String(currentCandidate?.pincode || currentCandidate?.pin || '').replace(/\D/g, '').slice(0, 6);
-    if (resPinEl && pincode && (!resPinEl.value || force)) {
-      setInputValue(resPinEl, pincode);
-      filled = true;
+    if (resPinEl && pincode) {
+      if (resPinEl.value !== pincode || force) {
+        // Allow district AJAX to settle, then fill PIN
+        const delay = districtChanged ? 400 : 100;
+        setTimeout(() => {
+          if (resPinEl.value !== pincode) {
+            setInputValue(resPinEl, pincode);
+          }
+        }, delay);
+        filled = true;
+      }
     }
 
     if (filled) {
