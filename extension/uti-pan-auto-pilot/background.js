@@ -601,6 +601,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 const CSC_DASHBOARD_KEEPALIVE_URL = 'https://digitalseva.csc.gov.in/dashboard';
 const CSC_KEEPALIVE_ALARM_NAME = 'WB_CSC_DASHBOARD_KEEPALIVE_30M';
+const UTI_VLEHOME_KEEPALIVE_URL = 'https://www.myutiitsl.com/panonlineservices/vleHome.action#keepalive';
+const UTI_KEEPALIVE_ALARM_NAME = 'WB_UTI_VLEHOME_KEEPALIVE_10M';
 
 function runCscDashboardKeepAlive() {
   try {
@@ -619,13 +621,33 @@ function runCscDashboardKeepAlive() {
   }
 }
 
+function runUtiVleHomeKeepAlive() {
+  try {
+    chrome.tabs.create({ url: UTI_VLEHOME_KEEPALIVE_URL, active: true }, (tab) => {
+      void chrome.runtime.lastError;
+      if (tab && tab.id) {
+        setTimeout(() => {
+          chrome.tabs.remove(tab.id, () => {
+            void chrome.runtime.lastError;
+          });
+        }, 3000);
+      }
+    });
+  } catch (err) {
+    console.error('[Background] UTI vleHome keep-alive error:', err);
+  }
+}
+
 chrome.alarms.create(QUEUE_ALARM_NAME, { periodInMinutes: 0.25 });
 chrome.alarms.create(CSC_KEEPALIVE_ALARM_NAME, { periodInMinutes: 30 });
+chrome.alarms.create(UTI_KEEPALIVE_ALARM_NAME, { periodInMinutes: 10 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === QUEUE_ALARM_NAME) {
     checkQueueAndLaunch(false);
   } else if (alarm.name === CSC_KEEPALIVE_ALARM_NAME) {
     runCscDashboardKeepAlive();
+  } else if (alarm.name === UTI_KEEPALIVE_ALARM_NAME) {
+    runUtiVleHomeKeepAlive();
   }
 });
 

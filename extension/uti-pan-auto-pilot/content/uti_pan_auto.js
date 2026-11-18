@@ -1298,6 +1298,11 @@
   }
 
   function handleVleHomePage() {
+    if ((window.location.hash || '').toLowerCase().includes('keepalive')) {
+      updateBadge('🔄 VLE Home Keep-Alive • Auto-closing in 3s...', '#0ea5e9');
+      return;
+    }
+
     updateBadge('VLE Home • Form 49A Ready', '#10b981');
 
     if (!vleMenuClicked && !sessionStorage.getItem('wb_pan_menu_clicked')) {
