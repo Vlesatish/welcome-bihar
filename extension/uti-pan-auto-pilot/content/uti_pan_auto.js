@@ -1589,9 +1589,8 @@
     return new File([jpegBlob], `${safeName}_signature_400x200.jpg`, { type: 'image/jpeg' });
   }
 
-  // Auto-submit modal upload when files are attached
-  // RIOT commanded: "yaha upload karo"
-  const AUTO_CLICK_MODAL_UPLOAD = true;
+  // Do NOT auto click the modal Upload button (RIOT instructed: "esme per auto click mat karo sirf upload karo")
+  const AUTO_CLICK_MODAL_UPLOAD = false;
 
   function clickModalUploadButton(modal) {
     const root = modal || document;
@@ -1668,11 +1667,15 @@
         throw new Error('PAN form input failed to receive file');
       }
 
-      updateBadge('✅ All 3 Files Attached • Submitting Upload...', '#10b981');
-
-      setTimeout(() => {
-        clickModalUploadButton(modal);
-      }, 600);
+      if (AUTO_CLICK_MODAL_UPLOAD) {
+        updateBadge('✅ All 3 Files Attached • Submitting Upload...', '#10b981');
+        setTimeout(() => {
+          clickModalUploadButton(modal);
+        }, 600);
+      } else {
+        updateBadge('✅ All 3 Files Attached • Ready for You to Click Upload', '#10b981');
+        docUploadLock = false;
+      }
     } catch (err) {
       docUploadLock = false;
       console.error('Document attach error:', err);
@@ -1789,12 +1792,17 @@
       if (cand && cand.photo_url && cand.signature_url) {
         docUploadLock = true;
         await attachDocumentsToModal(inputs, cand, modal);
+        btnAttach.innerText = '✅ 3 Files Attached!';
+        btnAttach.style.background = '#0284c7';
       } else {
         alert('Could not find candidate photo & signature on Welcome Bihar!');
       }
 
       btnAttach.disabled = false;
-      btnAttach.innerText = '⚡ Auto-Attach Docs';
+      setTimeout(() => {
+        btnAttach.innerText = '⚡ Auto-Attach Docs';
+        btnAttach.style.background = '#10b981';
+      }, 4000);
     });
 
     const btnFetch = document.createElement('button');
