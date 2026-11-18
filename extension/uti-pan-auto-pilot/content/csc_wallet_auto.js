@@ -13,6 +13,7 @@
 
   let passwordSubmitted = false;
   let pinSubmitted = false;
+  let proceedClicked = false;
 
   function isVisible(el) {
     if (!el || !el.isConnected) return false;
@@ -83,12 +84,39 @@
   }
 
   // -----------------------------------------------------------------------
-  // STEP 1: Password & Validate Screen
+  // STEP 1A: "Proceed to Wallet" (When password is not requested)
+  // -----------------------------------------------------------------------
+  function handleProceedToWallet() {
+    if (proceedClicked) return false;
+
+    const allButtons = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a.btn, .btn, a'));
+    const proceedBtn = allButtons.find((b) => {
+      if (!isVisible(b)) return false;
+      const t = (b.textContent || b.value || '').trim().toLowerCase();
+      return t.includes('proceed to wallet') || (t.includes('proceed') && !t.includes('cancel'));
+    });
+
+    if (proceedBtn) {
+      proceedClicked = true;
+      updateWalletBadge('🚀 Clicking Proceed to Wallet...', '#10b981');
+      setTimeout(() => {
+        try {
+          proceedBtn.click();
+        } catch (e) {
+          proceedBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+        }
+      }, 250);
+      return true;
+    }
+    return false;
+  }
+
+  // -----------------------------------------------------------------------
+  // STEP 1B: Password & Validate Screen
   // -----------------------------------------------------------------------
   function handlePasswordScreen() {
-    if (passwordSubmitted) return;
+    if (passwordSubmitted) return false;
 
-    // Find password input
     const allInputs = Array.from(document.querySelectorAll('input'));
     const passInput = allInputs.find((el) => {
       if (!isVisible(el)) return false;
@@ -99,7 +127,6 @@
       return type === 'password' || name.includes('pass') || id.includes('pass') || ph.includes('password');
     });
 
-    // Find validate button
     const allButtons = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a.btn, .btn'));
     const validateBtn = allButtons.find((b) => {
       if (!isVisible(b)) return false;
@@ -122,18 +149,19 @@
           validateBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
         }
       }, 300);
+      return true;
     }
+    return false;
   }
 
   // -----------------------------------------------------------------------
   // STEP 2: Wallet Pin & Pay Screen
   // -----------------------------------------------------------------------
   function handlePinScreen() {
-    if (pinSubmitted) return;
+    if (pinSubmitted) return false;
 
     const allInputs = Array.from(document.querySelectorAll('input'));
 
-    // Pin input (usually text or password with pin placeholder or maxlength 6)
     const pinInput = allInputs.find((el) => {
       if (!isVisible(el)) return false;
       const type = (el.type || '').toLowerCase();
@@ -151,7 +179,6 @@
       );
     });
 
-    // Pay button (e.g. "Pay ₹ 97.37" or "Pay 97.37" or "Pay")
     const allButtons = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a.btn, .btn'));
     const payBtn = allButtons.find((b) => {
       if (!isVisible(b)) return false;
@@ -173,8 +200,10 @@
         } catch (e) {
           payBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
         }
-      }, 400);
+      }, 350);
+      return true;
     }
+    return false;
   }
 
   // -----------------------------------------------------------------------
@@ -184,7 +213,7 @@
     const url = (window.location.href || '').toLowerCase();
     const bodyText = (document.body?.innerText || '').toLowerCase();
 
-    // Check if on PIN screen
+    // 1. PIN Screen
     if (
       url.includes('wallet_pin_form') ||
       bodyText.includes('enter 6 digit wallet pin') ||
@@ -195,15 +224,21 @@
       return;
     }
 
-    // Check if on Password / Validate screen
+    // 2. "Proceed to Wallet" button (Direct without password)
+    if (
+      bodyText.includes('proceed to wallet') ||
+      document.querySelector('button, a, input[value*="Proceed"]')
+    ) {
+      if (handleProceedToWallet()) return;
+    }
+
+    // 3. Password / Validate screen
     if (
       url.includes('payment') ||
       bodyText.includes('pay by wallet') ||
-      bodyText.includes('please enter password') ||
-      document.querySelector('button:contains("Validate"), input[value="Validate"]')
+      bodyText.includes('please enter password')
     ) {
-      handlePasswordScreen();
-      return;
+      if (handlePasswordScreen()) return;
     }
 
     updateWalletBadge('CSC Wallet Portal Active', '#38bdf8');
@@ -213,5 +248,5 @@
   runCscWalletAuto();
   setInterval(() => {
     runCscWalletAuto();
-  }, 600);
+  }, 500);
 })();
