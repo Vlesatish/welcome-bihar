@@ -13,6 +13,98 @@
   let prePanSubmitted = false;
   let aadhaarConfirmed = false;
 
+  const AURANGABAD_PIN_RETRY_LIMIT = 2; // Retry AURANGABAD(BH) 2 times before falling back to plain AURANGABAD
+  let aurangabadPinFailCount = 0;
+  let usePlainAurangabadFallback = false;
+  let trackedAurangabadCandidateKey = '';
+  let lastPinErrorAt = 0;
+  let resPinVerifiedValue = '';
+  let resPinVerifiedAt = 0;
+  let resDistChangedAt = 0;
+
+  function isAurangabadDistrict(name) {
+    const clean = String(name || '').toLowerCase().replace(/[^a-z]/g, '');
+    return clean.includes('aurangabad') || clean.includes('aurabgabad');
+  }
+
+  function isAurangabadBhOption(optionText) {
+    const txt = String(optionText || '').trim().toLowerCase();
+    return txt.includes('aurangabad(bh)') || txt.includes('aurangabad (bh)') || txt.includes('aurangabad(bihar)');
+  }
+
+  function syncAurangabadCandidateState() {
+    const key = currentCandidate
+      ? `${currentCandidate.id || currentCandidate.application_id || ''}|${currentCandidate.aadhaar_no || ''}|${currentCandidate.full_name || ''}|${currentCandidate.pincode || currentCandidate.pin || ''}`
+      : '';
+    if (key !== trackedAurangabadCandidateKey) {
+      trackedAurangabadCandidateKey = key;
+      aurangabadPinFailCount = 0;
+      usePlainAurangabadFallback = false;
+      lastPinErrorAt = 0;
+      resPinVerifiedValue = '';
+      resPinVerifiedAt = 0;
+      resDistChangedAt = 0;
+    }
+  }
+
+  function hasVisibleInlinePinError() {
+    const errNodes = document.querySelectorAll('.error, .error-msg, .errormsg, #errorDiv, #pinError, span[style*="red"], font[color="red"], label.error');
+    for (const node of errNodes) {
+      if (!isVisible(node)) continue;
+      const txt = (node.innerText || node.textContent || '').toLowerCase();
+      if (txt.includes('pin') && (txt.includes('valid') || txt.includes('invalid') || txt.includes('incorrect') || txt.includes('not ') || txt.includes('kindly'))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function handleAurangabadPinFailure(sourceLabel = 'dialog') {
+    syncAurangabadCandidateState();
+    if (!currentCandidate || usePlainAurangabadFallback) return;
+    if (!isAurangabadDistrict(currentCandidate?.district_name || currentCandidate?.district)) return;
+
+    const resDistListEl = document.getElementById('resDistList');
+    const selectedDistText = (resDistListEl && resDistListEl.selectedIndex >= 0)
+      ? (resDistListEl.options[resDistListEl.selectedIndex]?.text || '').trim().toUpperCase()
+      : '';
+
+    // Count failures only when AURANGABAD(BH) was actively selected
+    if (!isAurangabadBhOption(selectedDistText)) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - lastPinErrorAt < 1200) return; // Avoid double-counting one rejection across 700ms ticks
+    lastPinErrorAt = now;
+    aurangabadPinFailCount += 1;
+    resPinVerifiedValue = '';
+
+    if (aurangabadPinFailCount >= AURANGABAD_PIN_RETRY_LIMIT) {
+      usePlainAurangabadFallback = true;
+      updateBadge(`🔄 Pincode invalid in AURANGABAD(BH) (${aurangabadPinFailCount}x) • Trying plain AURANGABAD...`, '#f59e0b');
+      if (resDistListEl) {
+        selectOptionByText(resDistListEl, 'AURANGABAD', true);
+        resDistChangedAt = Date.now();
+      }
+      const resPinEl = document.getElementById('resPin');
+      const pincode = String(currentCandidate?.pincode || currentCandidate?.pin || '').replace(/\D/g, '').slice(0, 6);
+      if (resPinEl && pincode) {
+        lastAdvanceTime = now; // Hold advance until 450ms district settle + PIN fill finishes
+        setTimeout(() => {
+          setInputValue(resPinEl, pincode);
+          resPinVerifiedValue = pincode;
+          resPinVerifiedAt = Date.now();
+          lastAdvanceTime = 0;
+        }, 450);
+      } else {
+        lastAdvanceTime = 0;
+      }
+    } else {
+      updateBadge(`⚠️ Pincode rejected in AURANGABAD(BH) (${aurangabadPinFailCount}/${AURANGABAD_PIN_RETRY_LIMIT}, ${sourceLabel}) • Retrying...`, '#f59e0b');
+    }
+  }
+
   // -----------------------------------------------------------------------
   // DOM & Input Helpers
   // -----------------------------------------------------------------------
@@ -106,9 +198,9 @@
     if (!selectEl || !targetText) return false;
     const target = String(targetText).trim().toLowerCase();
 
-    // Special rule requested by RIOT: For Aurangabad district in Bihar, always prefer AURANGABAD(BH)
+    // Special rule requested by RIOT: For Aurangabad district in Bihar, prefer AURANGABAD(BH) unless plain AURANGABAD fallback is active
     const cleanTarget = target.replace(/[^a-z]/g, '');
-    if (cleanTarget.includes('aurangabad') || cleanTarget.includes('aurabgabad')) {
+    if (!exactOnly && !usePlainAurangabadFallback && (cleanTarget.includes('aurangabad') || cleanTarget.includes('aurabgabad'))) {
       for (let i = 0; i < selectEl.options.length; i++) {
         const opt = selectEl.options[i];
         const txt = (opt.text || '').trim().toLowerCase();
@@ -518,18 +610,30 @@
       }
     }
 
-    // 4. Message / Error Dialog (#errorDiv, #errorDialog, "Kindly enter pincode.")
+    // 4. Message / Error Dialog (#errorDiv, #errorDialog, pincode validation popups)
     const errorDialog = Array.from(document.querySelectorAll('.ui-dialog')).find((d) => {
       if (!isVisible(d)) return false;
       const t = (d.innerText || d.textContent || '').toLowerCase();
+      if (t.includes('re-enter aadhaar') || t.includes('reference number') || t.includes('biometric')) return false;
       return (
         t.includes('kindly enter pincode') ||
         t.includes('enter pincode') ||
-        (t.includes('message') && !t.includes('re-enter aadhaar') && !t.includes('reference number'))
+        t.includes('valid pincode') ||
+        t.includes('valid pin') ||
+        t.includes('invalid pin') ||
+        t.includes('pincode') ||
+        t.includes('pin code') ||
+        (t.includes('message') && !t.includes('already exist'))
       );
     });
 
     if (errorDialog) {
+      const dialogText = (errorDialog.innerText || errorDialog.textContent || '').toLowerCase();
+      if (dialogText.includes('pin') && !errorDialog.dataset.wbPinCounted) {
+        errorDialog.dataset.wbPinCounted = '1';
+        handleAurangabadPinFailure('dialog');
+      }
+
       const okBtn = Array.from(errorDialog.querySelectorAll('.ui-dialog-buttonpane button, button, input[type="button"], a.ui-dialog-titlebar-close, button.ui-dialog-titlebar-close')).find((b) => {
         const t = (b.textContent || b.value || '').trim().toLowerCase();
         return t === 'ok' || t === 'okay' || b.classList.contains('ui-dialog-titlebar-close');
@@ -542,13 +646,17 @@
         }
         handled = true;
       }
-      // Re-fill pincode immediately after dismissing popup
-      const resPinEl = document.getElementById('resPin');
-      const pincode = String(currentCandidate?.pincode || currentCandidate?.pin || '').replace(/\D/g, '').slice(0, 6);
-      if (resPinEl && pincode && resPinEl.value !== pincode) {
-        setTimeout(() => {
-          setInputValue(resPinEl, pincode);
-        }, 150);
+      // Re-fill pincode immediately after dismissing popup (unless fallback just scheduled district+pin switch)
+      if (!usePlainAurangabadFallback) {
+        const resPinEl = document.getElementById('resPin');
+        const pincode = String(currentCandidate?.pincode || currentCandidate?.pin || '').replace(/\D/g, '').slice(0, 6);
+        if (resPinEl && pincode && resPinEl.value !== pincode) {
+          setTimeout(() => {
+            setInputValue(resPinEl, pincode);
+            resPinVerifiedValue = pincode;
+            resPinVerifiedAt = Date.now();
+          }, 150);
+        }
       }
     }
 
@@ -724,6 +832,7 @@
   // STEP 4: Address Details Tab (resAddr1, resAddr2, resAddr3, resAddr4, resDistList, resPin, incomeOthSource)
   // -----------------------------------------------------------------------
   function handleAddressDetailsTab(force = false) {
+    syncAurangabadCandidateState();
     let filled = false;
 
     // 1. Source of Income -> Income from Other source (incomeOthSource)
@@ -773,34 +882,72 @@
 
     // 6. District (resDistList)
     const resDistListEl = document.getElementById('resDistList');
-    let district = (currentCandidate?.district_name || currentCandidate?.district || '').trim();
-    const cleanDistCheck = district.toLowerCase().replace(/[^a-z]/g, '');
-    if (cleanDistCheck.includes('aurangabad') || cleanDistCheck.includes('aurabgabad')) {
-      district = 'AURANGABAD(BH)';
+    const rawDistrict = (currentCandidate?.district_name || currentCandidate?.district || '').trim();
+    const isAurangabadCand = isAurangabadDistrict(rawDistrict);
+
+    const resPinEl = document.getElementById('resPin');
+    const pincode = String(currentCandidate?.pincode || currentCandidate?.pin || '').replace(/\D/g, '').slice(0, 6);
+    const currentSelectedDistText = (resDistListEl && resDistListEl.selectedIndex >= 0)
+      ? (resDistListEl.options[resDistListEl.selectedIndex]?.text || '').trim().toUpperCase()
+      : '';
+
+    // Detect inline pincode error or silent AJAX clear of #resPin while AURANGABAD(BH) is active
+    if (isAurangabadCand && !usePlainAurangabadFallback && isAurangabadBhOption(currentSelectedDistText)) {
+      const now = Date.now();
+      if (hasVisibleInlinePinError()) {
+        handleAurangabadPinFailure('inline');
+      } else if (
+        resPinEl &&
+        pincode &&
+        resPinVerifiedValue === pincode &&
+        resPinEl.value === '' &&
+        (now - resPinVerifiedAt > 1200) &&
+        (now - resDistChangedAt > 1500)
+      ) {
+        resPinVerifiedValue = '';
+        handleAurangabadPinFailure('pin-cleared');
+      }
     }
 
+    const district = isAurangabadCand
+      ? (usePlainAurangabadFallback ? 'AURANGABAD' : 'AURANGABAD(BH)')
+      : rawDistrict;
+
+    const latestSelectedDistText = (resDistListEl && resDistListEl.selectedIndex >= 0)
+      ? (resDistListEl.options[resDistListEl.selectedIndex]?.text || '').trim().toUpperCase()
+      : '';
+
     let districtChanged = false;
-    const currentSelectedDistText = (resDistListEl && resDistListEl.selectedIndex >= 0) ? (resDistListEl.options[resDistListEl.selectedIndex]?.text || '').trim().toUpperCase() : '';
-    const needsAurangabadFix = district === 'AURANGABAD(BH)' && currentSelectedDistText === 'AURANGABAD';
+    const needsAurangabadFix = isAurangabadCand && (
+      (!usePlainAurangabadFallback && latestSelectedDistText === 'AURANGABAD') ||
+      (usePlainAurangabadFallback && latestSelectedDistText !== 'AURANGABAD')
+    );
 
     if (resDistListEl && district && (!resDistListEl.value || force || needsAurangabadFix)) {
-      if (selectOptionByText(resDistListEl, district, false)) {
+      if (selectOptionByText(resDistListEl, district, isAurangabadCand && usePlainAurangabadFallback)) {
         filled = true;
         districtChanged = true;
+        resDistChangedAt = Date.now();
+        resPinVerifiedValue = '';
       }
     }
 
     // 7. Pin/Zip Code (resPin) - STRICTLY FILLED LAST
-    const resPinEl = document.getElementById('resPin');
-    const pincode = String(currentCandidate?.pincode || currentCandidate?.pin || '').replace(/\D/g, '').slice(0, 6);
     if (resPinEl && pincode) {
-      if (resPinEl.value !== pincode || force) {
+      const recentDistSwitchPending = resDistChangedAt && (Date.now() - resDistChangedAt < 500) && !districtChanged;
+      if (resPinEl.value === pincode && !resPinVerifiedValue && !districtChanged) {
+        resPinVerifiedValue = pincode;
+        resPinVerifiedAt = Date.now();
+      }
+      if (!recentDistSwitchPending && (resPinEl.value !== pincode || force || districtChanged)) {
         // Allow district AJAX to settle, then fill PIN
         const delay = districtChanged ? 400 : 100;
         setTimeout(() => {
           if (resPinEl.value !== pincode) {
             setInputValue(resPinEl, pincode);
           }
+          resPinVerifiedValue = pincode;
+          resPinVerifiedAt = Date.now();
         }, delay);
         filled = true;
       }
@@ -1123,11 +1270,11 @@
     if (!addr1 || !addr1.value.trim()) return false;
     if (!dist || !dist.value) return false;
 
-    // Check if district needs to be AURANGABAD(BH) instead of AURANGABAD
-    const candDist = (currentCandidate?.district_name || currentCandidate?.district || '').toLowerCase().replace(/[^a-z]/g, '');
-    if ((candDist.includes('aurangabad') || candDist.includes('aurabgabad')) && dist.selectedIndex >= 0) {
+    // Check Aurangabad district selection (AURANGABAD(BH) normally, plain AURANGABAD after pincode fallback)
+    if (isAurangabadDistrict(currentCandidate?.district_name || currentCandidate?.district) && dist.selectedIndex >= 0) {
       const selectedTxt = (dist.options[dist.selectedIndex]?.text || '').trim().toUpperCase();
-      if (selectedTxt === 'AURANGABAD') return false; // Not complete until AURANGABAD(BH) is chosen
+      if (!usePlainAurangabadFallback && selectedTxt === 'AURANGABAD') return false;
+      if (usePlainAurangabadFallback && selectedTxt !== 'AURANGABAD') return false;
     }
 
     if (!pin || pin.value.replace(/\D/g, '').length < 6) return false;
@@ -3289,6 +3436,7 @@
   chrome.storage.local.get(['currentCandidate', 'currentUtiRefNo'], (res) => {
     currentCandidate = res.currentCandidate || null;
     currentUtiRefNo = res.currentUtiRefNo || '';
+    syncAurangabadCandidateState();
     runAutoFill(false);
   });
 
@@ -3297,6 +3445,7 @@
     if (changes.currentCandidate) {
       currentCandidate = changes.currentCandidate.newValue || null;
       aadhaarConfirmed = false;
+      syncAurangabadCandidateState();
       runAutoFill(true);
     }
     if (changes.currentUtiRefNo) {
