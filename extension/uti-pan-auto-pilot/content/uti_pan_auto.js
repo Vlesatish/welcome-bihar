@@ -2147,33 +2147,48 @@
   let lastUploadedAppNo = '';
 
   function findRowUploadButton(row, cells) {
-    const uploadCell = (cells && cells[4]) ? cells[4] : row;
-    const candidates = Array.from(uploadCell.querySelectorAll('a, button, input[type="button"], input[type="submit"], span'));
-    for (const el of candidates) {
-      if (el.classList && el.classList.contains('wb-auto-upload-btn')) continue;
-      const t = (el.innerText || el.value || '').trim().toLowerCase();
-      if (t === 'upload') {
-        return el;
+    if (!row) return null;
+    const priorityRoots = [];
+    if (cells && cells[4]) priorityRoots.push(cells[4]);
+    priorityRoots.push(row);
+
+    for (const root of priorityRoots) {
+      const controls = Array.from(root.querySelectorAll('a, button, input[type="button"], input[type="submit"], span[onclick], img[onclick], img[title]'));
+      for (const el of controls) {
+        if (!isVisible(el)) continue;
+        if (el.classList && el.classList.contains('wb-auto-upload-btn')) continue;
+        const t = (el.innerText || el.value || el.getAttribute('title') || el.getAttribute('alt') || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        if (t === 'upload' || t.startsWith('upload ') || (el.tagName === 'IMG' && t.includes('upload'))) {
+          return el;
+        }
       }
     }
-    if (uploadCell && (uploadCell.innerText || '').trim().toLowerCase() === 'upload') {
-      return uploadCell;
+
+    const targetCells = (cells && cells.length > 0) ? Array.from(cells) : [row];
+    for (const cell of targetCells) {
+      if (!isVisible(cell)) continue;
+      const t = (cell.innerText || '').trim().toLowerCase();
+      if (t === 'upload') return cell;
     }
     return null;
   }
 
   function triggerNativeRowUploadClick(uploadBtn) {
     if (!uploadBtn) return;
-    const rawHref = (uploadBtn.getAttribute && uploadBtn.getAttribute('href') || '').trim().toLowerCase();
-    if (rawHref === '' || rawHref.includes('docuploadlistpanapp')) {
-      uploadBtn.addEventListener('click', (e) => {
+    const clickable = (uploadBtn.tagName === 'IMG' || uploadBtn.tagName === 'SPAN')
+      ? (uploadBtn.closest('a, button') || uploadBtn)
+      : uploadBtn;
+    const rawHref = (clickable.getAttribute && clickable.getAttribute('href') || '').trim().toLowerCase();
+    if (rawHref === '#') {
+      clickable.addEventListener('click', (e) => {
         e.preventDefault();
       }, { once: true });
     }
+    try { clickable.focus(); } catch (e) {}
     try {
-      uploadBtn.click();
+      clickable.click();
     } catch (err) {
-      uploadBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+      clickable.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
     }
   }
 
@@ -2207,14 +2222,20 @@
   }
 
   function findDocUploadModal() {
-    const dialogs = Array.from(document.querySelectorAll('.ui-dialog, .modal, div.popup, div[role="dialog"], form, div')).filter((d) => {
-      if (!isVisible(d)) return false;
-      const fileInputs = d.querySelectorAll('input[type="file"]');
-      if (fileInputs.length >= 2) return true;
-      const t = (d.innerText || '').toLowerCase();
-      return (t.includes('upload documents') || t.includes('pan form alongwith')) && fileInputs.length > 0;
-    });
-    if (dialogs.length > 0) return dialogs[0];
+    const modalSelectors = ['.ui-dialog, .modal, div.popup, div[role="dialog"]', 'form, div'];
+    for (const sel of modalSelectors) {
+      const dialogs = Array.from(document.querySelectorAll(sel)).filter((d) => {
+        if (!isVisible(d)) return false;
+        const fileInputs = d.querySelectorAll('input[type="file"]');
+        if (fileInputs.length >= 2) return true;
+        const t = (d.innerText || '').toLowerCase();
+        return (t.includes('upload documents') || t.includes('pan form alongwith')) && fileInputs.length > 0;
+      });
+      if (dialogs.length > 0) {
+        // Pick deepest/narrowest container so row Upload links aren't inside the matched root
+        return dialogs[dialogs.length - 1];
+      }
+    }
 
     // Direct check for any visible file inputs
     const visibleInputs = Array.from(document.querySelectorAll('input[type="file"]')).filter(isVisible);
@@ -2922,6 +2943,7 @@
   }
 
   let autoRowUploadTriggered = false;
+  let lastRowUploadClickAt = 0;
   let docUploadPageReadyAt = 0;
   let emptyUploadRowTicks = 0;
   let docUploadSuccessHandled = false;
@@ -3028,6 +3050,11 @@
     }
 
     // 3. Modal not open yet: Auto-click the native "Upload" button on the candidate row
+    if (autoRowUploadTriggered && (Date.now() - lastRowUploadClickAt >= 4500)) {
+      // Allow clean retry if the row Upload click didn't open the modal within 4.5s
+      autoRowUploadTriggered = false;
+    }
+
     if (!autoRowUploadTriggered) {
       const firstInfoCheck = getFirstVisibleTableRowCandInfo();
       if (!firstInfoCheck) {
@@ -3054,6 +3081,7 @@
       emptyUploadRowTicks = 0;
       docUploadIdleNotified = false;
       autoRowUploadTriggered = true;
+      lastRowUploadClickAt = Date.now();
 
       chrome.storage.local.get(['currentCandidate', 'queueList', 'currentUtiRefNo'], async (res) => {
         let cand = res.currentCandidate || (Array.isArray(res.queueList) && res.queueList[0]) || null;
@@ -3063,31 +3091,27 @@
         // Match row in the inner candidate table
         let rowMatch = (targetName || targetAppNo) ? findCandidateUploadRow(targetAppNo, targetName) : null;
 
-        // If not matched, pick first pending row in visible table
+        // If not matched, pick first pending row directly from visible table
         if (!rowMatch) {
           const firstInfo = getFirstVisibleTableRowCandInfo();
-          if (firstInfo && (firstInfo.candName || firstInfo.appNo)) {
-            rowMatch = findCandidateUploadRow(firstInfo.appNo, firstInfo.candName);
-            if (rowMatch) {
-              targetName = firstInfo.candName;
-              targetAppNo = firstInfo.appNo;
+          if (firstInfo) {
+            targetName = firstInfo.candName || '';
+            targetAppNo = firstInfo.appNo || '';
+            if (firstInfo.uploadBtn) {
+              rowMatch = { row: firstInfo.row, uploadBtn: firstInfo.uploadBtn, cleanAppNo: targetAppNo, cleanName: targetName };
+            } else if (targetName || targetAppNo) {
+              rowMatch = findCandidateUploadRow(targetAppNo, targetName);
             }
           }
         }
 
         if (rowMatch && rowMatch.uploadBtn) {
-          const cooldownKey = `wb_upload_click_ts_${targetAppNo || targetName || 'row1'}`;
-          const lastClickTs = Number(sessionStorage.getItem(cooldownKey) || 0);
-          if (Date.now() - lastClickTs < 4000) {
-            return;
-          }
-          sessionStorage.setItem(cooldownKey, String(Date.now()));
-
-          updateBadge(`⚡ Clicking Upload for ${targetName || targetAppNo}...`, '#0ea5e9');
+          lastRowUploadClickAt = Date.now();
+          updateBadge(`⚡ Auto-Clicking Upload for ${targetName || targetAppNo || 'Candidate'}...`, '#0ea5e9');
 
           window._activeRowCandName = targetName;
           window._activeRowAppNo = targetAppNo;
-          if (cand) {
+          if (cand && (!targetName || (cand.full_name || '').toUpperCase().includes(targetName.toUpperCase()))) {
             window._activeRowCandidate = cand;
             window._selectedRowCandidate = cand;
           } else if (targetName) {
@@ -3102,8 +3126,9 @@
           }
 
           setTimeout(() => {
+            lastRowUploadClickAt = Date.now();
             triggerNativeRowUploadClick(rowMatch.uploadBtn);
-          }, 350);
+          }, 300);
           return;
         }
 
@@ -3501,7 +3526,7 @@
     }
 
     // 0A. Document Upload List / Modal (applType=B)
-    if (url.includes('docuploadlistpanapp') || url.includes('docupload')) {
+    if (url.includes('docuploadlistpanapp') || url.includes('docupload') || url.includes('uploaddoc')) {
       handleDocUploadListPage();
       return;
     }
