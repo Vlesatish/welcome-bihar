@@ -16,7 +16,8 @@ let createdGmailTabId = null;
 let keepAliveUtiTabId = null;
 let lastLogoutRestartAt = 0;
 
-async function closeAllIdleUtiTabs() {
+async function closeAllIdleUtiTabs(options = {}) {
+  const includeDocUpload = Boolean(options && options.includeDocUpload);
   const allUtiTabs = await getAllUtiTabs();
   const idsToClose = allUtiTabs
     .filter((t) => {
@@ -25,6 +26,8 @@ async function closeAllIdleUtiTabs() {
       const u = (t.url || t.pendingUrl || '').toLowerCase();
       // Do not close if user is actively on CSC Login or OTP verification screen
       if (u.includes('logincheckotp') || u.includes('csclogin')) return false;
+      // Protect Document Upload tabs until upload finishes or table is confirmed empty
+      if (!includeDocUpload && (u.includes('docuploadlistpanapp') || u.includes('docupload'))) return false;
       return true;
     })
     .map((t) => t.id);
@@ -85,6 +88,11 @@ async function openDocUploadAndCloseSuccess(successTabId, triggerKey = '') {
     lastDocUploadTriggerKey = triggerKey;
     lastDocUploadTriggerTime = now;
   }
+
+  await chrome.storage.local.set({
+    awaitingDocUpload: true,
+    awaitingDocUploadAt: now
+  });
 
   const allTabs = await new Promise((resolve) => chrome.tabs.query({}, resolve));
   const matched = (allTabs || []).filter((t) => {
@@ -195,9 +203,10 @@ async function checkQueueAndLaunch(forceRestart = false) {
       queueList: queue
     });
 
+    const stored = await new Promise((r) => chrome.storage.local.get(['awaitingDocUpload', 'awaitingDocUploadAt', 'isWaitingForOtp'], r));
+
     if (queue.length === 0) {
       // Only keep tab open if actively awaiting immediate document upload right after form submission (max 3 min)
-      const stored = await new Promise((r) => chrome.storage.local.get(['awaitingDocUpload', 'awaitingDocUploadAt', 'isWaitingForOtp'], r));
       if (stored && stored.isWaitingForOtp) {
         return { success: true, count: 0, inFlight: true };
       }
@@ -216,6 +225,14 @@ async function checkQueueAndLaunch(forceRestart = false) {
       });
       await closeAllIdleUtiTabs();
       return { success: true, count: 0 };
+    }
+
+    // Do not steal focus / overwrite candidate while document upload for just-finished PAN is actively running (< 60s)
+    if (!forceRestart && stored && stored.awaitingDocUpload) {
+      const uploadElapsed = Date.now() - Number(stored.awaitingDocUploadAt || 0);
+      if (uploadElapsed < 60000) {
+        return { success: true, count: queue.length, waitingForDocUpload: true };
+      }
     }
 
     const firstCand = queue[0];
@@ -472,8 +489,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'openDocUploadPage') {
     const tabId = sender && sender.tab ? sender.tab.id : null;
     const triggerKey = String(msg.appRef || msg.appId || msg.utiRefNo || 'manual_open');
-    openDocUploadAndCloseSuccess(tabId, triggerKey);
-    sendResponse({ success: true });
+    chrome.storage.local.set({
+      awaitingDocUpload: true,
+      awaitingDocUploadAt: Date.now()
+    }, () => {
+      openDocUploadAndCloseSuccess(tabId, triggerKey);
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+
+  if (msg.action === 'docUploadIdleOrDone') {
+    (async () => {
+      await chrome.storage.local.remove(['awaitingDocUpload', 'awaitingDocUploadAt']);
+      const r = await checkQueueAndLaunch(true);
+      if (r && r.success && r.count === 0) {
+        await closeAllIdleUtiTabs({ includeDocUpload: true });
+      }
+      sendResponse({ success: true, result: r });
+    })();
     return true;
   }
 

@@ -2187,20 +2187,20 @@
       if (row.querySelector('table')) continue;
 
       const cells = Array.from(row.cells || row.querySelectorAll(':scope > td'));
-      if (cells.length < 5) continue;
+      if (cells.length < 4) continue;
+
+      const uploadBtn = findRowUploadButton(row, cells);
+      if (!uploadBtn) continue;
 
       const text = (row.innerText || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
-      if (!/\bA\d{7,}\b/i.test(text)) continue;
+      if (!/\b([AU]-?\d{6,}|\d{7,})\b/i.test(text) && !cleanName) continue;
 
       const matchesAppNo = cleanAppNo && cleanAppNo.length >= 6 && text.includes(cleanAppNo);
       const matchesName = cleanName && cleanName.length >= 3 && text.includes(cleanName);
 
       // Strict row check: Must match App No, or clean Name
       if (matchesAppNo || matchesName) {
-        const uploadBtn = findRowUploadButton(row, cells);
-        if (uploadBtn) {
-          return { row, uploadBtn, cleanAppNo, cleanName };
-        }
+        return { row, uploadBtn, cleanAppNo, cleanName };
       }
     }
     return null;
@@ -2578,16 +2578,22 @@
     if (uploadBtn) {
       updateBadge('🚀 Submitting Documents to UTI Portal...', '#10b981');
       try {
+        chrome.storage.local.set({
+          awaitingDocUpload: true,
+          awaitingDocUploadAt: Date.now()
+        });
+      } catch (e) {}
+      try {
         uploadBtn.focus();
         uploadBtn.click();
       } catch (e) {
         uploadBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
       }
 
+      // Unlock retry guard after 5s without prematurely clearing awaitingDocUpload before success popup
       setTimeout(() => {
         docUploadLock = false;
-        chrome.storage.local.set({ awaitingDocUpload: false });
-      }, 3000);
+      }, 5000);
     }
   }
 
@@ -2810,18 +2816,19 @@
     for (const r of rows) {
       if (r.querySelector('table')) continue;
       const cells = Array.from(r.cells || r.querySelectorAll(':scope > td'));
-      if (cells.length < 5) continue;
+      if (cells.length < 4) continue;
+      const uploadBtn = findRowUploadButton(r, cells);
       const text = (r.innerText || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
-      const appNoMatch = text.match(/\b(A\d{7,})\b/i);
-      if (!appNoMatch) continue;
-      const appNo = appNoMatch[1];
+      const appNoMatch = text.match(/\b([AU]-?\d{6,}|\d{7,})\b/i);
+      if (!appNoMatch && !uploadBtn) continue;
+      const appNo = appNoMatch ? appNoMatch[1].replace(/^U-/i, '') : '';
       let candName = '';
-      if (cells[2] && cells[2].innerText && !cells[2].innerText.includes('Upload')) {
+      if (cells[2] && cells[2].innerText && !cells[2].innerText.toLowerCase().includes('upload')) {
         candName = cells[2].innerText.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
-      } else if (cells[1] && cells[1].innerText && isNaN(cells[1].innerText)) {
+      } else if (cells[1] && cells[1].innerText && isNaN(cells[1].innerText.trim())) {
         candName = cells[1].innerText.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
       }
-      if (candName || appNo) return { appNo, candName, row: r };
+      if (uploadBtn || candName || appNo) return { appNo, candName, row: r, uploadBtn };
     }
     return null;
   }
@@ -2840,20 +2847,22 @@
       if (row.querySelector('table')) continue;
 
       const cells = Array.from(row.cells || row.querySelectorAll(':scope > td'));
-      if (cells.length < 5) continue;
-
-      const text = (row.innerText || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
-      const appNoMatch = text.match(/\b(A\d{7,})\b/i);
-      if (!appNoMatch) continue;
-      const appNo = appNoMatch[1];
+      if (cells.length < 4) continue;
 
       const uploadEl = findRowUploadButton(row, cells);
       if (!uploadEl || uploadEl.dataset.wbNativeBound === '1') continue;
 
+      const text = (row.innerText || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+      const appNoMatch = text.match(/\b([AU]-?\d{6,}|\d{7,})\b/i);
+      const appNo = appNoMatch ? appNoMatch[1].replace(/^U-/i, '') : '';
+
       let candName = '';
-      if (cells[2] && cells[2].innerText && !cells[2].innerText.includes('Upload')) {
+      if (cells[2] && cells[2].innerText && !cells[2].innerText.toLowerCase().includes('upload')) {
         candName = cells[2].innerText.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+      } else if (cells[1] && cells[1].innerText && isNaN(cells[1].innerText.trim())) {
+        candName = cells[1].innerText.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
       }
+      if (!appNo && !candName) continue;
 
       uploadEl.dataset.wbNativeBound = '1';
       uploadEl.dataset.appNo = appNo;
@@ -2913,8 +2922,15 @@
   }
 
   let autoRowUploadTriggered = false;
+  let docUploadPageReadyAt = 0;
+  let emptyUploadRowTicks = 0;
+  let docUploadSuccessHandled = false;
+  let docUploadIdleNotified = false;
 
   function handleDocUploadListPage() {
+    if (!docUploadPageReadyAt) {
+      docUploadPageReadyAt = Date.now();
+    }
     bindNativeDocUploadRows();
 
     // 1. Auto-dismiss any success alert popup
@@ -2930,23 +2946,38 @@
       });
       if (okBtn) {
         try { okBtn.click(); } catch (e) {}
-        chrome.storage.local.set({ awaitingDocUpload: false });
+        try { sessionStorage.setItem('wb_upload_just_succeeded', String(Date.now())); } catch (e) {}
+        chrome.storage.local.set({ awaitingDocUpload: true, awaitingDocUploadAt: Date.now() });
         autoRowUploadTriggered = false;
-        updateBadge('🎉 Documents Uploaded Successfully! Next process auto-starting...', '#10b981');
+        docUploadLock = false;
+        docUploadSuccessHandled = true;
+        emptyUploadRowTicks = 0;
+        docUploadPageReadyAt = Date.now();
+        updateBadge('🎉 Documents Uploaded Successfully! Checking next step...', '#10b981');
         setTimeout(() => {
+          const remaining = getFirstVisibleTableRowCandInfo();
           try {
-            chrome.runtime.sendMessage({ action: 'checkQueueNow', force: true });
+            if (!remaining) {
+              chrome.runtime.sendMessage({ action: 'docUploadIdleOrDone' });
+            } else {
+              chrome.storage.local.set({ awaitingDocUpload: true, awaitingDocUploadAt: Date.now() });
+            }
           } catch (e) {}
-        }, 1500);
+        }, 1800);
       }
       return;
     }
 
-    if (docUploadLock) return;
+    if (docUploadLock) {
+      emptyUploadRowTicks = 0;
+      return;
+    }
 
     // 2. Check if modal is already open
     const modal = findDocUploadModal();
     if (modal) {
+      emptyUploadRowTicks = 0;
+      docUploadIdleNotified = false;
       const inputs = findDocUploadInputs(modal);
       if (inputs.panFormInput && inputs.pictureInput && inputs.signatureInput) {
         if (inputs.panFormInput.files?.length > 0 && inputs.pictureInput.files?.length > 0 && inputs.signatureInput.files?.length > 0) {
@@ -3001,15 +3032,27 @@
       const firstInfoCheck = getFirstVisibleTableRowCandInfo();
       if (!firstInfoCheck) {
         if (document.readyState === 'complete') {
-          chrome.storage.local.set({ awaitingDocUpload: false });
-          try {
-            chrome.runtime.sendMessage({ action: 'checkQueueNow', force: false });
-          } catch (e) {}
+          emptyUploadRowTicks += 1;
+          const elapsedSinceReady = Date.now() - docUploadPageReadyAt;
+          const justSucceededTs = Number(sessionStorage.getItem('wb_upload_just_succeeded') || 0);
+          const recentlyUploaded = docUploadSuccessHandled || (justSucceededTs > 0 && (Date.now() - justSucceededTs < 15000));
+          const waitReqMs = recentlyUploaded ? 2500 : 6000;
+          if (elapsedSinceReady >= waitReqMs && emptyUploadRowTicks >= 4 && !docUploadIdleNotified) {
+            docUploadIdleNotified = true;
+            try { sessionStorage.removeItem('wb_upload_just_succeeded'); } catch (e) {}
+            try {
+              chrome.runtime.sendMessage({ action: 'docUploadIdleOrDone' });
+            } catch (e) {}
+            updateBadge('📄 Document Upload List • No pending rows remaining', '#38bdf8');
+          } else {
+            updateBadge('⏳ Loading Upload Table Rows...', '#38bdf8');
+          }
         }
-        updateBadge('📄 Document Upload List • No pending row (Auto-closing if idle)', '#38bdf8');
         return;
       }
 
+      emptyUploadRowTicks = 0;
+      docUploadIdleNotified = false;
       autoRowUploadTriggered = true;
 
       chrome.storage.local.get(['currentCandidate', 'queueList', 'currentUtiRefNo'], async (res) => {
