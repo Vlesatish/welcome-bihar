@@ -13,7 +13,6 @@ let activeCandidateKey = null;
 let lastLaunchedCandKey = null;
 let activeOtpUtiTabId = null;
 let createdGmailTabId = null;
-let keepAliveUtiTabId = null;
 let lastLogoutRestartAt = 0;
 
 async function closeAllIdleUtiTabs(options = {}) {
@@ -22,7 +21,6 @@ async function closeAllIdleUtiTabs(options = {}) {
   const idsToClose = allUtiTabs
     .filter((t) => {
       if (!t || !t.id) return false;
-      if (keepAliveUtiTabId && t.id === keepAliveUtiTabId) return false;
       const u = (t.url || t.pendingUrl || '').toLowerCase();
       // Do not close if user is actively on CSC Login or OTP verification screen
       if (u.includes('logincheckotp') || u.includes('csclogin')) return false;
@@ -712,60 +710,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return false;
 });
 
-const CSC_DASHBOARD_KEEPALIVE_URL = 'https://digitalseva.csc.gov.in/dashboard';
-const CSC_KEEPALIVE_ALARM_NAME = 'WB_CSC_DASHBOARD_KEEPALIVE_30M';
-const UTI_VLEHOME_KEEPALIVE_URL = 'https://www.myutiitsl.com/panonlineservices/vleHome.action#keepalive';
-const UTI_KEEPALIVE_ALARM_NAME = 'WB_UTI_VLEHOME_KEEPALIVE_7M';
-
-function runCscDashboardKeepAlive() {
-  try {
-    chrome.tabs.create({ url: CSC_DASHBOARD_KEEPALIVE_URL, active: true }, (tab) => {
-      void chrome.runtime.lastError;
-      if (tab && tab.id) {
-        setTimeout(() => {
-          chrome.tabs.remove(tab.id, () => {
-            void chrome.runtime.lastError;
-          });
-        }, 3000);
-      }
-    });
-  } catch (err) {
-    console.error('[Background] CSC keep-alive error:', err);
-  }
-}
-
-function runUtiVleHomeKeepAlive() {
-  try {
-    chrome.tabs.create({ url: UTI_VLEHOME_KEEPALIVE_URL, active: true }, (tab) => {
-      void chrome.runtime.lastError;
-      if (tab && tab.id) {
-        keepAliveUtiTabId = tab.id;
-        setTimeout(() => {
-          const targetId = tab.id;
-          if (keepAliveUtiTabId === targetId) {
-            keepAliveUtiTabId = null;
-          }
-          chrome.tabs.remove(targetId, () => {
-            void chrome.runtime.lastError;
-          });
-        }, 3000);
-      }
-    });
-  } catch (err) {
-    console.error('[Background] UTI vleHome keep-alive error:', err);
-  }
-}
+// Clear any legacy periodic keep-alive open-and-close alarms
+chrome.alarms.clear('WB_CSC_DASHBOARD_KEEPALIVE_30M');
+chrome.alarms.clear('WB_UTI_VLEHOME_KEEPALIVE_7M');
 
 chrome.alarms.create(QUEUE_ALARM_NAME, { periodInMinutes: 0.25 });
-chrome.alarms.create(CSC_KEEPALIVE_ALARM_NAME, { periodInMinutes: 30 });
-chrome.alarms.create(UTI_KEEPALIVE_ALARM_NAME, { periodInMinutes: 7 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === QUEUE_ALARM_NAME) {
     checkQueueAndLaunch(false);
-  } else if (alarm.name === CSC_KEEPALIVE_ALARM_NAME) {
-    runCscDashboardKeepAlive();
-  } else if (alarm.name === UTI_KEEPALIVE_ALARM_NAME) {
-    runUtiVleHomeKeepAlive();
   }
 });
 
