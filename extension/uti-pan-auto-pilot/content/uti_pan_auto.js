@@ -2146,36 +2146,62 @@
   let docUploadLock = false;
   let lastUploadedAppNo = '';
 
-  function findRowUploadButton(row, cells) {
-    if (!row) return null;
-    const priorityRoots = [];
-    if (cells && cells[4]) priorityRoots.push(cells[4]);
-    priorityRoots.push(row);
+  function getDataCells(row) {
+    if (!row || row.querySelector('table') || row.closest('thead')) return null;
+    const tdCells = Array.from(row.querySelectorAll(':scope > td'));
+    if (tdCells.length < 4) return null;
+    const rowText = (row.innerText || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+    if (rowText.includes('SR NO') && rowText.includes('APP NO')) return null;
+    return tdCells;
+  }
 
-    for (const root of priorityRoots) {
-      const controls = Array.from(root.querySelectorAll('a, button, input[type="button"], input[type="submit"], span[onclick], img[onclick], img[title]'));
+  function findRowUploadButton(row, cells) {
+    if (!row || row.closest('thead')) return null;
+    const tdCells = (cells && cells.length > 0)
+      ? Array.from(cells).filter((c) => c.tagName === 'TD')
+      : Array.from(row.querySelectorAll(':scope > td'));
+    if (tdCells.length === 0) return null;
+
+    // Prioritize "Upload" column cells first (index 4 or exact "upload" cell text), skipping "Crop And Upload"
+    const prioritizedCells = [];
+    for (const c of tdCells) {
+      const ct = (c.innerText || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      if (ct === 'upload') prioritizedCells.push(c);
+    }
+    if (tdCells[4] && !prioritizedCells.includes(tdCells[4])) {
+      prioritizedCells.push(tdCells[4]);
+    }
+    for (const c of tdCells) {
+      if (!prioritizedCells.includes(c)) prioritizedCells.push(c);
+    }
+
+    const selector = 'a, button, input[type="button"], input[type="submit"], span, label, font, b, u, strong, div, img';
+    for (const cell of prioritizedCells) {
+      if (!isVisible(cell)) continue;
+      const controls = Array.from(cell.querySelectorAll(selector));
+      // Search deepest leaf nodes first so click bubbles up through spans/anchors AND parent <td>
+      const matchingLeaves = [];
       for (const el of controls) {
         if (!isVisible(el)) continue;
         if (el.classList && el.classList.contains('wb-auto-upload-btn')) continue;
         const t = (el.innerText || el.value || el.getAttribute('title') || el.getAttribute('alt') || '').replace(/\s+/g, ' ').trim().toLowerCase();
-        if (t === 'upload' || t.startsWith('upload ') || (el.tagName === 'IMG' && t.includes('upload'))) {
-          return el;
+        if (t === 'upload' || (el.tagName === 'IMG' && t.includes('upload') && !t.includes('crop'))) {
+          matchingLeaves.push(el);
         }
       }
-    }
+      if (matchingLeaves.length > 0) {
+        return matchingLeaves[matchingLeaves.length - 1];
+      }
 
-    const targetCells = (cells && cells.length > 0) ? Array.from(cells) : [row];
-    for (const cell of targetCells) {
-      if (!isVisible(cell)) continue;
-      const t = (cell.innerText || '').trim().toLowerCase();
-      if (t === 'upload') return cell;
+      const cellText = (cell.innerText || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      if (cellText === 'upload') return cell;
     }
     return null;
   }
 
   function triggerNativeRowUploadClick(uploadBtn) {
     if (!uploadBtn) return;
-    const clickable = (uploadBtn.tagName === 'IMG' || uploadBtn.tagName === 'SPAN')
+    const clickable = (uploadBtn.tagName === 'IMG' || uploadBtn.tagName === 'SPAN' || uploadBtn.tagName === 'FONT' || uploadBtn.tagName === 'B' || uploadBtn.tagName === 'U')
       ? (uploadBtn.closest('a, button') || uploadBtn)
       : uploadBtn;
     const rawHref = (clickable.getAttribute && clickable.getAttribute('href') || '').trim().toLowerCase();
@@ -2198,11 +2224,8 @@
 
     const rows = Array.from(document.querySelectorAll('table tr'));
     for (const row of rows) {
-      // Strictly skip outer layout tables that contain nested tables
-      if (row.querySelector('table')) continue;
-
-      const cells = Array.from(row.cells || row.querySelectorAll(':scope > td'));
-      if (cells.length < 4) continue;
+      const cells = getDataCells(row);
+      if (!cells) continue;
 
       const uploadBtn = findRowUploadButton(row, cells);
       if (!uploadBtn) continue;
@@ -2835,9 +2858,8 @@
   function getFirstVisibleTableRowCandInfo() {
     const rows = Array.from(document.querySelectorAll('table tr'));
     for (const r of rows) {
-      if (r.querySelector('table')) continue;
-      const cells = Array.from(r.cells || r.querySelectorAll(':scope > td'));
-      if (cells.length < 4) continue;
+      const cells = getDataCells(r);
+      if (!cells) continue;
       const uploadBtn = findRowUploadButton(r, cells);
       const text = (r.innerText || '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
       const appNoMatch = text.match(/\b([AU]-?\d{6,}|\d{7,})\b/i);
@@ -2865,10 +2887,8 @@
 
     const rows = Array.from(document.querySelectorAll('table tr'));
     for (const row of rows) {
-      if (row.querySelector('table')) continue;
-
-      const cells = Array.from(row.cells || row.querySelectorAll(':scope > td'));
-      if (cells.length < 4) continue;
+      const cells = getDataCells(row);
+      if (!cells) continue;
 
       const uploadEl = findRowUploadButton(row, cells);
       if (!uploadEl || uploadEl.dataset.wbNativeBound === '1') continue;
