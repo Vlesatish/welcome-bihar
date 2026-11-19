@@ -409,6 +409,12 @@
   function handleAllModals() {
     let handled = false;
 
+    // -2. Logged Out Check ("You have logged out successfully!")
+    if (isLoggedOutPage()) {
+      handleLoggedOutPage();
+      return true;
+    }
+
     // -1. Session Invalid Check (Image 1)
     if (isSessionInvalidPage()) {
       handleSessionInvalidPage();
@@ -1290,7 +1296,7 @@
 
     if (targetLink) {
       vleMenuClicked = true;
-      try { sessionStorage.setItem('wb_pan_menu_clicked', '1'); } catch (e) {}
+      try { sessionStorage.setItem('wb_pan_menu_clicked_at', String(Date.now())); } catch (e) {}
       updateBadge('🚀 Launching Form 49A...', '#10b981');
 
       try {
@@ -1311,7 +1317,8 @@
 
     updateBadge('VLE Home • Form 49A Ready', '#10b981');
 
-    if (!vleMenuClicked && !sessionStorage.getItem('wb_pan_menu_clicked')) {
+    const lastClickedAt = Number(sessionStorage.getItem('wb_pan_menu_clicked_at') || 0);
+    if (!vleMenuClicked && (!lastClickedAt || (Date.now() - lastClickedAt > 5000))) {
       setTimeout(() => {
         if (!vleMenuClicked) {
           clickApplicationForNewPanMenu();
@@ -2940,6 +2947,51 @@
     }
   });
 
+  let logoutRestarting = false;
+
+  function isLoggedOutPage() {
+    const url = (window.location.href || '').toLowerCase();
+    const text = (document.body ? (document.body.innerText || document.body.textContent || '') : '').toLowerCase();
+
+    if (
+      text.includes('you have logged out successfully') ||
+      text.includes('logged out successfully') ||
+      text.includes('successfully logged out')
+    ) {
+      return true;
+    }
+
+    if (url.includes('editvle') && text.includes('logged out')) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function handleLoggedOutPage() {
+    if (logoutRestarting) return;
+    logoutRestarting = true;
+
+    updateBadge('⚠️ Logged Out • Closing page & restarting PAN entry process...', '#f59e0b');
+
+    try { sessionStorage.removeItem('wb_pan_menu_clicked_at'); } catch (e) {}
+
+    try {
+      chrome.runtime.sendMessage({ action: 'restartAfterLogout' }, () => {
+        void chrome.runtime.lastError;
+      });
+    } catch (e) {}
+
+    // Retry signal once if tab remained open
+    setTimeout(() => {
+      try {
+        chrome.runtime.sendMessage({ action: 'restartAfterLogout' }, () => {
+          void chrome.runtime.lastError;
+        });
+      } catch (e) {}
+    }, 3200);
+  }
+
   function isSessionInvalidPage() {
     const text = (document.body ? document.body.innerText : '').toLowerCase();
     return (
@@ -3136,6 +3188,12 @@
   // -----------------------------------------------------------------------
   function runAutoFill(force = false) {
     const url = (window.location.href || '').toLowerCase();
+
+    // 000000. Logged Out Screen (editVle.action -> "You have logged out successfully!")
+    if (isLoggedOutPage()) {
+      handleLoggedOutPage();
+      return;
+    }
 
     // 00000. Change Profile Screen (right after OTP login)
     if (isChangeProfilePage()) {

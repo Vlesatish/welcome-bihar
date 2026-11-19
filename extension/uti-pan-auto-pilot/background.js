@@ -14,6 +14,7 @@ let lastLaunchedCandKey = null;
 let activeOtpUtiTabId = null;
 let createdGmailTabId = null;
 let keepAliveUtiTabId = null;
+let lastLogoutRestartAt = 0;
 
 async function closeAllIdleUtiTabs() {
   const allUtiTabs = await getAllUtiTabs();
@@ -504,6 +505,56 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       });
     }
     sendResponse({ success: true });
+    return true;
+  }
+
+  if (msg.action === 'restartAfterLogout') {
+    (async () => {
+      try {
+        const now = Date.now();
+        if (now - lastLogoutRestartAt < 3000) {
+          sendResponse({ success: true, deduplicated: true });
+          return;
+        }
+        lastLogoutRestartAt = now;
+
+        const senderTabId = sender && sender.tab ? sender.tab.id : null;
+        const allUti = await getAllUtiTabs();
+        const idsToRemove = new Set();
+        if (senderTabId) idsToRemove.add(senderTabId);
+        for (const t of allUti) {
+          const u = (t.url || t.pendingUrl || '').toLowerCase();
+          if (t.id && (u.includes('editvle') || u.includes('logout') || u.includes('error'))) {
+            idsToRemove.add(t.id);
+          }
+        }
+
+        activeCandidateKey = null;
+        lastLaunchedCandKey = null;
+        isCycleLaunching = false;
+        await chrome.storage.local.remove(['isWaitingForOtp', 'otpRequestedAt']);
+
+        // Launch fresh PAN entry tab FIRST (so Chrome never closes a 1-tab window before opening vleHome)
+        const queueRes = await checkQueueAndLaunch(true);
+        if (!queueRes || !queueRes.success) {
+          const stored = await new Promise((r) => chrome.storage.local.get(['currentCandidate'], r));
+          if (stored && stored.currentCandidate) {
+            await openVleHomeOnly(stored.currentCandidate);
+          }
+        }
+
+        // Now close the logged-out / editVle tab(s)
+        if (idsToRemove.size > 0) {
+          chrome.tabs.remove(Array.from(idsToRemove), () => {
+            void chrome.runtime.lastError;
+          });
+        }
+
+        sendResponse({ success: true, queueResult: queueRes });
+      } catch (err) {
+        sendResponse({ success: false, error: err.message });
+      }
+    })();
     return true;
   }
 
