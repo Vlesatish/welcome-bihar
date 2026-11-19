@@ -93,7 +93,7 @@
 
 <!-- Compact Fresh Balance Card -->
 <div class="row g-3 mb-3">
-    <div class="col-sm-6 col-md-4 col-lg-3">
+    <div class="col-sm-8 col-md-5 col-lg-4">
         <div class="dash-glass-card card-glass-blue">
             <div class="d-flex align-items-center justify-content-between mb-2">
                 <span class="stat-label-text">Available Balance</span>
@@ -101,7 +101,13 @@
                     <i class="bi bi-wallet2"></i>
                 </div>
             </div>
-            <div class="stat-val-text font-monospace" style="color: #1d4ed8;">₹<?= number_format($balance, 2) ?></div>
+            <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap mt-1">
+                <div class="stat-val-text font-monospace" style="color: #1d4ed8;">₹<?= number_format($balance, 2) ?></div>
+                <a href="/wallet/topup" class="btn btn-sm btn-primary fw-bold rounded-pill px-3 py-1.5 shadow-sm d-inline-flex align-items-center gap-1" style="white-space: nowrap;">
+                    <i class="bi bi-plus-circle-fill"></i>
+                    <span>Add Balance</span>
+                </a>
+            </div>
         </div>
     </div>
 </div>
