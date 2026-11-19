@@ -1501,6 +1501,8 @@
   // PAGE 0: vleHome.action -> Auto-trigger "Application for New PAN" menu item
   // -----------------------------------------------------------------------
   let vleMenuClicked = false;
+  let lastVleRoleCheckAt = 0;
+  let lastVleBadgeStatus = '';
 
   function clickApplicationForNewPanMenu() {
     if (vleMenuClicked) return true;
@@ -1542,16 +1544,46 @@
   }
 
   function handleVleHomePage() {
-    updateBadge('VLE Home • Form 49A Ready', '#10b981');
+    if (vleMenuClicked) return;
 
-    const lastClickedAt = Number(sessionStorage.getItem('wb_pan_menu_clicked_at') || 0);
-    if (!vleMenuClicked && (!lastClickedAt || (Date.now() - lastClickedAt > 5000))) {
-      setTimeout(() => {
-        if (!vleMenuClicked) {
-          clickApplicationForNewPanMenu();
+    const now = Date.now();
+    if (now - lastVleRoleCheckAt < 1500) return;
+    lastVleRoleCheckAt = now;
+
+    try {
+      chrome.runtime.sendMessage({ action: 'getVleHomeRole' }, (role) => {
+        void chrome.runtime.lastError;
+        if (!role || role.isStandby) {
+          const standbyMsg = role && role.hasCandidate
+            ? '🛡️ Standby VLE Home (10m Auto-Refresh) • Launching Entry Tab...'
+            : '🛡️ Standby VLE Home Open • Auto-Refresh 10m (Waiting for Entry)';
+          if (lastVleBadgeStatus !== standbyMsg) {
+            lastVleBadgeStatus = standbyMsg;
+            updateBadge(standbyMsg, '#0ea5e9');
+          }
+          return;
         }
-      }, 700);
-    }
+
+        if (!role.hasCandidate) {
+          const idleMsg = 'VLE Home • Waiting for New PAN Entry in Queue...';
+          if (lastVleBadgeStatus !== idleMsg) {
+            lastVleBadgeStatus = idleMsg;
+            updateBadge(idleMsg, '#94a3b8');
+          }
+          return;
+        }
+
+        updateBadge('VLE Home • Opening Application for New PAN...', '#10b981');
+        const lastClickedAt = Number(sessionStorage.getItem('wb_pan_menu_clicked_at') || 0);
+        if (!vleMenuClicked && (!lastClickedAt || (Date.now() - lastClickedAt > 5000))) {
+          setTimeout(() => {
+            if (!vleMenuClicked) {
+              clickApplicationForNewPanMenu();
+            }
+          }, 500);
+        }
+      });
+    } catch (e) {}
   }
 
   // -----------------------------------------------------------------------

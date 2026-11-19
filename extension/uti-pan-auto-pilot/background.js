@@ -8,6 +8,8 @@ const VLE_HOME_URL = 'https://www.myutiitsl.com/panonlineservices/vleHome.action
 const DOC_UPLOAD_URL = 'https://www.myutiitsl.com/panonlineservices/docUploadListPanApp?applType=B';
 const QUEUE_ALARM_NAME = 'WB_UTI_PAN_QUEUE_WATCH';
 
+const VLE_STANDBY_REFRESH_ALARM = 'WB_UTI_VLEHOME_REFRESH_10M';
+
 let isCycleLaunching = false;
 let activeCandidateKey = null;
 let lastLaunchedCandKey = null;
@@ -15,12 +17,113 @@ let activeOtpUtiTabId = null;
 let createdGmailTabId = null;
 let lastLogoutRestartAt = 0;
 
+function getTabIfAlive(tabId) {
+  return new Promise((resolve) => {
+    if (!tabId) {
+      resolve(null);
+      return;
+    }
+    chrome.tabs.get(tabId, (tab) => {
+      if (chrome.runtime.lastError || !tab || !tab.id) {
+        resolve(null);
+      } else {
+        resolve(tab);
+      }
+    });
+  });
+}
+
+async function ensureStandbyVleTab(allowCreate = false) {
+  const stored = await new Promise((r) => chrome.storage.local.get(['standbyVleTabId', 'activeEntryVleTabId'], r));
+  const savedStandbyId = stored?.standbyVleTabId || null;
+  const savedEntryId = stored?.activeEntryVleTabId || null;
+
+  if (savedStandbyId) {
+    const tab = await getTabIfAlive(savedStandbyId);
+    const u = (tab?.url || tab?.pendingUrl || '').toLowerCase();
+    if (tab && u.includes('vlehome')) {
+      return { tab, created: false };
+    }
+  }
+
+  const vleTabs = await getVleHomeTabs();
+  const adoptable = vleTabs.find((t) => t.id !== savedEntryId) || null;
+  if (adoptable) {
+    await chrome.storage.local.set({ standbyVleTabId: adoptable.id });
+    return { tab: adoptable, created: false };
+  }
+
+  if (!allowCreate) {
+    return { tab: null, created: false };
+  }
+
+  const cfg = await getConfig();
+  if (!cfg.autoPollEnabled) {
+    return { tab: null, created: false };
+  }
+
+  // Do not interrupt active CSC login / OTP verification flow
+  const allTabs = await new Promise((resolve) => chrome.tabs.query({}, (tabs) => {
+    void chrome.runtime.lastError;
+    resolve(tabs || []);
+  }));
+  const isAuthFlowOpen = allTabs.some((t) => {
+    const u = (t?.url || t?.pendingUrl || '').toLowerCase();
+    return u.includes('csclogin') || u.includes('logincheckotp') || u.includes('connect.csc.gov.in');
+  });
+  if (isAuthFlowOpen) {
+    return { tab: null, created: false };
+  }
+
+  const createdTab = await new Promise((resolve) => {
+    chrome.tabs.create({ url: VLE_HOME_URL, active: false }, (tab) => {
+      void chrome.runtime.lastError;
+      resolve(tab || null);
+    });
+  });
+  if (createdTab && createdTab.id) {
+    await chrome.storage.local.set({ standbyVleTabId: createdTab.id });
+  }
+  return { tab: createdTab, created: true };
+}
+
+async function refreshStandbyVleTab() {
+  try {
+    const allTabs = await new Promise((resolve) => chrome.tabs.query({}, (tabs) => {
+      void chrome.runtime.lastError;
+      resolve(tabs || []);
+    }));
+    const isAuthFlowOpen = allTabs.some((t) => {
+      const u = (t?.url || t?.pendingUrl || '').toLowerCase();
+      return u.includes('csclogin') || u.includes('logincheckotp') || u.includes('connect.csc.gov.in');
+    });
+    if (isAuthFlowOpen) return;
+
+    const { tab, created } = await ensureStandbyVleTab(true);
+    if (!tab || !tab.id || created) return;
+
+    const curUrl = (tab.url || tab.pendingUrl || '').toLowerCase();
+    if (curUrl.includes('vlehome')) {
+      chrome.tabs.reload(tab.id, { bypassCache: false }, () => void chrome.runtime.lastError);
+    } else {
+      chrome.tabs.update(tab.id, { url: VLE_HOME_URL, active: false }, () => void chrome.runtime.lastError);
+    }
+    await chrome.storage.local.set({ lastStandbyRefreshAt: Date.now() });
+  } catch (err) {
+    console.error('[Background] Standby vleHome refresh error:', err);
+  }
+}
+
 async function closeAllIdleUtiTabs(options = {}) {
   const includeDocUpload = Boolean(options && options.includeDocUpload);
+  const { tab: standbyTab } = await ensureStandbyVleTab(false);
+  const standbyId = standbyTab && standbyTab.id ? standbyTab.id : null;
   const allUtiTabs = await getAllUtiTabs();
   const idsToClose = allUtiTabs
     .filter((t) => {
       if (!t || !t.id) return false;
+      // Keep the single persistent standby vleHome.action tab open
+      if (standbyId && t.id === standbyId) return false;
       const u = (t.url || t.pendingUrl || '').toLowerCase();
       // Do not close if user is actively on CSC Login or OTP verification screen
       if (u.includes('logincheckotp') || u.includes('csclogin')) return false;
@@ -145,19 +248,25 @@ async function openVleHomeOnly(cand) {
     // Close any dead error tabs first
     await closeErrorTabs();
 
-    // Check if vleHome.action is already open
+    // Keep persistent standby vleHome tab untouched; open or reuse a separate entry tab for Form 49A
+    const { tab: standbyTab } = await ensureStandbyVleTab(false);
+    const standbyId = standbyTab && standbyTab.id ? standbyTab.id : null;
     const vleTabs = await getVleHomeTabs();
-    if (vleTabs.length === 0) {
-      // Sirf aur sirf vleHome.action open karo
-      await new Promise((resolve) => {
-        chrome.tabs.create({ url: VLE_HOME_URL, active: true }, () => {
+    const existingEntryTab = vleTabs.find((t) => !standbyId || t.id !== standbyId) || null;
+
+    if (!existingEntryTab) {
+      const createdEntryTab = await new Promise((resolve) => {
+        chrome.tabs.create({ url: VLE_HOME_URL, active: true }, (tab) => {
           void chrome.runtime.lastError;
-          resolve();
+          resolve(tab || null);
         });
       });
+      if (createdEntryTab && createdEntryTab.id) {
+        await chrome.storage.local.set({ activeEntryVleTabId: createdEntryTab.id });
+      }
     } else {
-      // Tab pehle se khula hai, vleHome par navigate karo aur focus karo taaki auto-process shuru ho
-      chrome.tabs.update(vleTabs[0].id, { url: VLE_HOME_URL, active: true });
+      await chrome.storage.local.set({ activeEntryVleTabId: existingEntryTab.id });
+      chrome.tabs.update(existingEntryTab.id, { url: VLE_HOME_URL, active: true }, () => void chrome.runtime.lastError);
     }
   } finally {
     setTimeout(() => {
@@ -216,11 +325,12 @@ async function checkQueueAndLaunch(forceRestart = false) {
       }
       activeCandidateKey = null;
       lastLaunchedCandKey = null;
-      await chrome.storage.local.remove(['currentCandidate', 'currentUtiRefNo', 'completedReceiptNo', 'awaitingDocUpload', 'awaitingDocUploadAt']);
+      await chrome.storage.local.remove(['currentCandidate', 'currentUtiRefNo', 'completedReceiptNo', 'awaitingDocUpload', 'awaitingDocUploadAt', 'activeEntryVleTabId']);
       await chrome.storage.local.set({
-        lastStatus: 'Idle • Waiting for new PAN applications from BiharGo...',
+        lastStatus: 'Idle • Standby VLE Home active (10m refresh) | Waiting for queue...',
         lastStatusColor: '#94a3b8'
       });
+      await ensureStandbyVleTab(false);
       await closeAllIdleUtiTabs();
       return { success: true, count: 0 };
     }
@@ -500,6 +610,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === 'docUploadIdleOrDone') {
     (async () => {
       await chrome.storage.local.remove(['awaitingDocUpload', 'awaitingDocUploadAt']);
+      await ensureStandbyVleTab(true);
       const r = await checkQueueAndLaunch(true);
       if (r && r.success && r.count === 0) {
         await closeAllIdleUtiTabs({ includeDocUpload: true });
@@ -551,6 +662,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         lastLogoutRestartAt = now;
 
         const senderTabId = sender && sender.tab ? sender.tab.id : null;
+        const storedIds = await new Promise((r) => chrome.storage.local.get(['standbyVleTabId', 'activeEntryVleTabId'], r));
+        if (senderTabId && storedIds?.standbyVleTabId === senderTabId) {
+          await chrome.storage.local.remove(['standbyVleTabId']);
+        }
+        if (senderTabId && storedIds?.activeEntryVleTabId === senderTabId) {
+          await chrome.storage.local.remove(['activeEntryVleTabId']);
+        }
         const allUti = await getAllUtiTabs();
         const idsToRemove = new Set();
         if (senderTabId) idsToRemove.add(senderTabId);
@@ -707,17 +825,80 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.action === 'getVleHomeRole') {
+    (async () => {
+      try {
+        const senderTabId = sender && sender.tab ? sender.tab.id : null;
+        const stored = await new Promise((r) => chrome.storage.local.get(['standbyVleTabId', 'activeEntryVleTabId', 'currentCandidate', 'queueList'], r));
+        const hasCandidate = Boolean(stored?.currentCandidate || (Array.isArray(stored?.queueList) && stored.queueList.length > 0));
+        const cand = stored?.currentCandidate || (Array.isArray(stored?.queueList) && stored.queueList[0]) || null;
+
+        // If this tab was explicitly launched as an Entry tab (and queue has work), treat as Entry tab
+        if (senderTabId && stored?.activeEntryVleTabId === senderTabId && hasCandidate) {
+          sendResponse({ isStandby: false, hasCandidate: true });
+          return;
+        }
+
+        // Check if saved standby tab is still alive on vleHome
+        let standbyTab = null;
+        if (stored?.standbyVleTabId) {
+          const alive = await getTabIfAlive(stored.standbyVleTabId);
+          const aliveUrl = (alive?.url || alive?.pendingUrl || '').toLowerCase();
+          if (alive && aliveUrl.includes('vlehome')) {
+            standbyTab = alive;
+          }
+        }
+
+        if (!standbyTab && senderTabId) {
+          // Adopt this vleHome tab as the single persistent standby tab
+          await chrome.storage.local.set({ standbyVleTabId: senderTabId });
+          if (stored?.activeEntryVleTabId === senderTabId) {
+            await chrome.storage.local.remove(['activeEntryVleTabId']);
+          }
+          // If a queued candidate was waiting (e.g. user just logged in), open an Entry tab alongside standby
+          if (hasCandidate && cand && !isCycleLaunching) {
+            setTimeout(() => {
+              openVleHomeOnly(cand);
+            }, 300);
+          }
+          sendResponse({ isStandby: true, hasCandidate });
+          return;
+        }
+
+        const isStandby = Boolean(standbyTab && senderTabId && standbyTab.id === senderTabId);
+        sendResponse({ isStandby, hasCandidate });
+      } catch (err) {
+        sendResponse({ isStandby: true, hasCandidate: false });
+      }
+    })();
+    return true;
+  }
+
   return false;
 });
 
-// Clear any legacy periodic keep-alive open-and-close alarms
+// Clear old open-and-close alarms and use 10-minute in-place refresh on the standby vleHome tab
 chrome.alarms.clear('WB_CSC_DASHBOARD_KEEPALIVE_30M');
 chrome.alarms.clear('WB_UTI_VLEHOME_KEEPALIVE_7M');
 
+chrome.tabs.onRemoved.addListener((tabId) => {
+  chrome.storage.local.get(['standbyVleTabId', 'activeEntryVleTabId'], (res) => {
+    const toRemove = [];
+    if (res?.standbyVleTabId === tabId) toRemove.push('standbyVleTabId');
+    if (res?.activeEntryVleTabId === tabId) toRemove.push('activeEntryVleTabId');
+    if (toRemove.length > 0) {
+      chrome.storage.local.remove(toRemove);
+    }
+  });
+});
+
 chrome.alarms.create(QUEUE_ALARM_NAME, { periodInMinutes: 0.25 });
+chrome.alarms.create(VLE_STANDBY_REFRESH_ALARM, { periodInMinutes: 10 });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === QUEUE_ALARM_NAME) {
     checkQueueAndLaunch(false);
+  } else if (alarm.name === VLE_STANDBY_REFRESH_ALARM) {
+    refreshStandbyVleTab();
   }
 });
 
@@ -725,7 +906,13 @@ setInterval(() => {
   checkQueueAndLaunch(false);
 }, 5000);
 
-chrome.runtime.onStartup.addListener(() => checkQueueAndLaunch(true));
-chrome.runtime.onInstalled.addListener(() => checkQueueAndLaunch(true));
+chrome.runtime.onStartup.addListener(async () => {
+  await ensureStandbyVleTab(true);
+  checkQueueAndLaunch(true);
+});
+chrome.runtime.onInstalled.addListener(async () => {
+  await ensureStandbyVleTab(true);
+  checkQueueAndLaunch(true);
+});
 
 checkQueueAndLaunch(false);
