@@ -21,6 +21,7 @@
   let resPinVerifiedValue = '';
   let resPinVerifiedAt = 0;
   let resDistChangedAt = 0;
+  let aurangabadSwitchUntil = 0;
 
   function isAurangabadDistrict(name) {
     const clean = String(name || '').toLowerCase().replace(/[^a-z]/g, '');
@@ -44,6 +45,7 @@
       resPinVerifiedValue = '';
       resPinVerifiedAt = 0;
       resDistChangedAt = 0;
+      aurangabadSwitchUntil = 0;
     }
   }
 
@@ -52,17 +54,60 @@
     for (const node of errNodes) {
       if (!isVisible(node)) continue;
       const txt = (node.innerText || node.textContent || '').toLowerCase();
-      if (txt.includes('pin') && (txt.includes('valid') || txt.includes('invalid') || txt.includes('incorrect') || txt.includes('not ') || txt.includes('kindly'))) {
+      if (txt.includes('pin') && (txt.includes('valid') || txt.includes('invalid') || txt.includes('incorrect') || txt.includes('not ') || txt.includes('kindly') || txt.includes('attached with district'))) {
         return true;
       }
     }
     return false;
   }
 
+  function findDialogOkButton(container) {
+    if (!container) return null;
+    const candidates = Array.from(container.querySelectorAll(
+      '.ui-dialog-buttonpane button, .modal-footer button, .modal-footer a, button, input[type="button"], input[type="submit"], a.btn, a[role="button"]'
+    )).filter((b) => isVisible(b) && !b.disabled);
+
+    const okBtn = candidates.find((b) => {
+      const t = (b.textContent || b.value || '').trim().toLowerCase();
+      return t === 'ok' || t === 'okay' || t === 'yes' || t === 'close';
+    });
+    if (okBtn) return okBtn;
+
+    const closeBtn = Array.from(container.querySelectorAll(
+      'a.ui-dialog-titlebar-close, button.ui-dialog-titlebar-close, button.close, [data-dismiss="modal"], [data-bs-dismiss="modal"]'
+    )).find((b) => isVisible(b));
+    return closeBtn || null;
+  }
+
+  function getVisibleDialogs() {
+    const selectors = '.ui-dialog, .modal.in, .modal.show, .modal[style*="block"], .modal-dialog, .modal-content, .swal2-container, div[role="dialog"], div[role="alertdialog"], .bootbox';
+    const raw = Array.from(document.querySelectorAll(selectors)).filter((d) => isVisible(d) && !d.closest('#wb-pan-overlay'));
+    const dialogs = raw.filter((d) => !raw.some((other) => other !== d && other.contains(d)));
+
+    // Fallback for custom fixed/absolute overlay message boxes without standard dialog classes
+    const extra = Array.from(document.querySelectorAll('div')).find((d) => {
+      if (!isVisible(d) || d.closest('#wb-pan-overlay')) return false;
+      if (dialogs.some((existing) => existing === d || existing.contains(d) || d.contains(existing))) return false;
+      const st = window.getComputedStyle(d);
+      const idLow = (d.id || '').toLowerCase();
+      const isOverlayPos = st.position === 'fixed' || st.position === 'absolute';
+      const isDialogId = idLow.includes('dialog') || idLow.includes('modal') || idLow.includes('msg') || idLow.includes('popup') || idLow.includes('alert') || idLow.includes('error');
+      if (!isOverlayPos && !isDialogId) return false;
+      const t = (d.innerText || d.textContent || '').toLowerCase();
+      if (t.length > 500) return false;
+      if (!(t.includes('attached with district') || t.includes('please enter correct district') || t.includes('kindly enter pincode') || t.includes('enter valid pincode'))) {
+        return false;
+      }
+      return Boolean(findDialogOkButton(d));
+    });
+    if (extra) dialogs.push(extra);
+    return dialogs;
+  }
+
   function handleAurangabadPinFailure(sourceLabel = 'dialog') {
     syncAurangabadCandidateState();
-    if (!currentCandidate || usePlainAurangabadFallback) return;
-    if (!isAurangabadDistrict(currentCandidate?.district_name || currentCandidate?.district)) return;
+    if (!currentCandidate || usePlainAurangabadFallback) return false;
+    if (!isAurangabadDistrict(currentCandidate?.district_name || currentCandidate?.district)) return false;
 
     const resDistListEl = document.getElementById('resDistList');
     const selectedDistText = (resDistListEl && resDistListEl.selectedIndex >= 0)
@@ -71,38 +116,50 @@
 
     // Count failures only when AURANGABAD(BH) was actively selected
     if (!isAurangabadBhOption(selectedDistText)) {
-      return;
+      return false;
     }
 
+    const isDialog = sourceLabel === 'dialog';
+    const minGap = isDialog ? 250 : 1200;
     const now = Date.now();
-    if (now - lastPinErrorAt < 1200) return; // Avoid double-counting one rejection across 700ms ticks
+    if (now - lastPinErrorAt < minGap) return false;
     lastPinErrorAt = now;
     aurangabadPinFailCount += 1;
     resPinVerifiedValue = '';
 
     if (aurangabadPinFailCount >= AURANGABAD_PIN_RETRY_LIMIT) {
       usePlainAurangabadFallback = true;
+      aurangabadSwitchUntil = now + 1100;
+      lastAdvanceTime = now; // Hold step advance while switching district and filling PIN
       updateBadge(`🔄 Pincode invalid in AURANGABAD(BH) (${aurangabadPinFailCount}x) • Trying plain AURANGABAD...`, '#f59e0b');
-      if (resDistListEl) {
-        selectOptionByText(resDistListEl, 'AURANGABAD', true);
-        resDistChangedAt = Date.now();
-      }
-      const resPinEl = document.getElementById('resPin');
-      const pincode = String(currentCandidate?.pincode || currentCandidate?.pin || '').replace(/\D/g, '').slice(0, 6);
-      if (resPinEl && pincode) {
-        lastAdvanceTime = now; // Hold advance until 450ms district settle + PIN fill finishes
-        setTimeout(() => {
-          setInputValue(resPinEl, pincode);
-          resPinVerifiedValue = pincode;
-          resPinVerifiedAt = Date.now();
+
+      const distSwitchDelay = isDialog ? 250 : 0;
+      setTimeout(() => {
+        const distEl = document.getElementById('resDistList');
+        if (distEl) {
+          selectOptionByText(distEl, 'AURANGABAD', true);
+          resDistChangedAt = Date.now();
+        }
+        const pinEl = document.getElementById('resPin');
+        const pincode = String(currentCandidate?.pincode || currentCandidate?.pin || '').replace(/\D/g, '').slice(0, 6);
+        if (pinEl && pincode) {
+          setTimeout(() => {
+            setInputValue(pinEl, pincode);
+            resPinVerifiedValue = pincode;
+            resPinVerifiedAt = Date.now();
+            lastAdvanceTime = 0;
+            aurangabadSwitchUntil = 0;
+          }, 450);
+        } else {
           lastAdvanceTime = 0;
-        }, 450);
-      } else {
-        lastAdvanceTime = 0;
-      }
-    } else {
-      updateBadge(`⚠️ Pincode rejected in AURANGABAD(BH) (${aurangabadPinFailCount}/${AURANGABAD_PIN_RETRY_LIMIT}, ${sourceLabel}) • Retrying...`, '#f59e0b');
+          aurangabadSwitchUntil = 0;
+        }
+      }, distSwitchDelay);
+      return true;
     }
+
+    updateBadge(`⚠️ Pincode rejected in AURANGABAD(BH) (${aurangabadPinFailCount}/${AURANGABAD_PIN_RETRY_LIMIT}, ${sourceLabel}) • Retrying...`, '#f59e0b');
+    return false;
   }
 
   // -----------------------------------------------------------------------
@@ -122,7 +179,13 @@
     if (!el || val === undefined || val === null) return false;
     const str = String(val);
     if (el.value === str) return true; // Stop redundant events & prevent loop popups
-    try { el.focus(); } catch (e) {}
+    const visibleNow = isVisible(el);
+    const activeEl = document.activeElement;
+    // Prevent off-tab hidden writes from blurring an empty #resPin and triggering "Kindly enter pincode."
+    const preserveResPinFocus = activeEl && activeEl.id === 'resPin' && el.id !== 'resPin' && !activeEl.value;
+    if (visibleNow && !preserveResPinFocus) {
+      try { el.focus(); } catch (e) {}
+    }
     try {
       const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
       if (setter) setter.call(el, str);
@@ -130,9 +193,12 @@
     } catch (e) {
       el.value = str;
     }
-    ['input', 'change', 'keyup', 'blur'].forEach((evt) => {
+    ['input', 'change', 'keyup'].forEach((evt) => {
       try { el.dispatchEvent(new Event(evt, { bubbles: true })); } catch (e) {}
     });
+    if (visibleNow || el.id === 'resPin') {
+      try { el.dispatchEvent(new Event('blur', { bubbles: true })); } catch (e) {}
+    }
     return true;
   }
 
@@ -610,9 +676,15 @@
       }
     }
 
-    // 4. Message / Error Dialog (#errorDiv, #errorDialog, pincode validation popups)
-    const errorDialog = Array.from(document.querySelectorAll('.ui-dialog')).find((d) => {
-      if (!isVisible(d)) return false;
+    // Clear stale pin-counted flags on closed modals so reused dialog DOM nodes count future popups cleanly
+    document.querySelectorAll('[data-wb-pin-counted="1"]').forEach((el) => {
+      if (!isVisible(el)) {
+        delete el.dataset.wbPinCounted;
+      }
+    });
+
+    // 4. Message / Error Dialog (#errorDiv, #errorDialog, Bootstrap .modal, pincode & district popups)
+    const errorDialog = getVisibleDialogs().find((d) => {
       const t = (d.innerText || d.textContent || '').toLowerCase();
       if (t.includes('re-enter aadhaar') || t.includes('reference number') || t.includes('biometric')) return false;
       return (
@@ -621,6 +693,8 @@
         t.includes('valid pincode') ||
         t.includes('valid pin') ||
         t.includes('invalid pin') ||
+        t.includes('attached with district') ||
+        t.includes('please enter correct district') ||
         t.includes('pincode') ||
         t.includes('pin code') ||
         (t.includes('message') && !t.includes('already exist'))
@@ -629,15 +703,18 @@
 
     if (errorDialog) {
       const dialogText = (errorDialog.innerText || errorDialog.textContent || '').toLowerCase();
-      if (dialogText.includes('pin') && !errorDialog.dataset.wbPinCounted) {
+      const isPinOrDistError =
+        dialogText.includes('attached with district') ||
+        dialogText.includes('correct district') ||
+        dialogText.includes('pin');
+
+      let switchedToFallback = false;
+      if (isPinOrDistError && !errorDialog.dataset.wbPinCounted) {
         errorDialog.dataset.wbPinCounted = '1';
-        handleAurangabadPinFailure('dialog');
+        switchedToFallback = handleAurangabadPinFailure('dialog');
       }
 
-      const okBtn = Array.from(errorDialog.querySelectorAll('.ui-dialog-buttonpane button, button, input[type="button"], a.ui-dialog-titlebar-close, button.ui-dialog-titlebar-close')).find((b) => {
-        const t = (b.textContent || b.value || '').trim().toLowerCase();
-        return t === 'ok' || t === 'okay' || b.classList.contains('ui-dialog-titlebar-close');
-      });
+      const okBtn = findDialogOkButton(errorDialog);
       if (okBtn) {
         try {
           okBtn.click();
@@ -646,16 +723,19 @@
         }
         handled = true;
       }
-      // Re-fill pincode immediately after dismissing popup (unless fallback just scheduled district+pin switch)
-      if (!usePlainAurangabadFallback) {
+
+      // Re-fill pincode after modal finishes dismissing (unless fallback switch just scheduled district + pin fill)
+      if (!switchedToFallback && !usePlainAurangabadFallback) {
         const resPinEl = document.getElementById('resPin');
         const pincode = String(currentCandidate?.pincode || currentCandidate?.pin || '').replace(/\D/g, '').slice(0, 6);
         if (resPinEl && pincode && resPinEl.value !== pincode) {
           setTimeout(() => {
-            setInputValue(resPinEl, pincode);
-            resPinVerifiedValue = pincode;
-            resPinVerifiedAt = Date.now();
-          }, 150);
+            if (!usePlainAurangabadFallback && (!aurangabadSwitchUntil || Date.now() >= aurangabadSwitchUntil) && !hasVisibleModal()) {
+              setInputValue(resPinEl, pincode);
+              resPinVerifiedValue = pincode;
+              resPinVerifiedAt = Date.now();
+            }
+          }, 300);
         }
       }
     }
@@ -881,6 +961,10 @@
     }
 
     // 6. District (resDistList)
+    if (aurangabadSwitchUntil && Date.now() < aurangabadSwitchUntil) {
+      return filled;
+    }
+
     const resDistListEl = document.getElementById('resDistList');
     const rawDistrict = (currentCandidate?.district_name || currentCandidate?.district || '').trim();
     const isAurangabadCand = isAurangabadDistrict(rawDistrict);
@@ -939,10 +1023,11 @@
         resPinVerifiedValue = pincode;
         resPinVerifiedAt = Date.now();
       }
-      if (!recentDistSwitchPending && (resPinEl.value !== pincode || force || districtChanged)) {
+      if (!recentDistSwitchPending && !hasVisibleModal() && (resPinEl.value !== pincode || force || districtChanged)) {
         // Allow district AJAX to settle, then fill PIN
         const delay = districtChanged ? 400 : 100;
         setTimeout(() => {
+          if (hasVisibleModal() || (aurangabadSwitchUntil && Date.now() < aurangabadSwitchUntil)) return;
           if (resPinEl.value !== pincode) {
             setInputValue(resPinEl, pincode);
           }
@@ -1186,8 +1271,7 @@
   let lastAdvanceTime = 0;
 
   function hasVisibleModal() {
-    const dialogs = Array.from(document.querySelectorAll('.ui-dialog, .modal, .swal2-container'));
-    return dialogs.some((d) => isVisible(d));
+    return getVisibleDialogs().length > 0;
   }
 
   function getActiveWizardStep() {
@@ -1261,6 +1345,7 @@
   }
 
   function isStep4Complete() {
+    if (aurangabadSwitchUntil && Date.now() < aurangabadSwitchUntil) return false;
     const inc = document.getElementById('incomeOthSource');
     const addr1 = document.getElementById('resAddr1');
     const dist = document.getElementById('resDistList');
