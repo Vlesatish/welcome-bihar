@@ -1627,6 +1627,7 @@ public function auditLogs(): void
 
 public function whatsappLogs(): void
     {
+        \App\Services\WhatsAppNotificationService::dispatchDueIfAny(15);
         $db = Database::getConnection();
 
         $status = trim($_GET['status'] ?? '');

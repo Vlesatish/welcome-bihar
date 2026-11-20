@@ -359,7 +359,7 @@ class StaffRoutingService
 
             // Try instant WhatsApp dispatch
             try {
-                WhatsAppNotificationService::dispatchPending(3);
+                WhatsAppNotificationService::dispatchPending(15);
             } catch (\Throwable $we) {
                 error_log("WhatsApp dispatch error on reassign: " . $we->getMessage());
             }
@@ -461,6 +461,14 @@ class StaffRoutingService
                     $routedCount++;
                     $byOperator[$opId] = ($byOperator[$opId] ?? 0) + 1;
                 }
+            }
+        }
+
+        if ($routedCount > 0) {
+            try {
+                WhatsAppNotificationService::dispatchPending(max(20, $routedCount * 2));
+            } catch (\Throwable $we) {
+                error_log("WhatsApp dispatch error on bulk route: " . $we->getMessage());
             }
         }
 

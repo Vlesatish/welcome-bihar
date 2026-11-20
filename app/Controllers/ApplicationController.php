@@ -2147,6 +2147,8 @@ public function apiGetRequests(): void
             exit;
         }
 
+        \App\Services\WhatsAppNotificationService::dispatchDueIfAny(10);
+
         $db = Database::getConnection();
         $stmt = $db->prepare("SELECT id, user_id, status, result_file, rejection_reason, admin_remarks, remarks, portal_tracking_json, applicant_identifier, application_code FROM applications WHERE id = ? LIMIT 1");
         $stmt->execute([$appId]);

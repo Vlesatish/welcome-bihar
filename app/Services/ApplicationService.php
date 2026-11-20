@@ -331,7 +331,7 @@ class ApplicationService
 
             // Dispatch pending WhatsApp outbox messages after transaction commit
             try {
-                WhatsAppNotificationService::dispatchPending(5);
+                WhatsAppNotificationService::dispatchPending(20);
             } catch (\Throwable $we) {
                 error_log("WhatsApp post-commit dispatch error: " . $we->getMessage());
             }
@@ -843,7 +843,7 @@ class ApplicationService
 
             // Dispatch pending WhatsApp outbox messages after transaction commit
             try {
-                WhatsAppNotificationService::dispatchPending(max(5, count($createdApplications) * 2));
+                WhatsAppNotificationService::dispatchPending(max(20, count($createdApplications) * 3));
             } catch (\Throwable $we) {
                 error_log("Batch WhatsApp post-commit dispatch error: " . $we->getMessage());
             }

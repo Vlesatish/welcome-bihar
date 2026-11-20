@@ -20,7 +20,7 @@ class WhatsAppNotificationService
     public const DEFAULT_BASE_URL = 'https://wbapi.in';
     public const SEND_ENDPOINT = '/send-api.php';
     public const CONNECT_ENDPOINT = '/connect-api.php';
-    public const MAX_ATTEMPTS = 4;
+    public const MAX_ATTEMPTS = 6;
 
     /**
      * Optional custom/mock transport for automated testing.
@@ -347,7 +347,7 @@ class WhatsAppNotificationService
     }
 
     /**
-     * Recover stuck outbox records that have been in PROCESSING for more than 10 minutes
+     * Recover stuck outbox records that have been in PROCESSING for more than 2 minutes
      * Safely resets them to PENDING so they can be reclaimed
      */
     public static function recoverStuckWorkers(): int
@@ -359,10 +359,10 @@ class WhatsAppNotificationService
                 SET status = 'PENDING',
                     lock_token = NULL,
                     locked_at = NULL,
-                    last_error = 'Recovered from stuck PROCESSING state (>10 minutes)',
+                    last_error = 'Recovered from stuck PROCESSING state (>2 minutes)',
                     updated_at = NOW()
                 WHERE status = 'PROCESSING'
-                  AND (locked_at <= NOW() - INTERVAL 10 MINUTE OR (locked_at IS NULL AND updated_at <= NOW() - INTERVAL 10 MINUTE))
+                  AND (locked_at <= NOW() - INTERVAL 2 MINUTE OR (locked_at IS NULL AND updated_at <= NOW() - INTERVAL 2 MINUTE))
             ");
             $stmt->execute();
             $recovered = $stmt->rowCount();
@@ -379,6 +379,7 @@ class WhatsAppNotificationService
     /**
      * Normalize Indian mobile phone number to country code format (e.g. 91XXXXXXXXXX)
      * - Strips spaces, +, dashes, brackets, and non-digits
+     * - Strips single leading 0 on 11-digit Indian numbers (0XXXXXXXXXX)
      * - Prepends 91 to 10-digit Indian numbers starting with 6-9
      * - Keeps 12-digit numbers starting with 91 followed by 6-9
      * - Returns null if invalid
@@ -394,6 +395,11 @@ class WhatsAppNotificationService
 
         if ($cleaned === '') {
             return null;
+        }
+
+        // 11 digits starting with 0 followed by 6-9 (e.g. 09876543210)
+        if (strlen($cleaned) === 11 && str_starts_with($cleaned, '0')) {
+            $cleaned = substr($cleaned, 1);
         }
 
         // 10 digits starting with 6-9
@@ -595,15 +601,8 @@ class WhatsAppNotificationService
 
     /**
      * Build clean WhatsApp message for application notification.
-     * Strictly includes ONLY:
-     * Location: {District} > {Block}
-     * App No {Complete submitted application number}
-     * Applicant Name: {Complete applicant name}
-     *
-     * Application Number is NEVER masked, truncated, hidden, or replaced.
-     * All other dynamic input fields (Aadhaar, Mobile, Father, Mother, etc.) are strictly blocked.
-     * Contains NO heading, NO description, NO rate/fee/wallet, NO references, NO dates,
-     * NO status, NO service name, NO operator name, NO blank fields, NO decorative emojis.
+     * Includes Location, App No, Applicant Name, and ALL submitted additional/custom inputs unmasked.
+     * Excludes internal metadata, rates, status, and blank values.
      */
     public static function buildMessage(array $data, ?PDO $db = null, ?int $applicationId = null): string
     {
@@ -760,9 +759,15 @@ class WhatsAppNotificationService
             'applicantname' => true
         ];
 
+        // Core structural keys skipped even in dynamic field tables (already formatted in Location / App No / Name)
+        $coreOnlySkip = [
+            'application_number', 'applicant_identifier', 'applicant_name',
+            'application_code', 'district_id', 'block_id', 'district_name', 'block_name'
+        ];
+
         $otherLines = [];
 
-        // 3. Process remaining dynamic submitted values from application_field_values in form order
+        // 3. Process remaining dynamic submitted values from application_field_values in form order (all additional inputs unmasked)
         if ($db !== null && $appId > 0) {
             try {
                 $fStmt = $db->prepare("
@@ -786,7 +791,7 @@ class WhatsAppNotificationService
                     $fType = strtolower(trim((string)$row['field_type']));
                     $val = self::decodeAndClean($row['field_value']);
 
-                    if ($fType === 'file' || in_array($fName, $excludedKeys, true)) {
+                    if ($fType === 'file' || in_array($fName, $coreOnlySkip, true)) {
                         continue;
                     }
                     if (self::isFieldValueEmpty($val, $fType)) {
@@ -799,10 +804,6 @@ class WhatsAppNotificationService
 
                     if (isset($seenLabels[$normLabel]) || isset($seenNames[$normName])) {
                         continue;
-                    }
-
-                    if (self::isAadhaarField($fName, $fType, $label)) {
-                        $val = self::maskAadhaar($val);
                     }
 
                     $otherLines[] = "{$label}: {$val}";
@@ -820,7 +821,7 @@ class WhatsAppNotificationService
                 $fType = strtolower(trim((string)($f['field_type'] ?? '')));
                 $val = self::decodeAndClean($f['field_value'] ?? ($f['value'] ?? ''));
 
-                if ($fType === 'file' || in_array($fName, $excludedKeys, true)) {
+                if ($fType === 'file' || in_array($fName, $coreOnlySkip, true)) {
                     continue;
                 }
                 if (self::isFieldValueEmpty($val, $fType)) {
@@ -835,10 +836,6 @@ class WhatsAppNotificationService
                     continue;
                 }
 
-                if (self::isAadhaarField($fName, $fType, $label)) {
-                    $val = self::maskAadhaar($val);
-                }
-
                 $otherLines[] = "{$label}: {$val}";
                 $seenLabels[$normLabel] = true;
                 $seenNames[$normName] = true;
@@ -848,7 +845,7 @@ class WhatsAppNotificationService
         // 5. Process any other user input key-values passed in $data (preserving submission order)
         foreach ($data as $key => $val) {
             $keyLower = strtolower(trim((string)$key));
-            if (in_array($keyLower, $excludedKeys, true) || is_array($val) || is_object($val)) {
+            if (in_array($keyLower, $excludedKeys, true) || $keyLower === 'applicant_mobile' || is_array($val) || is_object($val)) {
                 continue;
             }
             $valStr = self::decodeAndClean($val);
@@ -864,20 +861,12 @@ class WhatsAppNotificationService
                 continue;
             }
 
-            if (self::isAadhaarField($keyLower, '', $label)) {
-                $valStr = self::maskAadhaar($valStr);
-            }
-
             $otherLines[] = "{$label}: {$valStr}";
             $seenLabels[$normLabel] = true;
             $seenNames[$normName] = true;
         }
 
-        // 6. Assemble final format in exact required order:
-        // Location: {District} > {Block}
-        // App No {Complete submitted application number}
-        // Applicant Name: {Complete applicant name}
-        // (All other dynamic input fields are strictly blocked to keep message clean & simple)
+        // 6. Assemble final format: Location, App No, Applicant Name, and all additional submitted inputs
         $lines = [];
         if ($locationStr !== '') {
             $lines[] = $locationStr;
@@ -887,6 +876,9 @@ class WhatsAppNotificationService
         }
         if ($resolvedApplicantName !== '' && !self::isFieldValueEmpty($resolvedApplicantName)) {
             $lines[] = "Applicant Name: {$resolvedApplicantName}";
+        }
+        foreach ($otherLines as $extraLine) {
+            $lines[] = $extraLine;
         }
 
         return implode("\n", $lines);
@@ -985,7 +977,14 @@ class WhatsAppNotificationService
                 ?, 'APPLICATION_SUBMITTED', ?, ?, ?,
                 ?, ?, ?, ?, ?, NOW(), NOW()
             )
-            ON DUPLICATE KEY UPDATE updated_at = NOW()
+            ON DUPLICATE KEY UPDATE
+                recipient_mobile = IF(status = 'SENT', recipient_mobile, VALUES(recipient_mobile)),
+                message_body = IF(status = 'SENT', message_body, VALUES(message_body)),
+                status = IF(status IN ('SKIPPED', 'FAILED'), VALUES(status), status),
+                attempts = IF(status IN ('SKIPPED', 'FAILED'), 0, attempts),
+                next_attempt_at = IF(status IN ('SKIPPED', 'FAILED'), VALUES(next_attempt_at), next_attempt_at),
+                last_error = IF(status IN ('SKIPPED', 'FAILED'), VALUES(last_error), last_error),
+                updated_at = NOW()
         ");
 
         // Case 1: Unassigned application (no assigned staff)
@@ -1065,12 +1064,24 @@ class WhatsAppNotificationService
                   )
               )
               AND u.status = 'ACTIVE'
-              AND EXISTS (
-                  SELECT 1 FROM operator_block_assignments oba
-                  WHERE oba.operator_user_id = u.id AND oba.district_id = ? AND oba.block_id = ? AND oba.is_active = 1
+              AND (
+                  (u.assigned_district_id = ? AND u.assigned_block_id = ?)
+                  OR u.assigned_all_districts = 1
+                  OR EXISTS (
+                      SELECT 1 FROM operator_block_assignments oba
+                      WHERE oba.operator_user_id = u.id AND oba.district_id = ? AND oba.block_id = ? AND oba.is_active = 1
+                  )
+                  OR EXISTS (
+                      SELECT 1 FROM applications a
+                      WHERE a.id = ? AND a.assigned_operator_id = u.id
+                  )
               )
               AND (
-                  NOT EXISTS (
+                  EXISTS (
+                      SELECT 1 FROM applications a
+                      WHERE a.id = ? AND a.assigned_operator_id = u.id
+                  )
+                  OR NOT EXISTS (
                       SELECT 1 FROM operator_application_code_assignments oaca_chk
                       WHERE oaca_chk.operator_user_id = u.id AND oaca_chk.district_id = ? AND oaca_chk.block_id = ? AND oaca_chk.is_active = 1
                   )
@@ -1084,6 +1095,9 @@ class WhatsAppNotificationService
         $opStmt->execute([
             $targetOperatorId,
             $districtId, $blockId,
+            $districtId, $blockId,
+            $applicationId,
+            $applicationId,
             $districtId, $blockId,
             $districtId, $blockId,
             $applicationCode
@@ -1104,6 +1118,13 @@ class WhatsAppNotificationService
                 null,
                 $reason
             ]);
+
+            self::alertAdmins(
+                'Operator WhatsApp Skipped',
+                "WhatsApp notification for {$appRef} ({$applicationCode}) skipped because assigned operator #{$targetOperatorId} is inactive.",
+                'WARNING',
+                '/admin/whatsapp/logs'
+            );
 
             return [
                 'operators_found' => 0,
@@ -1218,7 +1239,11 @@ class WhatsAppNotificationService
      */
     public static function dispatchPending(int $limit = 20, ?int $specificId = null): array
     {
-        // 1. Recover records stuck in PROCESSING for more than 10 minutes
+        if (function_exists('set_time_limit')) {
+            @set_time_limit(90);
+        }
+
+        // 1. Recover records stuck in PROCESSING for more than 2 minutes
         self::recoverStuckWorkers();
 
         // 2. Check if sending is allowed
@@ -1241,7 +1266,7 @@ class WhatsAppNotificationService
                 WHERE id = ?
                   AND status = 'PENDING'
                   AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
-                  AND (lock_token IS NULL OR locked_at <= NOW() - INTERVAL 10 MINUTE)
+                  AND (lock_token IS NULL OR locked_at <= NOW() - INTERVAL 2 MINUTE)
                 LIMIT 1
             ");
             $stmt->execute([$specificId]);
@@ -1250,7 +1275,7 @@ class WhatsAppNotificationService
                 SELECT id FROM whatsapp_notification_outbox
                 WHERE status = 'PENDING'
                   AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
-                  AND (lock_token IS NULL OR locked_at <= NOW() - INTERVAL 10 MINUTE)
+                  AND (lock_token IS NULL OR locked_at <= NOW() - INTERVAL 2 MINUTE)
                 ORDER BY id ASC
                 LIMIT ?
             ");
@@ -1281,7 +1306,7 @@ class WhatsAppNotificationService
                 WHERE id = :id
                   AND status = 'PENDING'
                   AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
-                  AND (lock_token IS NULL OR locked_at <= NOW() - INTERVAL 10 MINUTE)
+                  AND (lock_token IS NULL OR locked_at <= NOW() - INTERVAL 2 MINUTE)
             ");
             $claimStmt->execute([
                 ':token' => $claimToken,
@@ -1314,6 +1339,46 @@ class WhatsAppNotificationService
         }
 
         return $results;
+    }
+
+    /**
+     * Lightweight non-blocking opportunistic sweep for due outbox retries.
+     * Safe to invoke during dashboard/status polls without stalling concurrent requests.
+     */
+    public static function dispatchDueIfAny(int $limit = 15): void
+    {
+        try {
+            $db = Database::getConnection();
+            $hasDue = (bool)$db->query("
+                SELECT 1 FROM whatsapp_notification_outbox
+                WHERE (status = 'PENDING' AND (next_attempt_at IS NULL OR next_attempt_at <= NOW()))
+                   OR (status = 'PROCESSING' AND locked_at <= NOW() - INTERVAL 2 MINUTE)
+                LIMIT 1
+            ")->fetchColumn();
+            if (!$hasDue) {
+                return;
+            }
+
+            $lockDir = dirname(__DIR__, 2) . '/storage/locks';
+            if (!is_dir($lockDir)) {
+                @mkdir($lockDir, 0755, true);
+            }
+            $lockFp = @fopen($lockDir . '/whatsapp_dispatcher.lock', 'c+');
+            if (!$lockFp || !@flock($lockFp, LOCK_EX | LOCK_NB)) {
+                if ($lockFp) {
+                    @fclose($lockFp);
+                }
+                return;
+            }
+            try {
+                self::dispatchPending($limit);
+            } finally {
+                @flock($lockFp, LOCK_UN);
+                @fclose($lockFp);
+            }
+        } catch (Throwable $e) {
+            error_log("WhatsApp dispatchDueIfAny notice: " . $e->getMessage());
+        }
     }
 
     /**
@@ -1508,7 +1573,7 @@ class WhatsAppNotificationService
                     updated_at = NOW()
                 WHERE id = :id
                   AND status != 'SENT'
-                  AND (lock_token IS NULL OR locked_at <= NOW() - INTERVAL 10 MINUTE)
+                  AND (lock_token IS NULL OR locked_at <= NOW() - INTERVAL 2 MINUTE)
             ");
             $claimStmt->execute([':token' => $claimToken, ':id' => $rowId]);
             if ($claimStmt->rowCount() === 0) {
@@ -1569,24 +1634,32 @@ class WhatsAppNotificationService
             'x-api-key: ' . $apiToken
         ];
 
-        // Execute request via mock transport or server-side cURL
+        // Execute request via mock transport or server-side cURL (with 1 fast inline retry on transient timeout / 5xx)
         $response = self::executeHttpRequest($endpointUrl, $headers, $postFields);
         $httpCode = $response['http_code'];
         $rawBody = $response['body'];
         $curlError = $response['error'];
         $respHeaders = $response['headers'] ?? [];
 
-        // Provider response parsing
-        $json = null;
-        if (!empty($rawBody)) {
-            $json = @json_decode($rawBody, true);
-        }
-
-        // Success condition: HTTP 200..299 AND json['success'] is truthy
+        $json = !empty($rawBody) ? @json_decode($rawBody, true) : null;
         $isSuccess = ($httpCode >= 200 && $httpCode < 300)
             && is_array($json)
             && isset($json['success'])
             && ($json['success'] === true || $json['success'] === 'true' || $json['success'] === 1);
+
+        if (!$isSuccess && ($httpCode === 0 || $httpCode >= 500)) {
+            usleep(400000);
+            $response = self::executeHttpRequest($endpointUrl, $headers, $postFields);
+            $httpCode = $response['http_code'];
+            $rawBody = $response['body'];
+            $curlError = $response['error'];
+            $respHeaders = $response['headers'] ?? [];
+            $json = !empty($rawBody) ? @json_decode($rawBody, true) : null;
+            $isSuccess = ($httpCode >= 200 && $httpCode < 300)
+                && is_array($json)
+                && isset($json['success'])
+                && ($json['success'] === true || $json['success'] === 'true' || $json['success'] === 1);
+        }
 
         if ($isSuccess) {
             $rawStatus = strtolower(trim((string)($json['data']['status'] ?? 'sent')));
@@ -1743,14 +1816,13 @@ class WhatsAppNotificationService
         }
 
         // Reliable Retry Backoff Schedule:
-        // Attempt 1: immediate
-        // Attempt 2: after 1 minute (+60s)
-        // Attempt 3: after 5 minutes (+300s)
-        // Attempt 4: after 15 minutes (+900s)
+        // Attempt 1 -> +10s, Attempt 2 -> +30s, Attempt 3 -> +90s, Attempt 4 -> +5m, Attempt 5+ -> +10m
         $delaySeconds = $customDelay ?: match ($attempts) {
-            1 => 60,
-            2 => 300,
-            default => 900
+            1 => 10,
+            2 => 30,
+            3 => 90,
+            4 => 300,
+            default => 600
         };
 
         $nextAttemptAt = date('Y-m-d H:i:s', time() + $delaySeconds);
@@ -1876,8 +1948,8 @@ class WhatsAppNotificationService
         curl_setopt($ch, CURLOPT_HEADER, true);
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
         curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 8);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 20);
 
         // Resolve CA certificate bundle for reliable SSL verification (prevents Windows OpenSSL issuer errors)
         $caPath = self::getCaBundlePath();
