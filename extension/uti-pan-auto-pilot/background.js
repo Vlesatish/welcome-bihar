@@ -242,7 +242,7 @@ function getVleHomeTabs() {
   });
 }
 
-function getAllUtiTabs() {
+async function getAllUtiTabs() {
   return new Promise((resolve) => {
     chrome.tabs.query({}, (allTabs) => {
       void chrome.runtime.lastError;
@@ -253,6 +253,54 @@ function getAllUtiTabs() {
       resolve(matched);
     });
   });
+}
+
+async function hasLiveUtiOtpTab(excludeTabId = null) {
+  const stored = await new Promise((r) => chrome.storage.local.get(['activeOtpUtiTabId'], r));
+  const candidateIds = [activeOtpUtiTabId, stored?.activeOtpUtiTabId || null].filter((id) => id && id !== excludeTabId);
+
+  for (const tid of candidateIds) {
+    const tab = await getTabIfAlive(tid);
+    const u = (tab?.url || tab?.pendingUrl || '').toLowerCase();
+    if (tab && (u.includes('logincheckotp') || u.includes('otp'))) {
+      return tab;
+    }
+  }
+
+  const allUti = await getAllUtiTabs();
+  return allUti.find((t) => {
+    if (!t || !t.id || (excludeTabId && t.id === excludeTabId)) return false;
+    const u = (t.url || t.pendingUrl || '').toLowerCase();
+    return u.includes('logincheckotp');
+  }) || null;
+}
+
+async function stopAllGmailOtpWatching(closeTempGmail = true) {
+  const stored = await new Promise((r) => chrome.storage.local.get(['createdGmailTabId'], r));
+  const tempGmailId = createdGmailTabId || stored?.createdGmailTabId || null;
+
+  activeOtpUtiTabId = null;
+  await chrome.storage.local.remove([
+    'isWaitingForOtp',
+    'otpRequestedAt',
+    'activeOtpUtiTabId',
+    'pendingOtpCode',
+    'pendingOtpAt'
+  ]);
+
+  const allTabs = await getAllOpenTabs();
+  for (const t of allTabs) {
+    const u = (t?.url || t?.pendingUrl || '').toLowerCase();
+    if (t?.id && u.includes('mail.google.com') && !u.includes('wb_csc_low_balance=1')) {
+      chrome.tabs.sendMessage(t.id, { action: 'stopOtpWatch' }, () => void chrome.runtime.lastError);
+    }
+  }
+
+  if (closeTempGmail && tempGmailId) {
+    createdGmailTabId = null;
+    await chrome.storage.local.remove(['createdGmailTabId']);
+    chrome.tabs.remove(tempGmailId, () => void chrome.runtime.lastError);
+  }
 }
 
 let lastDocUploadTriggerKey = '';
@@ -440,10 +488,18 @@ async function checkQueueAndLaunch(forceRestart = false) {
       chrome.alarms.clear(LOW_BALANCE_RETRY_ALARM);
     }
 
-    const otpWaitingFresh = Boolean(
+    let otpWaitingFresh = Boolean(
       stored && stored.isWaitingForOtp &&
       (!stored.otpRequestedAt || (Date.now() - Number(stored.otpRequestedAt) < 180000))
     );
+    if (otpWaitingFresh) {
+      const liveOtpTab = await hasLiveUtiOtpTab();
+      if (!liveOtpTab) {
+        // UTI OTP tab was closed -> stop Gmail OTP loop immediately!
+        await stopAllGmailOtpWatching(true);
+        otpWaitingFresh = false;
+      }
+    }
 
     if (queue.length === 0) {
       // Only keep tab open if actively awaiting immediate document upload right after form submission (max 3 min)
@@ -1308,32 +1364,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           pendingOtpAt: Date.now()
         });
 
-        // 1. Resolve the live UTI OTP tab reliably (survives MV3 service worker restarts!)
-        let targetTab = null;
-        const candidateIds = [
-          activeOtpUtiTabId,
-          storedOtp?.activeOtpUtiTabId || null
-        ].filter(Boolean);
-
-        for (const tid of candidateIds) {
-          const alive = await getTabIfAlive(tid);
-          if (alive && (alive.url || alive.pendingUrl || '').toLowerCase().includes('myutiitsl.com')) {
-            targetTab = alive;
-            break;
-          }
-        }
-
+        // 1. Resolve the live UTI OTP tab strictly (never hijack a non-OTP tab if user closed the OTP tab!)
+        const targetTab = await hasLiveUtiOtpTab();
         if (!targetTab) {
-          const allUti = await getAllUtiTabs();
-          targetTab =
-            allUti.find((t) => {
-              const u = (t.url || t.pendingUrl || '').toLowerCase();
-              return u.includes('logincheckotp') || u.includes('otp');
-            }) ||
-            (storedOtp?.activeEntryVleTabId ? allUti.find((t) => t.id === storedOtp.activeEntryVleTabId) : null) ||
-            allUti.find((t) => !storedOtp?.standbyVleTabId || t.id !== storedOtp.standbyVleTabId) ||
-            allUti[0] ||
-            null;
+          await stopAllGmailOtpWatching(false);
+          sendResponse({ success: false, error: 'UTI OTP tab closed' });
+          return;
         }
 
         if (targetTab && targetTab.id) {
@@ -1531,6 +1567,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.action === 'checkOtpTabAlive') {
+    (async () => {
+      const liveOtpTab = await hasLiveUtiOtpTab();
+      if (!liveOtpTab) {
+        await stopAllGmailOtpWatching(false);
+        sendResponse({ alive: false });
+        return;
+      }
+      sendResponse({ alive: true, tabId: liveOtpTab.id });
+    })();
+    return true;
+  }
+
   if (msg.action === 'lowBalanceEmailSent') {
     (async () => {
       try {
@@ -1557,7 +1606,17 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     // Gmail ?view=cm tab closed itself after sending mail -> close the Error 810 page immediately!
     finalizeLowBalanceAndScheduleRetry(null, 0);
   }
-  chrome.storage.local.get(['standbyVleTabId', 'activeEntryVleTabId', 'lowBalanceGmailTabId'], (res) => {
+  if (createdGmailTabId && tabId === createdGmailTabId) {
+    createdGmailTabId = null;
+  }
+  chrome.storage.local.get([
+    'standbyVleTabId',
+    'activeEntryVleTabId',
+    'lowBalanceGmailTabId',
+    'activeOtpUtiTabId',
+    'createdGmailTabId',
+    'isWaitingForOtp'
+  ], async (res) => {
     if (res?.lowBalanceGmailTabId === tabId) {
       finalizeLowBalanceAndScheduleRetry(null, 0);
     }
@@ -1565,8 +1624,22 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     if (res?.standbyVleTabId === tabId) toRemove.push('standbyVleTabId');
     if (res?.activeEntryVleTabId === tabId) toRemove.push('activeEntryVleTabId');
     if (res?.lowBalanceGmailTabId === tabId) toRemove.push('lowBalanceGmailTabId');
+    if (res?.createdGmailTabId === tabId) toRemove.push('createdGmailTabId');
     if (toRemove.length > 0) {
       chrome.storage.local.remove(toRemove);
+    }
+
+    // If the UTI OTP / entry tab was closed while Gmail was watching for OTP, stop Gmail immediately!
+    const wasOtpOrEntryTab = (
+      (activeOtpUtiTabId && tabId === activeOtpUtiTabId) ||
+      res?.activeOtpUtiTabId === tabId ||
+      res?.activeEntryVleTabId === tabId
+    );
+    if (wasOtpOrEntryTab || res?.isWaitingForOtp) {
+      const stillAlive = await hasLiveUtiOtpTab(tabId);
+      if (!stillAlive) {
+        await stopAllGmailOtpWatching(true);
+      }
     }
   });
 });

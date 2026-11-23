@@ -23,9 +23,51 @@
   let returnToListTimer = null;
   let rowClicked = false;
   let emptyExtractionCount = 0;
+  let returnLoopCount = 0;
+  let otpWatchStartedAt = 0;
+  const MAX_RETURN_LOOPS = 5;
+  const MAX_OTP_WATCH_MS = 90000;
   let lastUsedOtp = '';
   let isLowBalanceSendInProgress = false;
   let hasSentLowBalanceEmail = false;
+
+  function stopOtpWatchSession(hideBadge = true) {
+    isOtpWatchActive = false;
+    isSettling = false;
+    isReturningToMailList = false;
+    rowClicked = false;
+    emptyExtractionCount = 0;
+    returnLoopCount = 0;
+    otpWatchStartedAt = 0;
+    clearAllTimers();
+    if (hideBadge) {
+      const b = document.getElementById('wb-gmail-otp-badge');
+      if (b) {
+        try { b.remove(); } catch (e) {}
+      }
+    }
+  }
+
+  function verifyOtpTabStillOpen(onAlive) {
+    if (!isOtpWatchActive || hasFoundOtp) return;
+    if (otpWatchStartedAt > 0 && (Date.now() - otpWatchStartedAt > MAX_OTP_WATCH_MS)) {
+      stopOtpWatchSession(true);
+      return;
+    }
+    try {
+      chrome.runtime.sendMessage({ action: 'checkOtpTabAlive' }, (resp) => {
+        if (chrome.runtime.lastError || !resp || !resp.alive) {
+          stopOtpWatchSession(true);
+          return;
+        }
+        if (isOtpWatchActive && !hasFoundOtp && typeof onAlive === 'function') {
+          onAlive();
+        }
+      });
+    } catch (e) {
+      stopOtpWatchSession(true);
+    }
+  }
 
   function isLowBalanceComposeMode() {
     const href = String(window.location.href || '').toLowerCase();
@@ -374,6 +416,16 @@
   // Wait 5 seconds, return to Gmail Mail List (#inbox), refresh, and open the latest UTI email
   function returnToMailListAfterDelay(reasonLabel, seconds = 5) {
     if (!isOtpWatchActive || hasFoundOtp || isReturningToMailList) return;
+    returnLoopCount++;
+    if (returnLoopCount > MAX_RETURN_LOOPS) {
+      stopOtpWatchSession(false);
+      showGmailBadge('⏹️ OTP wait timeout • Stopped auto-refresh.', '#94a3b8');
+      setTimeout(() => {
+        const b = document.getElementById('wb-gmail-otp-badge');
+        if (b && !isOtpWatchActive) b.remove();
+      }, 4000);
+      return;
+    }
     clearAllTimers();
     isReturningToMailList = true;
     isSettling = false;
@@ -399,28 +451,32 @@
       clearInterval(returnToListTimer);
       returnToListTimer = null;
 
-      showGmailBadge('📥 Mail List (#inbox) me ja rahe hain aur refresh kar rahe hain...', '#38bdf8');
-      if (!isInboxListView()) {
-        navigateToMailList();
-      }
-
-      setTimeout(() => {
-        if (!isOtpWatchActive || hasFoundOtp) {
-          isReturningToMailList = false;
-          return;
+      verifyOtpTabStillOpen(() => {
+        showGmailBadge('📥 Mail List (#inbox) me ja rahe hain aur refresh kar rahe hain...', '#38bdf8');
+        if (!isInboxListView()) {
+          navigateToMailList();
         }
-        triggerGmailRefresh();
-        showGmailBadge('🔄 Inbox refreshed • Latest UTI email open kar rahe hain...', '#38bdf8');
 
         setTimeout(() => {
-          isReturningToMailList = false;
-          rowClicked = false;
-          isSettling = false;
-          if (isOtpWatchActive && !hasFoundOtp) {
-            monitorAndTriggerFlow();
+          if (!isOtpWatchActive || hasFoundOtp) {
+            isReturningToMailList = false;
+            return;
           }
-        }, 1200);
-      }, 900);
+          verifyOtpTabStillOpen(() => {
+            triggerGmailRefresh();
+            showGmailBadge('🔄 Inbox refreshed • Latest UTI email open kar rahe hain...', '#38bdf8');
+
+            setTimeout(() => {
+              isReturningToMailList = false;
+              rowClicked = false;
+              isSettling = false;
+              if (isOtpWatchActive && !hasFoundOtp) {
+                monitorAndTriggerFlow();
+              }
+            }, 1200);
+          });
+        }, 900);
+      });
     }, 1000);
   }
 
@@ -523,38 +579,40 @@
   function monitorAndTriggerFlow() {
     if (!isOtpWatchActive || hasFoundOtp || isSettling || isReturningToMailList) return;
 
-    // If email is ALREADY open (after we clicked the top row), start 5s settle & extract from Code Requested box
-    if (isOpenEmailView()) {
-      startSettlingCountdown(5);
-      return;
-    }
-
-    // On Mail List (#inbox) -> ALWAYS CLICK & OPEN the top/latest UTI email row
-    if (isInboxListView()) {
-      const utiRows = getVisibleUtiInboxRows();
-      if (utiRows.length > 0 && !rowClicked) {
-        rowClicked = true;
-        showGmailBadge('⚡ Opening latest UTI email from Mail List...', '#38bdf8');
-        clickEmailRow(utiRows[0]);
-
-        // Wait briefly for email thread + "Code Requested" widget to mount, then start 5s countdown
-        setTimeout(() => {
-          if (isOtpWatchActive && !hasFoundOtp && !isReturningToMailList) {
-            if (isOpenEmailView()) {
-              startSettlingCountdown(5);
-            } else {
-              rowClicked = false;
-            }
-          }
-        }, 900);
-      } else if (utiRows.length === 0) {
-        showGmailBadge('🔍 Locating latest UTI email in Mail List...', '#38bdf8');
-        triggerGmailRefresh();
+    verifyOtpTabStillOpen(() => {
+      // If email is ALREADY open (after we clicked the top row), start 5s settle & extract from Code Requested box
+      if (isOpenEmailView()) {
+        startSettlingCountdown(5);
+        return;
       }
-      return;
-    }
 
-    showGmailBadge('🔍 Gmail load hone ka wait kar rahe hain...', '#38bdf8');
+      // On Mail List (#inbox) -> ALWAYS CLICK & OPEN the top/latest UTI email row
+      if (isInboxListView()) {
+        const utiRows = getVisibleUtiInboxRows();
+        if (utiRows.length > 0 && !rowClicked) {
+          rowClicked = true;
+          showGmailBadge('⚡ Opening latest UTI email from Mail List...', '#38bdf8');
+          clickEmailRow(utiRows[0]);
+
+          // Wait briefly for email thread + "Code Requested" widget to mount, then start 5s countdown
+          setTimeout(() => {
+            if (isOtpWatchActive && !hasFoundOtp && !isReturningToMailList) {
+              if (isOpenEmailView()) {
+                startSettlingCountdown(5);
+              } else {
+                rowClicked = false;
+              }
+            }
+          }, 900);
+        } else if (utiRows.length === 0) {
+          showGmailBadge('🔍 Locating latest UTI email in Mail List...', '#38bdf8');
+          triggerGmailRefresh();
+        }
+        return;
+      }
+
+      showGmailBadge('🔍 Gmail load hone ka wait kar rahe hain...', '#38bdf8');
+    });
   }
 
   function startOtpWatchSession() {
@@ -565,32 +623,42 @@
     isReturningToMailList = false;
     rowClicked = false;
     emptyExtractionCount = 0;
+    returnLoopCount = 0;
+    otpWatchStartedAt = Date.now();
 
-    chrome.storage.local.get(['lastSubmittedOtp'], (res) => {
-      lastUsedOtp = (res && res.lastSubmittedOtp) ? res.lastSubmittedOtp : '';
+    verifyOtpTabStillOpen(() => {
+      chrome.storage.local.get(['lastSubmittedOtp'], (res) => {
+        lastUsedOtp = (res && res.lastSubmittedOtp) ? res.lastSubmittedOtp : '';
 
-      // Always go to Mail List (#inbox) first, refresh, and then click & open the latest UTI email!
-      if (!isInboxListView()) {
-        showGmailBadge('📥 Mail List (#inbox) par jakar latest UTI email open kar rahe hain...', '#38bdf8');
-        navigateToMailList();
-        setTimeout(() => {
+        // Always go to Mail List (#inbox) first, refresh, and then click & open the latest UTI email!
+        if (!isInboxListView()) {
+          showGmailBadge('📥 Mail List (#inbox) par jakar latest UTI email open kar rahe hain...', '#38bdf8');
+          navigateToMailList();
+          setTimeout(() => {
+            if (!isOtpWatchActive) return;
+            triggerGmailRefresh();
+            setTimeout(() => {
+              monitorAndTriggerFlow();
+            }, 1200);
+          }, 800);
+        } else {
+          showGmailBadge('🔄 Mail List refresh karke latest UTI email open kar rahe hain...', '#38bdf8');
           triggerGmailRefresh();
           setTimeout(() => {
             monitorAndTriggerFlow();
           }, 1200);
-        }, 800);
-      } else {
-        showGmailBadge('🔄 Mail List refresh karke latest UTI email open kar rahe hain...', '#38bdf8');
-        triggerGmailRefresh();
-        setTimeout(() => {
-          monitorAndTriggerFlow();
-        }, 1200);
-      }
+        }
+      });
     });
   }
 
   // Listener for background signal
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg && msg.action === 'stopOtpWatch') {
+      stopOtpWatchSession(true);
+      sendResponse({ stopped: true });
+      return true;
+    }
     if (msg && msg.action === 'sendLowBalanceMailNow') {
       runLowBalanceAutoSendFlow(msg);
       sendResponse({ started: true });
@@ -621,10 +689,7 @@
           startOtpWatchSession();
         }
       } else {
-        isOtpWatchActive = false;
-        isSettling = false;
-        isReturningToMailList = false;
-        clearAllTimers();
+        stopOtpWatchSession(true);
       }
     }
   });
@@ -644,6 +709,7 @@
 
       if (isWaiting && reqTime > 0 && (Date.now() - reqTime < 180000)) {
         isOtpWatchActive = true;
+        otpWatchStartedAt = reqTime;
         setTimeout(monitorAndTriggerFlow, 700);
       }
     });
