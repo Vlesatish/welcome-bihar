@@ -14,7 +14,11 @@
   let aadhaarConfirmed = false;
 
   const AURANGABAD_PIN_RETRY_LIMIT = 2; // Retry AURANGABAD(BH) 2 times before falling back to plain AURANGABAD
+  const MAX_PINCODE_RETRY_LIMIT = 3; // Max 3 pincode invalid retries across any district before auto-rejecting
   let aurangabadPinFailCount = 0;
+  let totalPinFailCount = 0;
+  let lastTotalPinFailAt = 0;
+  let isRejectingInvalidPincode = false;
   let usePlainAurangabadFallback = false;
   let trackedAurangabadCandidateKey = '';
   let lastPinErrorAt = 0;
@@ -40,6 +44,9 @@
     if (key !== trackedAurangabadCandidateKey) {
       trackedAurangabadCandidateKey = key;
       aurangabadPinFailCount = 0;
+      totalPinFailCount = 0;
+      lastTotalPinFailAt = 0;
+      isRejectingInvalidPincode = false;
       usePlainAurangabadFallback = false;
       lastPinErrorAt = 0;
       resPinVerifiedValue = '';
@@ -49,16 +56,126 @@
     }
   }
 
-  function hasVisibleInlinePinError() {
+  function isPincodeNotExistText(text) {
+    const t = String(text || '').toLowerCase();
+    return (
+      t.includes('pincode does not exist') ||
+      t.includes('pin code does not exist') ||
+      t.includes('pin does not exist') ||
+      t.includes('proceed the same pincode') ||
+      t.includes('proceed with the same pincode') ||
+      (t.includes('pin') && t.includes('does not exist'))
+    );
+  }
+
+  function isExplicitInvalidPinText(text) {
+    const t = String(text || '').toLowerCase();
+    return (
+      isPincodeNotExistText(t) ||
+      t.includes('attached with district') ||
+      t.includes('correct district') ||
+      t.includes('valid pincode') ||
+      t.includes('valid pin') ||
+      t.includes('invalid pin') ||
+      t.includes('invalid pincode') ||
+      t.includes('incorrect pin') ||
+      t.includes('wrong pin') ||
+      t.includes('not valid') ||
+      t.includes('not matched') ||
+      t.includes('does not match')
+    );
+  }
+
+  function handleInvalidPincodeRejection(customDetail = '') {
+    if (isRejectingInvalidPincode) return;
+    isRejectingInvalidPincode = true;
+
+    const rejectionComment = 'पिनकोड सही डालें। (Pincode sahi dale - Invalid Pincode / District mismatch)';
+    const badgeDetail = customDetail || `Pincode Invalid (${MAX_PINCODE_RETRY_LIMIT}/${MAX_PINCODE_RETRY_LIMIT})`;
+    updateBadge(`❌ ${badgeDetail} • "पिनकोड सही डालें" बोलकर Auto-Reject kar rahe hain...`, '#ef4444');
+
+    chrome.storage.local.get(['currentCandidate', 'queueList'], (stored) => {
+      const cand = stored?.currentCandidate || (Array.isArray(stored?.queueList) && stored?.queueList[0]) || currentCandidate;
+      const appId = cand ? (cand.id || cand.app_id) : null;
+      const appRef = cand ? String(cand.app_ref || '').replace(/^#+/, '').trim() : null;
+
+      chrome.runtime.sendMessage({
+        action: 'candidateRejected',
+        appId: appId,
+        appRef: appRef,
+        reason: rejectionComment
+      }, () => {
+        updateBadge('❌ Marked as REJECTED on BiharGo (Pincode sahi dale) • Closing tab in 1.5s...', '#ef4444');
+        setTimeout(() => {
+          chrome.runtime.sendMessage({ action: 'closeCurrentTab' });
+        }, 1500);
+      });
+    });
+  }
+
+  function recordPincodeFailure(sourceLabel = 'dialog', dialogText = '') {
+    syncAurangabadCandidateState();
+    if (!currentCandidate || isRejectingInvalidPincode) {
+      return { rejected: isRejectingInvalidPincode, switchedToFallback: false };
+    }
+
+    // Immediate rejection when UTI explicitly says "Pincode does not exist! If you want to proceed the same pincode:-XXXXXX"
+    if (isPincodeNotExistText(dialogText)) {
+      handleInvalidPincodeRejection('Pincode does not exist');
+      return { rejected: true, switchedToFallback: false };
+    }
+
+    const pincode = String(currentCandidate?.pincode || currentCandidate?.pin || '').replace(/\D/g, '').slice(0, 6);
+    const explicitInvalid = isExplicitInvalidPinText(dialogText);
+
+    // Ignore premature "Kindly enter pincode." blur popup ONLY if we haven't even filled the 6-digit pincode yet
+    if (sourceLabel === 'dialog' && !explicitInvalid && !resPinVerifiedValue && pincode.length === 6) {
+      return { rejected: false, switchedToFallback: false };
+    }
+
+    const isDialog = sourceLabel === 'dialog';
+    const minGap = isDialog ? 350 : 1400;
+    const now = Date.now();
+    if (now - lastTotalPinFailAt < minGap) {
+      return { rejected: false, switchedToFallback: false };
+    }
+    lastTotalPinFailAt = now;
+    totalPinFailCount += 1;
+
+    // First run Aurangabad(BH) -> plain AURANGABAD fallback logic if applicable
+    const switchedToFallback = handleAurangabadPinFailure(sourceLabel);
+    if (switchedToFallback && totalPinFailCount < MAX_PINCODE_RETRY_LIMIT) {
+      return { rejected: false, switchedToFallback: true };
+    }
+
+    if (totalPinFailCount >= MAX_PINCODE_RETRY_LIMIT) {
+      handleInvalidPincodeRejection();
+      return { rejected: true, switchedToFallback: false };
+    }
+
+    if (!switchedToFallback) {
+      updateBadge(`⚠️ Pincode Invalid (${totalPinFailCount}/${MAX_PINCODE_RETRY_LIMIT}, ${sourceLabel}) • Retrying...`, '#f59e0b');
+    }
+    return { rejected: false, switchedToFallback };
+  }
+
+  function getVisibleInlinePinErrorText() {
     const errNodes = document.querySelectorAll('.error, .error-msg, .errormsg, #errorDiv, #pinError, span[style*="red"], font[color="red"], label.error');
     for (const node of errNodes) {
       if (!isVisible(node)) continue;
       const txt = (node.innerText || node.textContent || '').toLowerCase();
-      if (txt.includes('pin') && (txt.includes('valid') || txt.includes('invalid') || txt.includes('incorrect') || txt.includes('not ') || txt.includes('kindly') || txt.includes('attached with district'))) {
-        return true;
+      if (
+        isPincodeNotExistText(txt) ||
+        (txt.includes('pin') && (txt.includes('valid') || txt.includes('invalid') || txt.includes('incorrect') || txt.includes('not ') || txt.includes('kindly') || txt.includes('attached with district')))
+      ) {
+        return txt;
       }
     }
-    return false;
+    return '';
+  }
+
+  function hasVisibleInlinePinError() {
+    return Boolean(getVisibleInlinePinErrorText());
   }
 
   function findDialogOkButton(container) {
@@ -95,7 +212,7 @@
       if (!isOverlayPos && !isDialogId) return false;
       const t = (d.innerText || d.textContent || '').toLowerCase();
       if (t.length > 500) return false;
-      if (!(t.includes('attached with district') || t.includes('please enter correct district') || t.includes('kindly enter pincode') || t.includes('enter valid pincode'))) {
+      if (!(t.includes('attached with district') || t.includes('please enter correct district') || t.includes('kindly enter pincode') || t.includes('enter valid pincode') || t.includes('pincode does not exist') || t.includes('proceed the same pincode'))) {
         return false;
       }
       return Boolean(findDialogOkButton(d));
@@ -567,6 +684,13 @@
   function handleAllModals() {
     let handled = false;
 
+    // -3. Invalid OTP Code Check (native alert hook or DOM dialog/text)
+    const invalidOtpMsg = detectInvalidOtpSignal();
+    if (invalidOtpMsg) {
+      handleInvalidOtpDetected(invalidOtpMsg);
+      return true;
+    }
+
     // -2. Logged Out Check ("You have logged out successfully!")
     if (isLoggedOutPage()) {
       handleLoggedOutPage();
@@ -588,6 +712,12 @@
     // 0B. Aadhaar Demographic Mismatch ("Authenticate AADHAAR details using Biometric")
     if (isAadhaarBiometricMismatchModal()) {
       handleAadhaarBiometricMismatchModal();
+      return true;
+    }
+
+    // 0C. Duplicate Email ID across Multiple PAN ("The eMail ID provided by you is found to be available against multiple PAN")
+    if (isDuplicateEmailModal()) {
+      handleDuplicateEmailModal();
       return true;
     }
 
@@ -709,9 +839,17 @@
         dialogText.includes('pin');
 
       let switchedToFallback = false;
+      let rejectedByPin = false;
       if (isPinOrDistError && !errorDialog.dataset.wbPinCounted) {
         errorDialog.dataset.wbPinCounted = '1';
-        switchedToFallback = handleAurangabadPinFailure('dialog');
+        const pinFailRes = recordPincodeFailure('dialog', dialogText);
+        switchedToFallback = Boolean(pinFailRes && pinFailRes.switchedToFallback);
+        rejectedByPin = Boolean(pinFailRes && pinFailRes.rejected);
+      }
+
+      // If rejected immediately (e.g. "Pincode does not exist! If you want to proceed the same pincode"), do NOT click OK so UTI never proceeds
+      if (rejectedByPin || isRejectingInvalidPincode) {
+        return true;
       }
 
       const okBtn = findDialogOkButton(errorDialog);
@@ -724,13 +862,13 @@
         handled = true;
       }
 
-      // Re-fill pincode after modal finishes dismissing (unless fallback switch just scheduled district + pin fill)
-      if (!switchedToFallback && !usePlainAurangabadFallback) {
+      // Re-fill pincode after modal finishes dismissing (unless rejected or fallback switch just scheduled district + pin fill)
+      if (!rejectedByPin && !isRejectingInvalidPincode && !switchedToFallback && !usePlainAurangabadFallback) {
         const resPinEl = document.getElementById('resPin');
         const pincode = String(currentCandidate?.pincode || currentCandidate?.pin || '').replace(/\D/g, '').slice(0, 6);
         if (resPinEl && pincode && resPinEl.value !== pincode) {
           setTimeout(() => {
-            if (!usePlainAurangabadFallback && (!aurangabadSwitchUntil || Date.now() >= aurangabadSwitchUntil) && !hasVisibleModal()) {
+            if (!isRejectingInvalidPincode && !usePlainAurangabadFallback && (!aurangabadSwitchUntil || Date.now() >= aurangabadSwitchUntil) && !hasVisibleModal()) {
               setInputValue(resPinEl, pincode);
               resPinVerifiedValue = pincode;
               resPinVerifiedAt = Date.now();
@@ -766,13 +904,14 @@
     }
 
     // 3. Proof of Date of Birth (PoDOB):
-    // If age 10 to 22 -> Marksheet / Matriculation (value="14")
-    // If age > 22 -> Voter ID (value="3")
+    // Minor Case (< 18) or age <= 22 -> Marksheet / Matriculation (value="14")
+    // Adult age > 22 -> Voter ID (value="3")
     const podobEl = document.getElementById('dobProofDoc');
     if (podobEl && (!podobEl.value || podobEl.value === '' || force)) {
       const age = calculateAge(currentCandidate?.dob);
+      const isMinor = isMinorApplicant();
       let selected = false;
-      if (age >= 10 && age <= 22) {
+      if (isMinor || age <= 22) {
         selected = selectOption(podobEl, '14', ['matriculation', 'mark sheet', 'recognised board']);
       } else {
         selected = selectOption(podobEl, '3', ['voter', 'electoral']);
@@ -782,19 +921,22 @@
       }
     }
 
-    // Representative Assessee documents (in minor case)
-    const repPoiEl = document.getElementById('repIdentityProofDoc');
-    if (repPoiEl && isVisible(repPoiEl) && (!repPoiEl.value || force)) {
-      selectOption(repPoiEl, '16', ['aadhaar', 'uidai']);
+    // Representative Assessee documents (in minor case -> both POI & POA = AADHAAR)
+    const { repPoiEl, repPoaEl } = findRepDocSelects();
+    if (repPoiEl && isVisible(repPoiEl) && !repPoiEl.disabled && (!repPoiEl.value || force)) {
+      if (selectOption(repPoiEl, '16', ['aadhaar card issued by uidai', 'aadhaar', 'uidai'])) {
+        filled = true;
+      }
     }
-    const repPoaEl = document.getElementById('repAddressProofDoc');
-    if (repPoaEl && isVisible(repPoaEl) && (!repPoaEl.value || force)) {
-      selectOption(repPoaEl, '21', ['aadhaar', 'uidai']);
+    if (repPoaEl && isVisible(repPoaEl) && !repPoaEl.disabled && (!repPoaEl.value || force)) {
+      if (selectOption(repPoaEl, '21', ['aadhaar card issued by uidai', 'aadhaar', 'uidai'])) {
+        filled = true;
+      }
     }
 
     if (filled) {
       const age = calculateAge(currentCandidate?.dob);
-      const dobDocText = (age >= 10 && age <= 22) ? `Marksheet (Age: ${age})` : `Voter ID (Age: ${age})`;
+      const dobDocText = (isMinorApplicant() || age <= 22) ? `Marksheet (Age: ${age})` : `Voter ID (Age: ${age})`;
       updateBadge(`📑 Documents Set: Aadhaar + Aadhaar + ${dobDocText}`, '#10b981');
     }
     return filled;
@@ -913,6 +1055,7 @@
   // -----------------------------------------------------------------------
   function handleAddressDetailsTab(force = false) {
     syncAurangabadCandidateState();
+    if (isRejectingInvalidPincode) return false;
     let filled = false;
 
     // 1. Source of Income -> Income from Other source (incomeOthSource)
@@ -975,22 +1118,23 @@
       ? (resDistListEl.options[resDistListEl.selectedIndex]?.text || '').trim().toUpperCase()
       : '';
 
-    // Detect inline pincode error or silent AJAX clear of #resPin while AURANGABAD(BH) is active
-    if (isAurangabadCand && !usePlainAurangabadFallback && isAurangabadBhOption(currentSelectedDistText)) {
-      const now = Date.now();
-      if (hasVisibleInlinePinError()) {
-        handleAurangabadPinFailure('inline');
-      } else if (
-        resPinEl &&
-        pincode &&
-        resPinVerifiedValue === pincode &&
-        resPinEl.value === '' &&
-        (now - resPinVerifiedAt > 1200) &&
-        (now - resDistChangedAt > 1500)
-      ) {
-        resPinVerifiedValue = '';
-        handleAurangabadPinFailure('pin-cleared');
-      }
+    // Detect inline pincode error or silent AJAX clear of #resPin for ALL districts (max 3 tries -> auto-reject)
+    const nowPinCheck = Date.now();
+    const inlinePinErrText = getVisibleInlinePinErrorText();
+    if (inlinePinErrText) {
+      const resInline = recordPincodeFailure('inline', inlinePinErrText);
+      if (resInline.rejected) return false;
+    } else if (
+      resPinEl &&
+      pincode &&
+      resPinVerifiedValue === pincode &&
+      resPinEl.value === '' &&
+      (nowPinCheck - resPinVerifiedAt > 1200) &&
+      (nowPinCheck - resDistChangedAt > 1500)
+    ) {
+      resPinVerifiedValue = '';
+      const resCleared = recordPincodeFailure('pin-cleared', 'invalid pincode');
+      if (resCleared.rejected) return false;
     }
 
     const district = isAurangabadCand
@@ -1045,10 +1189,385 @@
   }
 
   // -----------------------------------------------------------------------
-  // STEP 5: Other Details Tab (capacityCd -> SELF, verification place)
+  // MINOR CASE HELPERS (Representative Assessee: Step 1, Step 2, Step 5)
+  // -----------------------------------------------------------------------
+  let repDistChangedAt = 0;
+
+  function isMinorApplicant() {
+    if (currentCandidate?.is_minor === true || currentCandidate?.is_minor === '1' || currentCandidate?.is_minor === 1) {
+      return true;
+    }
+    const dobVal = currentCandidate?.dob || document.getElementById('dob')?.value || '';
+    if (dobVal) {
+      const age = calculateAge(dobVal);
+      if (age >= 0 && age < 18) return true;
+    }
+    const bodyTxt = (document.body?.innerText || '').toLowerCase();
+    if (bodyTxt.includes('(minor case)')) return true;
+    return false;
+  }
+
+  function findRepStateSelect() {
+    const directIds = ['repState', 'raState', 'repAssesseeState', 'repResState', 'representativeState'];
+    for (const id of directIds) {
+      const el = document.getElementById(id);
+      if (el && el.tagName === 'SELECT') return el;
+    }
+
+    const excludedIds = new Set(['resState', 'offState', 'gender', 'addrFlag', 'residenceStatus', 'resDistList', 'offDistList']);
+    const selects = Array.from(document.querySelectorAll('select')).filter((s) => !excludedIds.has(s.id));
+
+    for (const sel of selects) {
+      const attrs = `${sel.id || ''} ${sel.name || ''} ${sel.getAttribute('aria-label') || ''}`.toLowerCase();
+      if ((attrs.includes('rep') || attrs.includes('ra')) && attrs.includes('state')) {
+        return sel;
+      }
+      const firstOpt = (sel.options[0]?.text || '').toLowerCase();
+      if (firstOpt.includes('representative') && firstOpt.includes('state')) {
+        return sel;
+      }
+    }
+
+    // Label / section fallback
+    const allLabels = Array.from(document.querySelectorAll('label, div, span, p, td, th, h4, h5, h6'));
+    for (const node of allLabels) {
+      if (node.children.length > 3) continue;
+      const t = (node.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      if (t === 'representative assessee state' || t.startsWith('representative assessee state')) {
+        const parent = node.closest('.form-group, .row, tr, div');
+        const nextRow = parent?.nextElementSibling;
+        const candidate = parent?.querySelector('select') || nextRow?.querySelector('select');
+        if (candidate && !excludedIds.has(candidate.id)) return candidate;
+      }
+    }
+    return null;
+  }
+
+  function findRepDocSelects() {
+    let repPoiEl =
+      document.getElementById('repIdentityProofDoc') ||
+      document.getElementById('raIdentityProofDoc') ||
+      document.getElementById('repPoi');
+    let repPoaEl =
+      document.getElementById('repAddressProofDoc') ||
+      document.getElementById('raAddressProofDoc') ||
+      document.getElementById('repPoa');
+
+    if (!repPoiEl || !repPoaEl) {
+      const excluded = new Set(['identityProofDoc', 'addressProofDoc', 'dobProofDoc']);
+      const visibleSelects = Array.from(document.querySelectorAll('select')).filter((s) => {
+        if (!isVisible(s) || excluded.has(s.id)) return false;
+        const hasAadhaarOpt = Array.from(s.options || []).some((o) => (o.text || '').toLowerCase().includes('aadhaar'));
+        return hasAadhaarOpt;
+      });
+
+      for (const s of visibleSelects) {
+        const attrs = `${s.id || ''} ${s.name || ''}`.toLowerCase();
+        const blockTxt = (s.closest('.form-group, .row, tr, div')?.innerText || '').toLowerCase();
+        if (!repPoiEl && (attrs.includes('ident') || attrs.includes('poi') || blockTxt.includes('proof of identity'))) {
+          repPoiEl = s;
+        } else if (!repPoaEl && (attrs.includes('addr') || attrs.includes('poa') || blockTxt.includes('proof of address'))) {
+          repPoaEl = s;
+        }
+      }
+
+      if (!repPoiEl && visibleSelects.length >= 1) repPoiEl = visibleSelects[0];
+      if (!repPoaEl && visibleSelects.length >= 2) repPoaEl = visibleSelects[1];
+    }
+
+    return { repPoiEl, repPoaEl };
+  }
+
+  const STEP5_EXCLUDED_IDS = new Set([
+    'firstName', 'middleName', 'lastName', 'panName', 'dob', 'gender', 'addrFlag', 'residenceStatus', 'resState', 'aadhaarNo', 'aadhaarName',
+    'identityProofDoc', 'addressProofDoc', 'dobProofDoc', 'repIdentityProofDoc', 'repAddressProofDoc',
+    'mobileCountryCd', 'telCountryCd', 'mobileNo', 'emailId', 'parentNameOnCard',
+    'fthFirst', 'fthMiddle', 'fthLast', 'mthFirst', 'mthMiddle', 'mthLast',
+    'resAddr1', 'resAddr2', 'resAddr3', 'resAddr4', 'resDistList', 'resPin', 'incomeOthSource',
+    'capacityCd', 'verPlace', 'veriPlace', 'verName', 'veriName', 'veriDesn',
+    'areaCode', 'aoType', 'rangeCode', 'aoNo'
+  ]);
+
+  function getFieldLabelText(el) {
+    if (!el) return '';
+    const pieces = [];
+    if (el.id) {
+      const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+      if (lbl) pieces.push(lbl.textContent || '');
+    }
+    const prev = el.previousElementSibling;
+    if (prev && prev.children.length <= 2) pieces.push(prev.textContent || '');
+    const wrap = el.closest('.form-group, .col-md-6, .col-sm-6, .col-lg-6, [class*="col-"], td');
+    if (wrap) {
+      const lbls = wrap.querySelectorAll('label, span, p, div');
+      for (const l of lbls) {
+        if (l.contains(el) || l.children.length > 2) continue;
+        const t = (l.textContent || '').trim();
+        if (t && t.length <= 90) pieces.push(t);
+      }
+    }
+    return pieces.join(' ').replace(/\*/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+
+  function findVisibleStep5Field(idCandidates, labelKeywords, tagSelector = 'input', excludeKeywords = []) {
+    for (const id of idCandidates) {
+      const el = document.getElementById(id);
+      if (el && isVisible(el) && !el.disabled && !STEP5_EXCLUDED_IDS.has(el.id)) {
+        return el;
+      }
+    }
+
+    const keys = (Array.isArray(labelKeywords) ? labelKeywords : [labelKeywords]).map((k) => k.toLowerCase());
+    const exKeys = (Array.isArray(excludeKeywords) ? excludeKeywords : [excludeKeywords]).map((k) => k.toLowerCase());
+
+    const visibleFields = Array.from(document.querySelectorAll(tagSelector)).filter((el) => {
+      if (!isVisible(el) || el.disabled) return false;
+      if (el.type === 'hidden' || el.type === 'checkbox' || el.type === 'radio' || el.type === 'button' || el.type === 'submit') return false;
+      if (STEP5_EXCLUDED_IDS.has(el.id)) return false;
+      return true;
+    });
+
+    // Pass 1: Match element attributes (id, name, placeholder)
+    for (const el of visibleFields) {
+      const attrs = `${el.id || ''} ${el.name || ''} ${el.placeholder || ''} ${el.getAttribute('aria-label') || ''}`.toLowerCase();
+      if (exKeys.some((ek) => attrs.includes(ek))) continue;
+      if (keys.some((k) => attrs.includes(k))) return el;
+    }
+
+    // Pass 2: Match associated label text
+    for (const el of visibleFields) {
+      const lbl = getFieldLabelText(el);
+      if (!lbl) continue;
+      if (exKeys.some((ek) => lbl.includes(ek))) continue;
+      if (keys.some((k) => lbl === k || lbl.includes(k))) return el;
+    }
+
+    return null;
+  }
+
+  function getStep5RepFields() {
+    const repFirst = findVisibleStep5Field(
+      ['repFirst', 'repFirstName', 'raFirstName', 'repFname', 'repAssesseeFirstName'],
+      ['first name']
+    );
+    const repMiddle = findVisibleStep5Field(
+      ['repMiddle', 'repMiddleName', 'raMiddleName', 'repMname', 'repAssesseeMiddleName'],
+      ['middle name']
+    );
+    const repLast = findVisibleStep5Field(
+      ['repLast', 'repLastName', 'raLastName', 'repLname', 'repAssesseeLastName'],
+      ['last name', 'surname']
+    );
+    const repAddr1 = findVisibleStep5Field(
+      ['repAddr1', 'raAddr1', 'repFlat', 'repBuilding'],
+      ['flat/door/building', 'flat/door']
+    );
+    const repAddr2 = findVisibleStep5Field(
+      ['repAddr2', 'raAddr2', 'repRoad', 'repStreet'],
+      ['road/street/block/sector', 'road/street']
+    );
+    const repAddr3 = findVisibleStep5Field(
+      ['repAddr3', 'raAddr3', 'repPost', 'repPostOffice'],
+      ['post office']
+    );
+    const repAddr4 = findVisibleStep5Field(
+      ['repAddr4', 'raAddr4', 'repArea', 'repLocality'],
+      ['area/locality/town/city', 'area/locality']
+    );
+
+    let repDist = findVisibleStep5Field(
+      ['repDistList', 'repDistrict', 'raDistList', 'raDistrict', 'repDist'],
+      ['select district', 'district'],
+      'select'
+    );
+    if (!repDist) {
+      repDist = Array.from(document.querySelectorAll('select')).find((s) => {
+        if (!isVisible(s) || s.disabled || STEP5_EXCLUDED_IDS.has(s.id)) return false;
+        const firstOpt = (s.options[0]?.text || '').toLowerCase();
+        return firstOpt.includes('select district');
+      }) || null;
+    }
+
+    const repPin = findVisibleStep5Field(
+      ['repPin', 'raPin', 'repPincode', 'repZip'],
+      ['pin/zip code', 'pincode', 'pin code', 'zip code']
+    );
+
+    // Match Aadhaar field strictly (NEVER match "Permanent Account Number (If any)" field!)
+    const repAadhaar = findVisibleStep5Field(
+      ['repAadhaarNo', 'repAadhaar', 'raAadhaarNo', 'raAadhaar', 'repUid', 'repUidNo', 'repAadharNo'],
+      ['aadhaar number', 'aadhaar'],
+      'input',
+      ['pan_no', 'panno']
+    );
+
+    let repIsd = findVisibleStep5Field(
+      ['repTelCountryCd', 'repMobileCountryCd', 'raTelCountryCd', 'raMobileCountryCd', 'repCountryCd', 'repIsdCode'],
+      ['telephone isd code', 'country code', 'isd code'],
+      'select'
+    );
+    if (!repIsd) {
+      repIsd = Array.from(document.querySelectorAll('select')).find((s) => {
+        if (!isVisible(s) || s.disabled || STEP5_EXCLUDED_IDS.has(s.id)) return false;
+        const firstOpt = (s.options[0]?.text || '').toLowerCase();
+        return firstOpt.includes('country code') || firstOpt.includes('isd');
+      }) || null;
+    }
+
+    const repMob = findVisibleStep5Field(
+      ['repMobileNo', 'repMobile', 'raMobileNo', 'raMobile', 'repTelNo'],
+      ['mobile number', 'mobile no'],
+      'input',
+      ['landline', 'std']
+    );
+
+    const repEmail = findVisibleStep5Field(
+      ['repEmailId', 'repEmail', 'raEmailId', 'raEmail'],
+      ['email id', 'email']
+    );
+
+    return {
+      repFirst, repMiddle, repLast,
+      repAddr1, repAddr2, repAddr3, repAddr4,
+      repDist, repPin, repAadhaar,
+      repIsd, repMob, repEmail
+    };
+  }
+
+  function handleRepresentativeAssesseeStep5(force = false) {
+    // Only fill Representative Assessee fields when Step 5 is actually visible and this is a Minor Case (or Rep fields are visibly active)
+    const step5Visible = isVisible(document.getElementById('capacityCd')) || isVisible(document.getElementById('verPlace')) || isVisible(document.getElementById('veriPlace'));
+    if (!step5Visible || !isMinorApplicant()) return false;
+
+    const f = getStep5RepFields();
+    if (!f.repLast && !f.repAddr1 && !f.repAadhaar && !f.repMob) return false;
+
+    let filled = false;
+
+    // 1. Guardian Name (Father by default, Mother if minor_guardian_type === 'MOTHER')
+    const guardianType = String(currentCandidate?.minor_guardian_type || 'FATHER').toUpperCase();
+    const guardianFullName = (guardianType === 'MOTHER' && currentCandidate?.mother_name && currentCandidate.mother_name.trim())
+      ? currentCandidate.mother_name.trim()
+      : ((currentCandidate?.father_name && currentCandidate.father_name.trim())
+          ? currentCandidate.father_name.trim()
+          : (currentCandidate?.mother_name || '').trim());
+
+    if (guardianFullName) {
+      const { first, middle, last } = splitFullName(guardianFullName);
+      if (f.repFirst && (!f.repFirst.value || force)) {
+        setInputValue(f.repFirst, first);
+        filled = true;
+      }
+      if (f.repMiddle && middle && (!f.repMiddle.value || force)) {
+        setInputValue(f.repMiddle, middle);
+        filled = true;
+      }
+      if (f.repLast && (!f.repLast.value || force)) {
+        setInputValue(f.repLast, last);
+        filled = true;
+      }
+    }
+
+    // 2. Representative Address (Same as Residence Address from Step 4)
+    const careOf = (currentCandidate?.husband_name && currentCandidate.husband_name.trim())
+      ? currentCandidate.husband_name.trim()
+      : (currentCandidate?.father_name ? currentCandidate.father_name.trim() : '');
+    const addr1Val = (document.getElementById('resAddr1')?.value || careOf || currentCandidate?.village || '').trim().slice(0, 25).toUpperCase();
+    const addr2Val = (document.getElementById('resAddr2')?.value || currentCandidate?.village || currentCandidate?.village_name || '').trim().slice(0, 25).toUpperCase();
+    const addr3Val = (document.getElementById('resAddr3')?.value || currentCandidate?.post_office || currentCandidate?.po || '').trim().slice(0, 25).toUpperCase();
+    const addr4Val = (document.getElementById('resAddr4')?.value || currentCandidate?.block_name || currentCandidate?.block || '').trim().slice(0, 25).toUpperCase();
+
+    if (f.repAddr1 && addr1Val && (!f.repAddr1.value || force)) {
+      setInputValue(f.repAddr1, addr1Val);
+      filled = true;
+    }
+    if (f.repAddr2 && addr2Val && (!f.repAddr2.value || force)) {
+      setInputValue(f.repAddr2, addr2Val);
+      filled = true;
+    }
+    if (f.repAddr3 && addr3Val && (!f.repAddr3.value || force)) {
+      setInputValue(f.repAddr3, addr3Val);
+      filled = true;
+    }
+    if (f.repAddr4 && addr4Val && (!f.repAddr4.value || force)) {
+      setInputValue(f.repAddr4, addr4Val);
+      filled = true;
+    }
+
+    // 3. Representative District (same as Residence District selected in Step 4)
+    const resDistEl = document.getElementById('resDistList');
+    const selectedResDistText = (resDistEl && resDistEl.selectedIndex >= 0 && resDistEl.value)
+      ? (resDistEl.options[resDistEl.selectedIndex]?.text || '').trim()
+      : '';
+    const rawDistrict = selectedResDistText || (currentCandidate?.district_name || currentCandidate?.district || '').trim();
+    const isAurangabadCand = isAurangabadDistrict(rawDistrict);
+    const targetDist = isAurangabadCand
+      ? (usePlainAurangabadFallback ? 'AURANGABAD' : 'AURANGABAD(BH)')
+      : rawDistrict;
+
+    let repDistJustChanged = false;
+    if (f.repDist && targetDist && (!f.repDist.value || force)) {
+      if (selectOptionByText(f.repDist, targetDist, isAurangabadCand && usePlainAurangabadFallback)) {
+        filled = true;
+        repDistJustChanged = true;
+        repDistChangedAt = Date.now();
+      }
+    }
+
+    // 4. Representative Pin/Zip Code (same as Residence Pin, filled after District settles)
+    const pincode = (document.getElementById('resPin')?.value || currentCandidate?.pincode || currentCandidate?.pin || '').replace(/\D/g, '').slice(0, 6);
+    if (f.repPin && pincode && (f.repPin.value !== pincode || force || repDistJustChanged)) {
+      const delay = repDistJustChanged ? 350 : 50;
+      setTimeout(() => {
+        if (!hasVisibleModal() && f.repPin.value !== pincode) {
+          setInputValue(f.repPin, pincode);
+        }
+      }, delay);
+      filled = true;
+    }
+
+    // 5. Representative Aadhaar Number (Father / Mother Aadhaar No entered on website for Minor Case)
+    const guardianAadhaar = String(currentCandidate?.father_aadhaar_no || '').replace(/\D/g, '').slice(0, 12);
+    if (f.repAadhaar && guardianAadhaar.length === 12 && (f.repAadhaar.value.replace(/\D/g, '') !== guardianAadhaar || force)) {
+      setInputValue(f.repAadhaar, guardianAadhaar);
+      filled = true;
+    }
+
+    // 6. Representative Assessee Contact Details (same Mobile & Email as Applicant!)
+    if (f.repIsd && (f.repIsd.value !== '91' || force)) {
+      if (selectOption(f.repIsd, '91', ['india ( 91 )', 'india'])) {
+        filled = true;
+      }
+    }
+
+    const mobVal = String(document.getElementById('mobileNo')?.value || currentCandidate?.mobile_no || '').replace(/\D/g, '').slice(-10);
+    if (f.repMob && mobVal.length === 10 && (f.repMob.value.replace(/\D/g, '') !== mobVal || force)) {
+      setInputValue(f.repMob, mobVal);
+      filled = true;
+    }
+
+    const emailVal = String(document.getElementById('emailId')?.value || currentCandidate?.email_id || currentCandidate?.email || '').trim().slice(0, 40);
+    if (f.repEmail && emailVal && (f.repEmail.value.trim() !== emailVal || force)) {
+      setInputValue(f.repEmail, emailVal);
+      filled = true;
+    }
+
+    if (filled) {
+      updateBadge(`👨‍👧 Minor Case Representative Filled: ${guardianFullName || 'Guardian'}`, '#10b981');
+    }
+    return filled;
+  }
+
+  // -----------------------------------------------------------------------
+  // STEP 5: Other Details Tab (capacityCd -> SELF, verification place + Minor Representative)
   // -----------------------------------------------------------------------
   function handleOtherDetailsTab(force = false) {
     let filled = false;
+
+    // 0. Minor Case: Representative Assessee Details & Contact Details
+    if (handleRepresentativeAssesseeStep5(force)) {
+      filled = true;
+    }
 
     // 1. Capacity dropdown -> SELF (value="1")
     const capacityCdEl = document.getElementById('capacityCd');
@@ -1213,6 +1732,20 @@
       selectOptionByText(resStateEl, stateName);
     }
 
+    // 7B. Minor Case: Representative Assessee State -> Same as Residence State
+    if (isMinorApplicant()) {
+      const repStateEl = findRepStateSelect();
+      if (repStateEl && isVisible(repStateEl) && !repStateEl.disabled && (!repStateEl.value || force)) {
+        const selectedResStateText = (resStateEl && resStateEl.selectedIndex >= 0 && resStateEl.value)
+          ? (resStateEl.options[resStateEl.selectedIndex]?.text || '').trim()
+          : '';
+        const repStateTarget = (selectedResStateText || currentCandidate.state || 'BIHAR').trim().toLowerCase();
+        if (selectOptionByText(repStateEl, repStateTarget)) {
+          filledAny = true;
+        }
+      }
+    }
+
     // 8. Aadhaar Details (aadhaarNo, aadhaarName)
     const aadhaarNoEl = document.getElementById('aadhaarNo');
     if (aadhaarNoEl && currentCandidate.aadhaar_no) {
@@ -1311,6 +1844,12 @@
     if (!dob || dob.value.trim().length < 8) return false;
     if (!gender || !gender.value) return false;
     if (!resState || !resState.value) return false;
+    if (isMinorApplicant()) {
+      const repStateEl = findRepStateSelect();
+      if (repStateEl && isVisible(repStateEl) && !repStateEl.value) {
+        return false;
+      }
+    }
     if (currentCandidate?.aadhaar_no) {
       const cleanAadhaar = String(currentCandidate.aadhaar_no).replace(/\D/g, '');
       if (!aNo || aNo.value.replace(/\D/g, '') !== cleanAadhaar) return false;
@@ -1326,6 +1865,11 @@
     if (!poi || !poi.value) return false;
     if (!poa || !poa.value) return false;
     if (!podob || !podob.value) return false;
+
+    const { repPoiEl, repPoaEl } = findRepDocSelects();
+    if (repPoiEl && isVisible(repPoiEl) && !repPoiEl.disabled && !repPoiEl.value) return false;
+    if (repPoaEl && isVisible(repPoaEl) && !repPoaEl.disabled && !repPoaEl.value) return false;
+
     return true;
   }
 
@@ -1345,6 +1889,7 @@
   }
 
   function isStep4Complete() {
+    if (isRejectingInvalidPincode) return false;
     if (aurangabadSwitchUntil && Date.now() < aurangabadSwitchUntil) return false;
     const inc = document.getElementById('incomeOthSource');
     const addr1 = document.getElementById('resAddr1');
@@ -1374,6 +1919,22 @@
     if (!cap || cap.value !== '1') return false;
     if (!place || !place.value.trim()) return false;
     if (!name || !name.value.trim()) return false;
+
+    // Minor Case: Ensure all Representative Assessee details & contact fields are filled before advancing
+    if (isMinorApplicant()) {
+      if (repDistChangedAt && (Date.now() - repDistChangedAt < 500)) return false;
+      const f = getStep5RepFields();
+      if (f.repLast && !f.repLast.value.trim()) return false;
+      if (f.repAddr1 && !f.repAddr1.value.trim()) return false;
+      if (f.repDist && !f.repDist.value) return false;
+      if (f.repPin && f.repPin.value.replace(/\D/g, '').length < 6) return false;
+      const guardianAadhaar = String(currentCandidate?.father_aadhaar_no || '').replace(/\D/g, '');
+      if (f.repAadhaar && guardianAadhaar.length === 12 && f.repAadhaar.value.replace(/\D/g, '').length < 12) return false;
+      if (f.repIsd && f.repIsd.value !== '91') return false;
+      if (f.repMob && f.repMob.value.replace(/\D/g, '').length < 10) return false;
+      if (f.repEmail && !f.repEmail.value.trim()) return false;
+    }
+
     return true;
   }
 
@@ -1437,7 +1998,7 @@
   }
 
   function tryAdvanceStep() {
-    if (isAdvancing || hasVisibleModal()) return;
+    if (isAdvancing || isRejectingInvalidPincode || isRejectingDuplicateEmail || hasVisibleModal()) return;
 
     const currentStep = getActiveWizardStep();
     if (!currentStep) return;
@@ -3248,53 +3809,244 @@
     );
   }
 
-  function handleOtpVerificationPage() {
-    if (otpFetchInitiated) return;
-    otpFetchInitiated = true;
+  let lastFilledOtpCode = '';
+  let lastFilledOtpAt = 0;
 
-    const triggerTime = Date.now();
-    updateBadge('📧 OTP Verification Screen • Fetching current-time code from Gmail...', '#f59e0b');
+  function fillAndSubmitOtpCode(rawCode) {
+    const code = String(rawCode || '').trim();
+    if (!/^\d{6}$/.test(code)) return false;
 
-    chrome.runtime.sendMessage({ action: 'fetchGmailOtp', triggerTime }, () => {
-      void chrome.runtime.lastError;
+    const now = Date.now();
+    if (code === lastFilledOtpCode && (now - lastFilledOtpAt < 8000)) {
+      return true;
+    }
+
+    const otpInput =
+      document.getElementById('otpInput') ||
+      document.querySelector('input[name*="otp" i], input[id*="otp" i], input[placeholder*="OTP" i]');
+    const submitBtn =
+      document.getElementById('submitOtpBtn') ||
+      document.querySelector('button[type="submit"], input[type="submit"]');
+
+    if (!otpInput) return false;
+
+    lastFilledOtpCode = code;
+    lastFilledOtpAt = now;
+    chrome.storage.local.remove(['pendingOtpCode', 'pendingOtpAt']);
+
+    otpInput.value = code;
+    ['input', 'change', 'keyup', 'blur'].forEach((evt) => {
+      try { otpInput.dispatchEvent(new Event(evt, { bubbles: true })); } catch (e) {}
     });
 
+    updateBadge(`🔑 OTP ${code} Filled • Submitting...`, '#10b981');
+
     setTimeout(() => {
-      otpFetchInitiated = false;
-    }, 45000);
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        try { submitBtn.click(); } catch (e) {}
+      }
+      const form = document.getElementById('loginForm') || otpInput.closest('form') || document.querySelector('form');
+      if (form) {
+        try { form.submit(); } catch (e) {}
+      }
+    }, 450);
+
+    return true;
+  }
+
+  function handleOtpVerificationPage() {
+    // Failsafe: if background already stored a fresh pendingOtpCode in storage, submit it immediately!
+    chrome.storage.local.get(['pendingOtpCode', 'pendingOtpAt'], (res) => {
+      const pCode = String(res?.pendingOtpCode || '').trim();
+      const pAt = Number(res?.pendingOtpAt || 0);
+      if (pCode && pAt > 0 && (Date.now() - pAt < 60000)) {
+        if (fillAndSubmitOtpCode(pCode)) {
+          return;
+        }
+      }
+
+      if (otpFetchInitiated) return;
+      otpFetchInitiated = true;
+
+      const triggerTime = Date.now();
+      updateBadge('📧 OTP Verification Screen • Fetching latest code from Gmail...', '#f59e0b');
+
+      chrome.runtime.sendMessage({ action: 'fetchGmailOtp', triggerTime }, (resp) => {
+        if (chrome.runtime.lastError || (resp && resp.success === false)) {
+          otpFetchInitiated = false;
+        }
+      });
+
+      setTimeout(() => {
+        otpFetchInitiated = false;
+      }, 25000);
+    });
   }
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg && msg.action === 'fillOtpAndSubmit') {
-      const code = String(msg.code || '').trim();
-      const otpInput = document.getElementById('otpInput') || document.querySelector('input[placeholder*="OTP" i]');
-      const submitBtn = document.getElementById('submitOtpBtn') || document.querySelector('button[type="submit"]');
-
-      if (otpInput && code) {
-        otpInput.value = code;
-        ['input', 'change', 'keyup', 'blur'].forEach((evt) => {
-          try { otpInput.dispatchEvent(new Event(evt, { bubbles: true })); } catch (e) {}
-        });
-
-        updateBadge(`🔑 OTP ${code} Filled • Submitting...`, '#10b981');
-
-        setTimeout(() => {
-          if (submitBtn) {
-            submitBtn.disabled = false;
-            try { submitBtn.click(); } catch (e) {}
-          }
-          const form = document.getElementById('loginForm') || document.querySelector('form');
-          if (form) {
-            try { form.submit(); } catch (e) {}
-          }
-        }, 500);
-      }
-      sendResponse({ success: true });
+      const ok = fillAndSubmitOtpCode(msg.code);
+      sendResponse({ success: ok });
       return true;
     }
   });
 
   let logoutRestarting = false;
+  let isHandlingInvalidOtp = false;
+  let otpCounterResetSent = false;
+
+  function isInvalidOtpAlertText(text) {
+    const low = String(text || '').toLowerCase();
+    return (
+      low.includes('invalid otp') ||
+      low.includes('wrong otp') ||
+      low.includes('incorrect otp') ||
+      low.includes('otp expired') ||
+      low.includes('otp mismatch') ||
+      (low.includes('otp code') && (low.includes('invalid') || low.includes('try again')))
+    );
+  }
+
+  function detectInvalidOtpSignal() {
+    // 1. Check DOM attribute written by MAIN-world document_start alert interceptor
+    try {
+      const attrMsg = document.documentElement?.getAttribute('data-wb-invalid-otp-alert');
+      if (attrMsg && isInvalidOtpAlertText(attrMsg)) {
+        return attrMsg;
+      }
+    } catch (e) {}
+
+    // 2. Check sessionStorage written by MAIN-world alert interceptor (within 15 seconds)
+    try {
+      const raw = sessionStorage.getItem('wb_invalid_otp_alert');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.message && (!parsed.at || Date.now() - Number(parsed.at) < 15000)) {
+          if (isInvalidOtpAlertText(parsed.message)) {
+            return String(parsed.message);
+          }
+        }
+      }
+    } catch (e) {}
+
+    // 3. Check visible modal dialogs or page body text
+    try {
+      const dialogs = getVisibleDialogs();
+      for (const d of dialogs) {
+        const dt = (d.innerText || d.textContent || '').trim();
+        if (dt && dt.length < 300 && isInvalidOtpAlertText(dt)) {
+          return dt;
+        }
+      }
+    } catch (e) {}
+
+    try {
+      const bodyTxt = (document.body ? (document.body.innerText || '') : '').trim();
+      if (bodyTxt && bodyTxt.length < 6000 && isInvalidOtpAlertText(bodyTxt)) {
+        return 'Invalid OTP Code!! Please Try again';
+      }
+    } catch (e) {}
+
+    return '';
+  }
+
+  function clearInvalidOtpSignalCache() {
+    try {
+      document.documentElement?.removeAttribute('data-wb-invalid-otp-alert');
+      document.documentElement?.removeAttribute('data-wb-invalid-otp-at');
+    } catch (e) {}
+    try {
+      sessionStorage.removeItem('wb_invalid_otp_alert');
+    } catch (e) {}
+  }
+
+  function showInvalidOtpPausedBanner(rawMsg, retryCount) {
+    if (!document.body) return;
+    let bar = document.getElementById('wb-invalid-otp-paused-banner');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'wb-invalid-otp-paused-banner';
+      document.body.appendChild(bar);
+    }
+    bar.style.cssText =
+      'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:2147483647;' +
+      'background:#0f172a;color:#f8fafc;padding:16px 22px;border-radius:12px;border:2px solid #ef4444;' +
+      'box-shadow:0 12px 40px rgba(0,0,0,0.75);font-family:system-ui,-apple-system,sans-serif;' +
+      'font-size:13px;max-width:560px;width:92%;';
+    bar.innerHTML = `
+      <div style="font-weight:800;font-size:15px;color:#f87171;margin-bottom:6px;">
+        🛑 Invalid OTP 3 baar se jyada fail hua — Auto-Pilot Paused
+      </div>
+      <div style="color:#e2e8f0;line-height:1.5;margin-bottom:10px;">
+        Message: <b>${String(rawMsg || 'Invalid OTP Code!! Please Try again').replace(/</g, '&lt;')}</b><br/>
+        Kripya manually OTP / CSC login check karein. Application reject <b>nahi</b> ki gayi hai.
+      </div>
+      <button id="wb-btn-resume-after-otp" style="background:#0284c7;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;font-weight:700;font-size:12.5px;">
+        🔄 Resume Auto-Pilot & Retry
+      </button>
+    `;
+
+    document.getElementById('wb-btn-resume-after-otp')?.addEventListener('click', () => {
+      bar.remove();
+      isHandlingInvalidOtp = false;
+      chrome.storage.local.set({ autoPollEnabled: true, invalidOtpRetryCount: 0, invalidOtpWindowAt: 0 }, () => {
+        chrome.runtime.sendMessage({ action: 'checkQueueNow', force: true });
+      });
+    });
+  }
+
+  function handleInvalidOtpDetected(rawMessage) {
+    if (isHandlingInvalidOtp) return;
+    isHandlingInvalidOtp = true;
+    clearInvalidOtpSignalCache();
+
+    const otpInputEl =
+      document.getElementById('otpInput') ||
+      document.querySelector('input[name*="otp" i], input[id*="otp" i], input[placeholder*="OTP" i]');
+    const hasOtpInputOnPage = Boolean(otpInputEl && isVisible(otpInputEl));
+
+    if (hasOtpInputOnPage) {
+      updateBadge('⚠️ Invalid OTP • Page khula rakh kar Gmail se latest OTP la rahe hain...', '#f59e0b');
+    } else {
+      updateBadge('⚠️ Invalid OTP detected • Page close karke fir se try kar rahe hain...', '#f59e0b');
+    }
+
+    try {
+      chrome.runtime.sendMessage({
+        action: 'handleInvalidOtpError',
+        message: String(rawMessage || 'Invalid OTP Code!! Please Try again'),
+        hasOtpInputOnPage
+      }, (resp) => {
+        void chrome.runtime.lastError;
+        if (resp && resp.limitReached) {
+          updateBadge('🛑 Invalid OTP 3+ baar fail hua! Auto-Pilot paused — manually login/OTP check karein.', '#ef4444');
+          showInvalidOtpPausedBanner(rawMessage, resp.retryCount);
+        } else if (resp && resp.retryingInPlace) {
+          updateBadge(`📧 Invalid OTP (Retry ${resp.retryCount}/3) • Gmail se latest OTP fetch kar rahe hain...`, '#f59e0b');
+        } else if (resp && resp.retryCount) {
+          updateBadge(`⚠️ Invalid OTP (Retry ${resp.retryCount}/3) • Fresh page open ho raha hai...`, '#f59e0b');
+        }
+      });
+    } catch (e) {}
+  }
+
+  function resetInvalidOtpCounterOnce() {
+    if (otpCounterResetSent) return;
+    otpCounterResetSent = true;
+    try {
+      chrome.runtime.sendMessage({ action: 'resetInvalidOtpCounter' }, () => {
+        void chrome.runtime.lastError;
+      });
+    } catch (e) {}
+  }
+
+  window.addEventListener('message', (event) => {
+    if (!event.data || (event.source !== window && event.origin !== window.location.origin)) return;
+    if (event.data.source === 'wb-uti-alert-hook' && event.data.type === 'INVALID_OTP_ALERT') {
+      handleInvalidOtpDetected(event.data.message);
+    }
+  });
 
   function isLoggedOutPage() {
     const url = (window.location.href || '').toLowerCase();
@@ -3530,11 +4282,68 @@
     });
   }
 
+  let isRejectingDuplicateEmail = false;
+
+  function isDuplicateEmailModal() {
+    const emailDialog = Array.from(document.querySelectorAll('.ui-dialog, .modal, div[role="dialog"], div[role="alertdialog"]')).find((d) => {
+      if (!isVisible(d)) return false;
+      const t = (d.innerText || d.textContent || '').toLowerCase();
+      return (
+        t.includes('available against multiple pan') ||
+        t.includes('provide another valid email') ||
+        (t.includes('email') && t.includes('multiple pan')) ||
+        (t.includes('email id') && t.includes('another valid'))
+      );
+    });
+    if (emailDialog) return true;
+
+    const pageText = (document.body ? document.body.innerText : '').toLowerCase();
+    return (
+      pageText.includes('available against multiple pan') ||
+      pageText.includes('provide another valid email')
+    );
+  }
+
+  function handleDuplicateEmailModal() {
+    if (isRejectingDuplicateEmail) return;
+    isRejectingDuplicateEmail = true;
+
+    const rejectionComment = 'यह ईमेल आईडी बहुत सारे पैन कार्ड में दिया हुआ है, दूसरा ईमेल आईडी दें। (Ye email id bahut sare PAN card me diya hua hai, dusra email id de)';
+    updateBadge(`⚠️ ${rejectionComment} • Auto-Rejecting...`, '#ef4444');
+
+    chrome.storage.local.get(['currentCandidate', 'queueList'], (stored) => {
+      const cand = stored?.currentCandidate || (Array.isArray(stored?.queueList) && stored?.queueList[0]) || currentCandidate;
+      const appId = cand ? (cand.id || cand.app_id) : null;
+      const appRef = cand ? String(cand.app_ref || '').replace(/^#+/, '').trim() : null;
+
+      chrome.runtime.sendMessage({
+        action: 'candidateRejected',
+        appId: appId,
+        appRef: appRef,
+        reason: rejectionComment
+      }, () => {
+        updateBadge('❌ Marked as REJECTED on BiharGo (Multiple PAN Email ID) • Closing tab in 1.5s...', '#ef4444');
+
+        // Auto close this UTI tab
+        setTimeout(() => {
+          chrome.runtime.sendMessage({ action: 'closeCurrentTab' });
+        }, 1500);
+      });
+    });
+  }
+
   // -----------------------------------------------------------------------
   // Router & Observers
   // -----------------------------------------------------------------------
   function runAutoFill(force = false) {
     const url = (window.location.href || '').toLowerCase();
+
+    // 0000000. Invalid OTP Alert ("Invalid OTP Code!! Please Try again") — Highest Priority
+    const invalidOtpMsg = detectInvalidOtpSignal();
+    if (invalidOtpMsg) {
+      handleInvalidOtpDetected(invalidOtpMsg);
+      return;
+    }
 
     // 000000. Logged Out Screen (editVle.action -> "You have logged out successfully!")
     if (isLoggedOutPage()) {
@@ -3544,6 +4353,7 @@
 
     // 00000. Change Profile Screen (right after OTP login)
     if (isChangeProfilePage()) {
+      resetInvalidOtpCounterOnce();
       handleChangeProfilePage();
       return;
     }
@@ -3572,14 +4382,22 @@
       return;
     }
 
+    // 00C. Check if Email ID is already linked to multiple PANs ("available against multiple PAN")
+    if (isDuplicateEmailModal()) {
+      handleDuplicateEmailModal();
+      return;
+    }
+
     // 0A. Document Upload List / Modal (applType=B)
     if (url.includes('docuploadlistpanapp') || url.includes('docupload') || url.includes('uploaddoc')) {
+      resetInvalidOtpCounterOnce();
       handleDocUploadListPage();
       return;
     }
 
     // 0B. Receipt / redirectSuccess page (Success Screen)
     if (isReceiptPage()) {
+      resetInvalidOtpCounterOnce();
       handleReceiptSuccessPage();
       return;
     }
@@ -3596,18 +4414,24 @@
       document.getElementById('refNo') ||
       document.getElementById('reEnterUid')
     ) {
+      resetInvalidOtpCounterOnce();
       handleIndMainForm(force);
       return;
     }
 
     // 2. prePANForm (Only when strictly on prePANForm URL)
     if (url.includes('prepanform')) {
+      resetInvalidOtpCounterOnce();
       handlePrePanForm();
       return;
     }
 
     // 3. VLE Home
     if (url.includes('vlehome')) {
+      const hasPanMenu = (document.body?.innerText || '').toLowerCase().includes('application for new pan');
+      if (hasPanMenu) {
+        resetInvalidOtpCounterOnce();
+      }
       handleVleHomePage();
       return;
     }
@@ -3650,6 +4474,9 @@
     }
     if (changes.currentUtiRefNo) {
       currentUtiRefNo = changes.currentUtiRefNo.newValue || '';
+    }
+    if (changes.pendingOtpCode && changes.pendingOtpCode.newValue && isOtpVerificationPage()) {
+      fillAndSubmitOtpCode(changes.pendingOtpCode.newValue);
     }
   });
 

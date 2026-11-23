@@ -494,6 +494,11 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                     <label class="pan-label" for="dob">DATE OF BIRTH <span class="req-star">*</span></label>
                     <input type="text" class="pan-input" id="dob" name="dob" placeholder="E.g. 01-01-2003" pattern="\d{2}-\d{2}-\d{4}" maxlength="10" autocomplete="off" required>
                     <div class="pan-helper">Format: DD-MM-YYYY (Auto-hyphen applied, e.g. 01-01-2003)</div>
+                    <div id="dobMinorBadge" class="d-none mt-1">
+                        <span class="badge bg-warning text-dark fw-bold" style="font-size: 0.72rem;">
+                            <i class="bi bi-exclamation-circle-fill me-1"></i> Minor Case (Age &lt; 18) — Guardian Aadhaar No required
+                        </span>
+                    </div>
                 </div>
 
                 <!-- 4. SELECT STATE -->
@@ -604,6 +609,34 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                 <div class="col-12 col-md-6 col-lg-4 pan-form-group">
                     <label class="pan-label" for="pincode">PINCODE <span class="req-star">*</span></label>
                     <input type="text" class="pan-input" id="pincode" name="pincode" placeholder="E.g. 852369" maxlength="6" pattern="\d{6}" required>
+                </div>
+
+                <!-- MINOR CASE SECTION (Auto-shown only when applicant age < 18 at apply date) -->
+                <div class="col-12 d-none" id="minorGuardianSection">
+                    <div class="p-3 rounded-3 mb-3" style="background: #fffbeb; border: 1.5px solid #f59e0b;">
+                        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+                            <div class="fw-bold text-dark" style="font-size: 0.85rem;">
+                                <i class="bi bi-shield-exclamation text-warning me-1"></i>
+                                Minor Case Detected (<span id="minorAgeLabel">Under 18</span>) — Representative Assessee Aadhaar Required
+                            </div>
+                            <span class="badge bg-warning text-dark">Age &lt; 18</span>
+                        </div>
+                        <div class="row">
+                            <div class="col-12 col-md-6 pan-form-group mb-md-0">
+                                <label class="pan-label" for="minor_guardian_type">REPRESENTATIVE / GUARDIAN <span class="req-star">*</span></label>
+                                <select class="pan-select" id="minor_guardian_type" name="minor_guardian_type">
+                                    <option value="FATHER" selected>Father (पिता)</option>
+                                    <option value="MOTHER">Mother (माता)</option>
+                                </select>
+                                <div class="pan-helper">Select whose Aadhaar number you are entering (Father by default).</div>
+                            </div>
+                            <div class="col-12 col-md-6 pan-form-group mb-0">
+                                <label class="pan-label" for="father_aadhaar_no" id="fatherAadhaarLabel">FATHER AADHAAR NO <span class="req-star">*</span></label>
+                                <input type="text" class="pan-input" id="father_aadhaar_no" name="father_aadhaar_no" placeholder="Enter 12-digit Father Aadhaar No" maxlength="12" pattern="\d{12}" inputmode="numeric" autocomplete="off">
+                                <div class="pan-helper">Minor applicant (18 वर्ष से कम) के लिए पिता/माता का 12 अंकों का आधार नंबर अनिवार्य है।</div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -1027,7 +1060,10 @@ function closeCameraModal() {
     });
 
     dobInput.addEventListener('input', function() {
-        if (isDeleting) return;
+        if (isDeleting) {
+            updateMinorGuardianVisibility();
+            return;
+        }
 
         let digits = this.value.replace(/\D/g, '').slice(0, 8);
         let formatted = '';
@@ -1043,6 +1079,7 @@ function closeCameraModal() {
         }
 
         this.value = formatted;
+        updateMinorGuardianVisibility();
     });
 
     dobInput.addEventListener('paste', function(e) {
@@ -1056,6 +1093,7 @@ function closeCameraModal() {
             const m = isoMatch[2].padStart(2, '0');
             const d = isoMatch[3].padStart(2, '0');
             this.value = `${d}-${m}-${y}`;
+            updateMinorGuardianVisibility();
             return;
         }
 
@@ -1072,8 +1110,79 @@ function closeCameraModal() {
             formatted = digits.slice(0, 2) + '-' + digits.slice(2, 4) + '-' + digits.slice(4);
         }
         this.value = formatted;
+        updateMinorGuardianVisibility();
     });
+
+    dobInput.addEventListener('blur', updateMinorGuardianVisibility);
+    dobInput.addEventListener('change', updateMinorGuardianVisibility);
+    dobInput.addEventListener('keyup', updateMinorGuardianVisibility);
 })();
+
+// Minor Case (< 18 years at apply date): show & require Father/Mother Aadhaar No
+function calculateAgeFromDobString(dobStr) {
+    const clean = String(dobStr || '').trim().replace(/\//g, '-');
+    const m = clean.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+    if (!m) return null;
+    const day = parseInt(m[1], 10);
+    const month = parseInt(m[2], 10);
+    const year = parseInt(m[3], 10);
+    if (month < 1 || month > 12 || day < 1 || day > 31 || year < 1900 || year > 2100) return null;
+    const birthDate = new Date(year, month - 1, day);
+    if (birthDate.getFullYear() !== year || birthDate.getMonth() !== month - 1 || birthDate.getDate() !== day) {
+        return null;
+    }
+    const today = new Date();
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const md = today.getMonth() - birthDate.getMonth();
+    if (md < 0 || (md === 0 && today.getDate() < birthDate.getDate())) {
+        age--;
+    }
+    return age;
+}
+
+function updateMinorGuardianLabel() {
+    const typeEl = document.getElementById('minor_guardian_type');
+    const lblEl = document.getElementById('fatherAadhaarLabel');
+    const inpEl = document.getElementById('father_aadhaar_no');
+    if (!typeEl || !lblEl || !inpEl) return;
+    if (typeEl.value === 'MOTHER') {
+        lblEl.innerHTML = 'MOTHER AADHAAR NO <span class="req-star">*</span>';
+        inpEl.placeholder = 'Enter 12-digit Mother Aadhaar No';
+    } else {
+        lblEl.innerHTML = 'FATHER AADHAAR NO <span class="req-star">*</span>';
+        inpEl.placeholder = 'Enter 12-digit Father Aadhaar No';
+    }
+}
+
+function updateMinorGuardianVisibility() {
+    const dobInput = document.getElementById('dob');
+    const section = document.getElementById('minorGuardianSection');
+    const badge = document.getElementById('dobMinorBadge');
+    const ageLabel = document.getElementById('minorAgeLabel');
+    const aadhaarInput = document.getElementById('father_aadhaar_no');
+    if (!dobInput || !section || !aadhaarInput) return;
+
+    const age = calculateAgeFromDobString(dobInput.value);
+    const isMinor = (age !== null && age >= 0 && age < 18);
+
+    if (isMinor) {
+        section.classList.remove('d-none');
+        if (badge) badge.classList.remove('d-none');
+        if (ageLabel) ageLabel.textContent = 'Age: ' + age + ' yrs';
+        aadhaarInput.required = true;
+        updateMinorGuardianLabel();
+    } else {
+        section.classList.add('d-none');
+        if (badge) badge.classList.add('d-none');
+        aadhaarInput.required = false;
+    }
+}
+
+document.getElementById('minor_guardian_type')?.addEventListener('change', updateMinorGuardianLabel);
+document.getElementById('father_aadhaar_no')?.addEventListener('input', function() {
+    this.value = this.value.replace(/\D/g, '').slice(0, 12);
+});
+updateMinorGuardianVisibility();
 
 // Instant submit feedback & RAM-only upload safety guard
 document.getElementById('panCardForm')?.addEventListener('submit', function(e) {

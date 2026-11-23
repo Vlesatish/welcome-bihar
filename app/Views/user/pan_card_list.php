@@ -691,6 +691,16 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                                     <div class="req-field-value font-monospace"><?= e($fields['pincode'] ?? '-') ?></div>
                                 </div>
                             </div>
+                            <?php if (!empty($fields['father_aadhaar_no'])): ?>
+                            <div class="col-12 col-md-4">
+                                <div class="req-grid-box" style="background: #fffbeb; border-color: #fcd34d;">
+                                    <div class="req-field-label text-warning-emphasis">
+                                        <?= (strtoupper((string)($fields['minor_guardian_type'] ?? 'FATHER')) === 'MOTHER') ? 'MOTHER AADHAAR NO (MINOR)' : 'FATHER AADHAAR NO (MINOR)' ?>
+                                    </div>
+                                    <div class="req-field-value text-primary font-monospace"><?= e($fields['father_aadhaar_no']) ?></div>
+                                </div>
+                            </div>
+                            <?php endif; ?>
                         </div>
 
                         <!-- Documents Preview & Actions Row -->

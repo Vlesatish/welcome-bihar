@@ -33,6 +33,18 @@
         "https://myutiitsl.com/*"
       ],
       "js": [
+        "content/uti_alert_interceptor.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "https://www.myutiitsl.com/*",
+        "https://myutiitsl.com/*"
+      ],
+      "js": [
         "content/uti_pan_auto.js"
       ],
       "run_at": "document_idle",

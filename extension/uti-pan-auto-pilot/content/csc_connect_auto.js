@@ -66,6 +66,8 @@
     return document.querySelector('input[type="submit"][name="login"]') ||
       document.querySelector('.login-btn') ||
       document.querySelector('input[value="Log In" i]') ||
+      Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a, [role="button"]')).find((el) =>
+        isVisible(el) && /^log\s*in$/i.test((el.value || el.textContent || '').trim())) ||
       document.querySelector('button[type="submit"]');
   }
 
@@ -180,7 +182,125 @@
 
       showConnectBadge('🔐 CSC ID & Password Auto-Filled • Please enter Captcha & Log In', '#10b981');
     }
+
+    clickCaptchaSearchOnce();
   }
+
+  // Delegate clicks because the captcha search control can be injected later.
+  let searchLoginTimer = null;
+  let hasClickedCaptchaSearch = false;
+  let loginSubmitted = false;
+
+  function clickCaptchaSearchOnce() {
+    if (hasClickedCaptchaSearch || loginSubmitted || searchLoginTimer !== null) return;
+    const candidates = Array.from(document.querySelectorAll('button, a, [role="button"], div, span'))
+      .filter((el) => !el.disabled && isCaptchaSearchClick({ composedPath: () => [el] }));
+    // A wrapper can have the same size/text as its button. Click the actual
+    // hit-tested descendant so listeners on that button receive the event.
+    const control = candidates.find((el) => el.matches('button, a, [role="button"]')) ||
+      candidates.find((el) => !candidates.some((other) => other !== el && el.contains(other)));
+    if (!control) return;
+    const rect = control.getBoundingClientRect();
+    const clientX = rect.left + rect.width / 2;
+    const clientY = rect.top + rect.height / 2;
+    let target = document.elementFromPoint(clientX, clientY);
+    if (!target || !(target === control || control.contains(target))) return;
+    while (target.shadowRoot) {
+      const inner = target.shadowRoot.elementFromPoint(clientX, clientY);
+      if (!inner || inner === target) break;
+      target = inner;
+    }
+    // Mark before clicking: injected controls can synchronously change the DOM.
+    hasClickedCaptchaSearch = true;
+    const options = { bubbles: true, cancelable: true, composed: true, clientX, clientY, button: 0 };
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+      const EventClass = type.startsWith('pointer') ? PointerEvent : MouseEvent;
+      target.dispatchEvent(new EventClass(type, {
+        ...options, buttons: type.endsWith('down') ? 1 : 0, pointerId: 1, pointerType: 'mouse', isPrimary: true
+      }));
+    }
+  }
+
+  function cancelSearchLogin() {
+    clearTimeout(searchLoginTimer);
+    searchLoginTimer = null;
+  }
+
+  function isCaptchaSearchClick(event) {
+    const captcha = getCaptchaInput();
+    if (!captcha || !isVisible(captcha)) return false;
+    const inputRect = captcha.getBoundingClientRect();
+    const path = event.composedPath();
+    // Inspect each candidate: SVG className is not necessarily a string.
+    return path.some((el) => {
+      if (!(el instanceof Element) || el === document.body || el === document.documentElement ||
+          el === captcha || el.matches('input, img, form')) return false;
+      const rect = el.getBoundingClientRect();
+      if (!isVisible(el) || rect.width > 90 || rect.height > 90) return false;
+      const nearCaptcha = Math.abs((rect.top + rect.bottom) / 2 -
+        (inputRect.top + inputRect.bottom) / 2) <= 120 &&
+        rect.right >= inputRect.left - 500 && rect.left <= inputRect.right + 120;
+      if (!nearCaptcha) return false;
+      const label = [el.textContent, el.getAttribute('aria-label'), el.getAttribute('title'),
+        el.getAttribute('class'), el.getAttribute('id')].filter(Boolean).join(' ');
+      if (/refresh|reload|eye|password/i.test(label)) return false;
+      if (/🔍|🔎|search|magnif/i.test(label)) return true;
+      // Some extensions use an unlabelled image or a closed shadow-root button.
+      // Match only a small control below the captcha image, left of its input.
+      const images = Array.from(document.querySelectorAll('img')).filter((img) => {
+        const r = img.getBoundingClientRect();
+        return isVisible(img) && r.width >= 80 && r.height >= 20 && r.height <= 120 &&
+          r.right <= inputRect.left + 20 && r.left >= inputRect.left - 500 &&
+          Math.abs((r.top + r.bottom) / 2 - (inputRect.top + inputRect.bottom) / 2) <= 100;
+      });
+      return images.some((img) => {
+        const r = img.getBoundingClientRect();
+        return rect.width >= 16 && rect.height >= 16 && rect.left >= r.left - 10 &&
+          rect.right <= r.left + 90 && rect.top >= r.bottom - 5 && rect.top <= r.bottom + 45;
+      });
+    });
+  }
+  window.addEventListener('click', (event) => {
+    const submit = getSubmitButton();
+    if (submit && event.composedPath().includes(submit)) {
+      loginSubmitted = true;
+      cancelSearchLogin();
+      return;
+    }
+    if (!isCaptchaSearchClick(event)) return;
+    hasClickedCaptchaSearch = true;
+    cancelSearchLogin();
+    showConnectBadge('Search clicked • Waiting for Captcha before Log In', '#10b981');
+    const deadline = Date.now() + 15000;
+    const tryLogin = () => {
+      searchLoginTimer = null;
+      const captcha = getCaptchaInput();
+      const button = getSubmitButton();
+      if (!captcha || !String(captcha.value || '').trim()) {
+        if (Date.now() < deadline) {
+          searchLoginTimer = setTimeout(tryLogin, 250);
+          return;
+        }
+        showConnectBadge('Captcha not filled • Click the captcha search icon manually to retry', '#f59e0b');
+        return;
+      }
+      if (!button || !isVisible(button) || button.disabled) {
+        showConnectBadge('Auto-login stopped: Log In button unavailable', '#f59e0b');
+        return;
+      }
+      // click() does not emit mousedown; restore credentials before page encryption.
+      const cscInput = getCscIdInput();
+      const passInput = getPasswordInput();
+      if (cscInput) setInputValue(cscInput, CSC_ID);
+      if (passInput) setInputValue(passInput, CSC_PASSWORD);
+      loginSubmitted = true;
+      button.click();
+    };
+    searchLoginTimer = setTimeout(tryLogin, 2000);
+  }, true);
+
+  document.addEventListener('submit', cancelSearchLogin, true);
+  window.addEventListener('pagehide', cancelSearchLogin);
 
   // Run on ready and poll
   if (document.readyState === 'loading') {

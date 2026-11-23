@@ -14,9 +14,78 @@
   let passwordSubmitted = false;
   let pinSubmitted = false;
   let proceedClicked = false;
+  let insufficientBalanceHandled = false;
   let lastProceedAttempt = 0;
   let lastPassAttempt = 0;
   let lastPinAttempt = 0;
+
+  function showFloatingWalletAlert(msg, color = '#ef4444') {
+    if (!document.body) return;
+    let badge = document.getElementById('wb-csc-error-alert');
+    if (!badge) {
+      badge = document.createElement('div');
+      badge.id = 'wb-csc-error-alert';
+      badge.style.cssText =
+        'position:fixed;top:15px;right:20px;z-index:999999999;background:#0f172a;color:#fff;padding:14px 22px;' +
+        'border-radius:10px;font-family:system-ui,-apple-system,sans-serif;font-size:13.5px;font-weight:600;' +
+        'box-shadow:0 8px 30px rgba(0,0,0,0.65);display:flex;align-items:center;gap:10px;border-left:5px solid #ef4444;';
+      document.body.appendChild(badge);
+    }
+    badge.style.borderLeftColor = color;
+    badge.innerHTML = `<span>${msg}</span>`;
+  }
+
+  function isInsufficientBalancePage(bodyText) {
+    const t = String(bodyText || '').toLowerCase();
+    const title = String(document.title || '').toLowerCase();
+    return (
+      t.includes('insufficient wallet balance') ||
+      t.includes('error id: no_balance') ||
+      t.includes('no_balance') ||
+      t.includes('error code: 810') ||
+      (t.includes('pay page: error') && t.includes('810')) ||
+      (title.includes('pay page error') && (t.includes('810') || t.includes('insufficient')))
+    );
+  }
+
+  function handleInsufficientBalanceError() {
+    if (insufficientBalanceHandled) return true;
+    insufficientBalanceHandled = true;
+
+    const statusMsg = '⚠️ CSC में पैसा खत्म हो गया (Error 810)! sat397842@gmail.com पर मैसेज भेजा जा रहा है...';
+    updateWalletBadge(statusMsg, '#ef4444');
+    showFloatingWalletAlert(statusMsg, '#ef4444');
+
+    const storageKey = `wb_csc_no_balance_${window.location.pathname || 'default'}`;
+    if (sessionStorage.getItem(storageKey) === '1') {
+      return true;
+    }
+    sessionStorage.setItem(storageKey, '1');
+
+    try {
+      chrome.runtime.sendMessage(
+        {
+          action: 'cscInsufficientBalance',
+          errorCode: '810',
+          errorId: 'no_balance',
+          errorUrl: window.location.href,
+          recipientEmail: 'sat397842@gmail.com',
+          alertMessage: 'csc me paisa katm ho gaya add kigiue'
+        },
+        (resp) => {
+          void chrome.runtime.lastError;
+          if (resp && resp.success) {
+            showFloatingWalletAlert(
+              '📧 sat397842@gmail.com पर मैसेज भेजा जा रहा है: "csc me paisa katm ho gaya add kigiue"',
+              '#f59e0b'
+            );
+          }
+        }
+      );
+    } catch (e) {}
+
+    return true;
+  }
 
   function isVisible(el) {
     if (!el || !el.isConnected) return false;
@@ -196,6 +265,12 @@
   function runCscWalletAuto() {
     const url = (window.location.href || '').toLowerCase();
     const bodyText = (document.body?.innerText || '').toLowerCase();
+
+    // 0. Error Code 810 / Insufficient Wallet Balance (no_balance)
+    if (isInsufficientBalancePage(bodyText)) {
+      handleInsufficientBalanceError();
+      return;
+    }
 
     // 1. PIN Screen
     if (

@@ -224,6 +224,31 @@ class PanCardController
     }
 
     /**
+     * Calculate applicant age at current apply date from DD-MM-YYYY / DD/MM/YYYY / YYYY-MM-DD
+     */
+    private function calculateAgeAtApplyDate(string $dobStr): ?int
+    {
+        $clean = trim(str_replace('/', '-', $dobStr));
+        if ($clean === '') {
+            return null;
+        }
+        $dt = null;
+        if (preg_match('/^(\d{2})-(\d{2})-(\d{4})$/', $clean, $m)) {
+            $dt = \DateTimeImmutable::createFromFormat('!d-m-Y', $clean);
+        } elseif (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $clean, $m)) {
+            $dt = \DateTimeImmutable::createFromFormat('!Y-m-d', $clean);
+        }
+        if (!$dt) {
+            return null;
+        }
+        $today = new \DateTimeImmutable('today');
+        if ($dt > $today) {
+            return null;
+        }
+        return (int)$dt->diff($today)->y;
+    }
+
+    /**
      * Submit New Pan Card Application (Atomically debits ₹107.00 and uploads documents)
      */
     public function apply(): void
@@ -267,6 +292,13 @@ class PanCardController
             $blockName = trim((string)($_POST['block_name'] ?? ''));
             $districtName = trim((string)($_POST['district_name'] ?? ''));
             $pincode = preg_replace('/\D/', '', (string)($_POST['pincode'] ?? ''));
+            $minorGuardianType = strtoupper(trim((string)($_POST['minor_guardian_type'] ?? 'FATHER')));
+            if (!in_array($minorGuardianType, ['FATHER', 'MOTHER'], true)) {
+                $minorGuardianType = 'FATHER';
+            }
+            $fatherAadhaarNo = preg_replace('/\D/', '', (string)($_POST['father_aadhaar_no'] ?? ''));
+            $ageAtApply = $this->calculateAgeAtApplyDate($dob);
+            $isMinorApplicant = ($ageAtApply !== null && $ageAtApply < 18);
 
             // 2. Validate mandatory fields
             if (mb_strlen($fullName) < 2) {
@@ -310,6 +342,10 @@ class PanCardController
             }
             if (strlen($pincode) !== 6) {
                 throw new Exception('PINCODE must be exactly 6 digits.');
+            }
+            if ($isMinorApplicant && strlen($fatherAadhaarNo) !== 12) {
+                $guardianLabel = ($minorGuardianType === 'MOTHER') ? 'MOTHER' : 'FATHER';
+                throw new Exception("Minor Case (Age under 18): {$guardianLabel} AADHAAR NO must be exactly 12 digits.");
             }
 
             // 3. Process File Uploads (Photo, Signature, Aadhar Card, Date Of Birth Proof [Optional])
@@ -464,7 +500,10 @@ class PanCardController
                 'photo' => $photoPath,
                 'signature' => $sigPath,
                 'aadhar_card' => $aadharPath,
-                'pan_form' => $panFormPath
+                'pan_form' => $panFormPath,
+                'is_minor' => $isMinorApplicant ? '1' : '0',
+                'minor_guardian_type' => $isMinorApplicant ? $minorGuardianType : '',
+                'father_aadhaar_no' => $isMinorApplicant ? $fatherAadhaarNo : ''
             ];
 
             // Fetch code_field_ids for PAN_CARD
@@ -1030,6 +1069,9 @@ class PanCardController
                     'block_name' => $f['block_name'] ?? $r['block_name'] ?? '',
                     'district_name' => $f['district_name'] ?? $r['district_name'] ?? '',
                     'pincode' => $f['pincode'] ?? '',
+                    'is_minor' => ($f['is_minor'] ?? '') === '1',
+                    'minor_guardian_type' => !empty($f['minor_guardian_type']) ? strtoupper((string)$f['minor_guardian_type']) : 'FATHER',
+                    'father_aadhaar_no' => $f['father_aadhaar_no'] ?? '',
                     'photo_url' => $toAbsUrl($f['photo'] ?? null),
                     'signature_url' => $toAbsUrl($f['signature'] ?? null),
                     'aadhar_card_url' => $toAbsUrl($f['aadhar_card'] ?? null),

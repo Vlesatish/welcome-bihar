@@ -35,7 +35,9 @@ document.addEventListener('DOMContentLoaded', () => {
       'lastQueueCount',
       'lastQueueError',
       'currentCandidate',
-      'queueList'
+      'queueList',
+      'lastStatus',
+      'lastStatusColor'
     ], (res) => {
       portalUrlInput.value = res.portalUrl || DEFAULT_PORTAL_URL;
       autoPollToggle.checked = res.autoPollEnabled !== false;
