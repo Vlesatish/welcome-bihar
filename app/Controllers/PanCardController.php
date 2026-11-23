@@ -280,7 +280,7 @@ class PanCardController
             $fullName = trim((string)($_POST['full_name'] ?? ''));
             $gender = trim((string)($_POST['gender'] ?? ''));
             $dob = trim((string)($_POST['dob'] ?? ''));
-            $state = trim((string)($_POST['state'] ?? 'Bihar'));
+            $state = trim((string)($_POST['state'] ?? ''));
             $aadhaarNo = preg_replace('/\D/', '', (string)($_POST['aadhaar_no'] ?? ''));
             $mobileNo = preg_replace('/\D/', '', (string)($_POST['mobile_no'] ?? ''));
             $emailId = strtolower(trim((string)($_POST['email_id'] ?? '')));
