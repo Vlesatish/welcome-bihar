@@ -734,7 +734,11 @@
     const isReEnterOpen = Boolean(reEnterDialog || (reEnterInput && isVisible(reEnterInput)));
 
     if (isReEnterOpen && currentCandidate?.aadhaar_no) {
-      const aNo = String(currentCandidate.aadhaar_no).replace(/\D/g, '');
+      const activeStepNow = getActiveWizardStep();
+      const rawReEnterAadhaar = (activeStepNow === 5 && isMinorApplicant() && currentCandidate?.father_aadhaar_no)
+        ? currentCandidate.father_aadhaar_no
+        : currentCandidate.aadhaar_no;
+      const aNo = String(rawReEnterAadhaar).replace(/\D/g, '');
       if (reEnterInput && reEnterInput.value !== aNo) {
         setInputValue(reEnterInput, aNo);
       }
@@ -1292,18 +1296,22 @@
     if (!el) return '';
     const pieces = [];
     if (el.id) {
-      const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-      if (lbl) pieces.push(lbl.textContent || '');
+      try {
+        const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+        if (lbl) pieces.push(lbl.textContent || '');
+      } catch (e) {}
     }
     const prev = el.previousElementSibling;
-    if (prev && prev.children.length <= 2) pieces.push(prev.textContent || '');
-    const wrap = el.closest('.form-group, .col-md-6, .col-sm-6, .col-lg-6, [class*="col-"], td');
+    if (prev && prev.children.length <= 3) pieces.push(prev.textContent || '');
+    const next = el.nextElementSibling;
+    if (next && next.children.length <= 3) pieces.push(next.textContent || '');
+    const wrap = el.closest('.input-field, .form-group, .col-md-6, .col-sm-6, .col-lg-6, [class*="col-"], .col, td') || el.parentElement;
     if (wrap) {
-      const lbls = wrap.querySelectorAll('label, span, p, div');
+      const lbls = wrap.querySelectorAll('label, span, p, div, small');
       for (const l of lbls) {
-        if (l.contains(el) || l.children.length > 2) continue;
+        if (l.contains(el) || l.children.length > 3) continue;
         const t = (l.textContent || '').trim();
-        if (t && t.length <= 90) pieces.push(t);
+        if (t && t.length <= 120) pieces.push(t);
       }
     }
     return pieces.join(' ').replace(/\*/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -1394,11 +1402,15 @@
     );
 
     // Match Aadhaar field strictly (NEVER match "Permanent Account Number (If any)" field!)
-    const repAadhaar = findVisibleStep5Field(
-      ['repAadhaarNo', 'repAadhaar', 'raAadhaarNo', 'raAadhaar', 'repUid', 'repUidNo', 'repAadharNo'],
-      ['aadhaar number', 'aadhaar'],
+    let repAadhaar = findVisibleStep5Field(
+      [
+        'repAadhaarNo', 'repAadhaar', 'repAadhaarNumber', 'repAadharNo', 'repAadhar', 'repAadharNumber',
+        'raAadhaarNo', 'raAadhaar', 'raAadhaarNumber', 'raAadharNo', 'raAadhar',
+        'repUid', 'repUidNo', 'repUidNumber', 'raUid', 'raUidNo', 'repPanAadhaar', 'aadhaarNoRep'
+      ],
+      ['aadhaar number', 'aadhaar', 'aadhar', 'permanent account number is not available', 'uid'],
       'input',
-      ['pan_no', 'panno']
+      []
     );
 
     let repIsd = findVisibleStep5Field(
@@ -1425,6 +1437,27 @@
       ['repEmailId', 'repEmail', 'raEmailId', 'raEmail'],
       ['email id', 'email']
     );
+
+    // Positional fallback for Representative Aadhaar input (sits right after Pin/Zip Code & Permanent Account Number, before Mobile Number)
+    if (!repAadhaar) {
+      const visibleTextInputs = Array.from(document.querySelectorAll('input')).filter((el) => {
+        if (!isVisible(el) || el.disabled || STEP5_EXCLUDED_IDS.has(el.id)) return false;
+        const tp = (el.type || 'text').toLowerCase();
+        return tp === 'text' || tp === 'tel' || tp === 'number' || tp === '';
+      });
+      const pinIdx = repPin ? visibleTextInputs.indexOf(repPin) : -1;
+      const mobIdx = repMob ? visibleTextInputs.indexOf(repMob) : -1;
+      const between = (pinIdx >= 0 && mobIdx > pinIdx)
+        ? visibleTextInputs.slice(pinIdx + 1, mobIdx)
+        : (pinIdx >= 0 ? visibleTextInputs.slice(pinIdx + 1, pinIdx + 3) : []);
+
+      if (between.length > 0) {
+        repAadhaar =
+          between.find((el) => String(el.getAttribute('maxlength') || '') === '12') ||
+          between.find((el) => getFieldLabelText(el).includes('aadhaar') || getFieldLabelText(el).includes('not available')) ||
+          (between.length >= 2 ? between[1] : null);
+      }
+    }
 
     return {
       repFirst, repMiddle, repLast,
