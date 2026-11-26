@@ -429,13 +429,173 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
     line-height: 1;
 }
 
-/* Webcam Modal Styles */
+/* Mobile-First Camera & Interactive Cropper Styles */
+#cameraModal .modal-body {
+    background: #0f172a;
+    color: #f8fafc;
+}
+
+#cameraVideoWrap {
+    position: relative;
+    width: 100%;
+    min-height: 240px;
+    max-height: 58vh;
+    background: #000000;
+    border-radius: 10px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
 #cameraVideo {
     width: 100%;
-    max-height: 380px;
-    object-fit: cover;
+    max-height: 58vh;
+    object-fit: contain;
+    background: #000000;
+    display: block;
+}
+
+#cameraGuideOverlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#cameraGuideBox {
+    border: 2px dashed rgba(34, 197, 94, 0.9);
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+    border-radius: 6px;
+    transition: all 0.2s ease;
+}
+
+#cropEditorArea {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+}
+
+#cropStageWrap {
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
+    max-height: 52vh;
+    background: #000000;
     border-radius: 8px;
-    background: #000;
+    overflow: hidden;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    line-height: 0;
+}
+
+#cropPreviewImg {
+    display: block;
+    max-width: 100%;
+    max-height: 52vh;
+    width: auto;
+    height: auto;
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+#cropBox {
+    position: absolute;
+    border: 2px solid #22c55e;
+    box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.58);
+    cursor: move;
+    touch-action: none;
+    box-sizing: border-box;
+    z-index: 10;
+}
+
+#cropBox::before,
+#cropBox::after {
+    content: '';
+    position: absolute;
+    pointer-events: none;
+}
+
+/* Subtle rule-of-thirds grid inside crop box */
+#cropBox::before {
+    left: 33.333%;
+    right: 33.333%;
+    top: 0;
+    bottom: 0;
+    border-left: 1px solid rgba(255, 255, 255, 0.35);
+    border-right: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+#cropBox::after {
+    top: 33.333%;
+    bottom: 33.333%;
+    left: 0;
+    right: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.35);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+.crop-handle {
+    position: absolute;
+    width: 22px;
+    height: 22px;
+    background: #ffffff;
+    border: 3px solid #16a34a;
+    border-radius: 50%;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+    z-index: 20;
+    touch-action: none;
+}
+
+/* Larger invisible touch hit target for mobile fingers */
+.crop-handle::after {
+    content: '';
+    position: absolute;
+    inset: -12px;
+}
+
+.crop-handle.nw { top: -11px; left: -11px; cursor: nwse-resize; }
+.crop-handle.ne { top: -11px; right: -11px; cursor: nesw-resize; }
+.crop-handle.sw { bottom: -11px; left: -11px; cursor: nesw-resize; }
+.crop-handle.se { bottom: -11px; right: -11px; cursor: nwse-resize; }
+
+.crop-ratio-btn {
+    font-size: 0.74rem;
+    font-weight: 600;
+    padding: 0.25rem 0.65rem;
+    border-radius: 999px;
+    border: 1px solid #475569;
+    background: #1e293b;
+    color: #e2e8f0;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.crop-ratio-btn.active {
+    background: #16a34a;
+    border-color: #22c55e;
+    color: #ffffff;
+}
+
+.pan-crop-mini-btn {
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 0.2rem 0.48rem;
+    border-radius: 6px;
+    border: 1px solid #cbd5e1;
+    background: #eff6ff;
+    color: #1d4ed8;
+    white-space: nowrap;
+}
+
+.pan-crop-mini-btn:hover {
+    background: #dbeafe;
 }
 </style>
 
@@ -659,15 +819,18 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                             <button type="button" class="pan-snap-btn" onclick="openCameraModal(event, 'photo')">
                                 <i class="bi bi-camera-fill text-danger"></i> Snap Photo / फोटो खींचे
                             </button>
-                            <div class="pan-file-preview d-none" id="preview_photo">
+                            <div class="pan-file-preview d-none" id="preview_photo" onclick="event.stopPropagation()">
                                 <div class="d-flex align-items-center gap-2 overflow-hidden">
-                                    <img src="" id="thumb_photo" alt="Photo">
+                                    <img src="" id="thumb_photo" alt="Photo" style="cursor:pointer;" onclick="previewUploadedThumb(event, 'photo', 'Photo')">
                                     <div class="text-start overflow-hidden">
                                         <div class="small fw-bold text-truncate" id="name_photo">file.jpg</div>
                                         <div class="text-muted" style="font-size: 0.68rem;" id="size_photo">150 KB</div>
                                     </div>
                                 </div>
-                                <button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="removeFile(event, 'photo')"><i class="bi bi-x-circle-fill fs-5"></i></button>
+                                <div class="d-flex align-items-center gap-1 flex-shrink-0">
+                                    <button type="button" id="crop_btn_photo" class="pan-crop-mini-btn" onclick="openCropperForField(event, 'photo')" title="Crop Photo"><i class="bi bi-crop"></i> Crop</button>
+                                    <button type="button" class="btn btn-sm btn-link text-danger p-0 ms-1" onclick="removeFile(event, 'photo')"><i class="bi bi-x-circle-fill fs-5"></i></button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -683,15 +846,18 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                             <button type="button" class="pan-snap-btn" onclick="openCameraModal(event, 'signature')">
                                 <i class="bi bi-camera-fill text-danger"></i> Snap Photo / फोटो खींचे
                             </button>
-                            <div class="pan-file-preview d-none" id="preview_signature">
+                            <div class="pan-file-preview d-none" id="preview_signature" onclick="event.stopPropagation()">
                                 <div class="d-flex align-items-center gap-2 overflow-hidden">
-                                    <img src="" id="thumb_signature" alt="Signature">
+                                    <img src="" id="thumb_signature" alt="Signature" style="cursor:pointer;" onclick="previewUploadedThumb(event, 'signature', 'Signature')">
                                     <div class="text-start overflow-hidden">
                                         <div class="small fw-bold text-truncate" id="name_signature">sig.jpg</div>
                                         <div class="text-muted" style="font-size: 0.68rem;" id="size_signature">80 KB</div>
                                     </div>
                                 </div>
-                                <button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="removeFile(event, 'signature')"><i class="bi bi-x-circle-fill fs-5"></i></button>
+                                <div class="d-flex align-items-center gap-1 flex-shrink-0">
+                                    <button type="button" id="crop_btn_signature" class="pan-crop-mini-btn" onclick="openCropperForField(event, 'signature')" title="Crop Signature"><i class="bi bi-crop"></i> Crop</button>
+                                    <button type="button" class="btn btn-sm btn-link text-danger p-0 ms-1" onclick="removeFile(event, 'signature')"><i class="bi bi-x-circle-fill fs-5"></i></button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -707,15 +873,18 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                             <button type="button" class="pan-snap-btn" onclick="openCameraModal(event, 'aadhar_card')">
                                 <i class="bi bi-camera-fill text-danger"></i> Snap Photo / फोटो खींचे
                             </button>
-                            <div class="pan-file-preview d-none" id="preview_aadhar_card">
+                            <div class="pan-file-preview d-none" id="preview_aadhar_card" onclick="event.stopPropagation()">
                                 <div class="d-flex align-items-center gap-2 overflow-hidden">
-                                    <img src="" id="thumb_aadhar_card" alt="Aadhaar">
+                                    <img src="" id="thumb_aadhar_card" alt="Aadhaar" style="cursor:pointer;" onclick="previewUploadedThumb(event, 'aadhar_card', 'Aadhar Card')">
                                     <div class="text-start overflow-hidden">
                                         <div class="small fw-bold text-truncate" id="name_aadhar_card">aadhar.pdf</div>
                                         <div class="text-muted" style="font-size: 0.68rem;" id="size_aadhar_card">300 KB</div>
                                     </div>
                                 </div>
-                                <button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="removeFile(event, 'aadhar_card')"><i class="bi bi-x-circle-fill fs-5"></i></button>
+                                <div class="d-flex align-items-center gap-1 flex-shrink-0">
+                                    <button type="button" id="crop_btn_aadhar_card" class="pan-crop-mini-btn d-none" onclick="openCropperForField(event, 'aadhar_card')" title="Crop Image"><i class="bi bi-crop"></i> Crop</button>
+                                    <button type="button" class="btn btn-sm btn-link text-danger p-0 ms-1" onclick="removeFile(event, 'aadhar_card')"><i class="bi bi-x-circle-fill fs-5"></i></button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -731,15 +900,18 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
                             <button type="button" class="pan-snap-btn" onclick="openCameraModal(event, 'pan_form')">
                                 <i class="bi bi-camera-fill text-danger"></i> Snap Photo / फोटो खींचे
                             </button>
-                            <div class="pan-file-preview d-none" id="preview_pan_form">
+                            <div class="pan-file-preview d-none" id="preview_pan_form" onclick="event.stopPropagation()">
                                 <div class="d-flex align-items-center gap-2 overflow-hidden">
-                                    <img src="" id="thumb_pan_form" alt="DOB Proof">
+                                    <img src="" id="thumb_pan_form" alt="DOB Proof" style="cursor:pointer;" onclick="previewUploadedThumb(event, 'pan_form', 'Date Of Birth Proof')">
                                     <div class="text-start overflow-hidden">
                                         <div class="small fw-bold text-truncate" id="name_pan_form">dob_proof.pdf</div>
                                         <div class="text-muted" style="font-size: 0.68rem;" id="size_pan_form">450 KB</div>
                                     </div>
                                 </div>
-                                <button type="button" class="btn btn-sm btn-link text-danger p-0" onclick="removeFile(event, 'pan_form')"><i class="bi bi-x-circle-fill fs-5"></i></button>
+                                <div class="d-flex align-items-center gap-1 flex-shrink-0">
+                                    <button type="button" id="crop_btn_pan_form" class="pan-crop-mini-btn d-none" onclick="openCropperForField(event, 'pan_form')" title="Crop Image"><i class="bi bi-crop"></i> Crop</button>
+                                    <button type="button" class="btn btn-sm btn-link text-danger p-0 ms-1" onclick="removeFile(event, 'pan_form')"><i class="bi bi-x-circle-fill fs-5"></i></button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -788,32 +960,87 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
     </div>
 </div>
 
-<!-- Camera Snap Modal (Webcam Capture) -->
+<!-- Hidden native mobile camera input (works reliably on all Android/iOS phones and opens straight into Cropper) -->
+<input type="file" id="nativeMobileCameraInput" accept="image/*" capture="environment" style="display:none;" onchange="handleNativeCameraFile(this)">
+
+<!-- Camera Snap & Interactive Crop Modal (Mobile-First) -->
 <div class="modal fade" id="cameraModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
-    <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content border-0 shadow-lg">
-            <div class="modal-header bg-primary text-white py-2">
-                <h6 class="modal-title fw-bold"><i class="bi bi-camera me-1"></i> Live Camera Photo Capture</h6>
-                <button type="button" class="btn-close btn-close-white" onclick="closeCameraModal()"></button>
-            </div>
-            <div class="modal-body text-center p-3">
-                <div class="position-relative">
-                    <video id="cameraVideo" autoplay playsinline></video>
-                    <canvas id="cameraCanvas" style="display:none;"></canvas>
+    <div class="modal-dialog modal-dialog-centered modal-lg modal-fullscreen-sm-down">
+        <div class="modal-content border-0 shadow-lg bg-dark text-white">
+            <div class="modal-header bg-primary text-white py-2 px-3 border-0">
+                <h6 class="modal-title fw-bold mb-0 d-flex align-items-center gap-2" id="cameraModalTitle">
+                    <i class="bi bi-camera-fill"></i> <span>Camera & Crop</span>
+                </h6>
+                <div class="d-flex align-items-center gap-2">
+                    <button type="button" id="flipCameraBtn" class="btn btn-sm btn-light bg-opacity-25 text-dark fw-semibold py-0.5 px-2" onclick="toggleCameraFacingMode()" title="Switch Front / Back Camera">
+                        <i class="bi bi-arrow-repeat"></i> Flip
+                    </button>
+                    <button type="button" class="btn-close btn-close-white" onclick="closeCameraModal()"></button>
                 </div>
-                <div id="cameraStatus" class="small text-muted mt-2">Position face/document clearly in camera frame.</div>
             </div>
-            <div class="modal-footer py-2 justify-content-between">
-                <button type="button" class="btn btn-sm btn-secondary" onclick="closeCameraModal()">Cancel</button>
-                <div class="d-flex gap-2">
-                    <button type="button" id="snapCaptureBtn" class="btn btn-sm btn-danger px-3 fw-bold" onclick="captureLiveSnapshot()">
-                        <i class="bi bi-record-circle me-1"></i> Capture Photo
+
+            <div class="modal-body text-center p-2 p-md-3 d-flex flex-column justify-content-center align-items-center">
+                <!-- STAGE 1: Live Camera Preview -->
+                <div id="cameraLiveStage" class="w-100">
+                    <div id="cameraVideoWrap">
+                        <video id="cameraVideo" autoplay playsinline muted></video>
+                        <div id="cameraGuideOverlay">
+                            <div id="cameraGuideBox"></div>
+                        </div>
+                        <div id="cameraFallbackPanel" class="d-none p-4 text-center w-100">
+                            <i class="bi bi-camera-video-off fs-1 text-warning d-block mb-2"></i>
+                            <div id="cameraFallbackMsg" class="small text-light mb-3">Live camera browser me open nahi ho paya. Niche Phone Camera button se seedha photo khinch kar crop karein.</div>
+                            <button type="button" class="btn btn-warning fw-bold px-4 py-2 rounded-pill" onclick="triggerNativeMobileCamera()">
+                                <i class="bi bi-phone-fill me-1"></i> Open Phone Camera / फोन कैमरा खोलें
+                            </button>
+                        </div>
+                    </div>
+                    <div class="mt-2 d-flex align-items-center justify-content-center gap-2 flex-wrap">
+                        <button type="button" class="btn btn-sm btn-outline-light rounded-pill px-3" onclick="triggerNativeMobileCamera()">
+                            <i class="bi bi-phone me-1"></i> Phone Camera (HD)
+                        </button>
+                    </div>
+                </div>
+
+                <!-- STAGE 2: Captured Preview + Interactive Touch/Mouse Cropper -->
+                <div id="cropEditorArea">
+                    <div class="d-flex align-items-center justify-content-center gap-2 flex-wrap mb-2">
+                        <button type="button" class="crop-ratio-btn" id="ratioBtn_free" onclick="setCropAspectRatio(0)">Free Crop</button>
+                        <button type="button" class="crop-ratio-btn" id="ratioBtn_1_1" onclick="setCropAspectRatio(1)">Passport (1:1)</button>
+                        <button type="button" class="crop-ratio-btn" id="ratioBtn_3_4" onclick="setCropAspectRatio(0.75)">Portrait (3:4)</button>
+                        <button type="button" class="crop-ratio-btn" id="ratioBtn_2_1" onclick="setCropAspectRatio(2)">Sign (2:1)</button>
+                        <button type="button" class="crop-ratio-btn" onclick="rotateCropSource90()"><i class="bi bi-arrow-clockwise"></i> Rotate</button>
+                        <button type="button" class="crop-ratio-btn" onclick="resetCropBoxToDefault()"><i class="bi bi-fullscreen"></i> Reset</button>
+                    </div>
+
+                    <div id="cropStageWrap">
+                        <img id="cropPreviewImg" src="" alt="Crop Preview">
+                        <div id="cropBox">
+                            <div class="crop-handle nw" data-handle="nw"></div>
+                            <div class="crop-handle ne" data-handle="ne"></div>
+                            <div class="crop-handle sw" data-handle="sw"></div>
+                            <div class="crop-handle se" data-handle="se"></div>
+                        </div>
+                    </div>
+
+                    <div id="cropDimInfo" class="small text-info mt-2 fw-semibold">Drag box or corners to crop cleanly</div>
+                </div>
+
+                <canvas id="cameraCanvas" style="display:none;"></canvas>
+                <div id="cameraStatus" class="small text-secondary mt-2">Position photo/document clearly in frame.</div>
+            </div>
+
+            <div class="modal-footer py-2 px-3 bg-dark border-top border-secondary justify-content-between flex-wrap gap-2">
+                <button type="button" class="btn btn-sm btn-outline-light px-3" onclick="closeCameraModal()">Cancel</button>
+                <div class="d-flex gap-2 flex-wrap">
+                    <button type="button" id="snapCaptureBtn" class="btn btn-danger px-4 fw-bold rounded-pill" onclick="captureLiveSnapshot()">
+                        <i class="bi bi-camera-fill me-1"></i> Capture Photo
                     </button>
-                    <button type="button" id="useCaptureBtn" class="btn btn-sm btn-success px-3 fw-bold d-none" onclick="applyCapturedSnapshot()">
-                        <i class="bi bi-check-lg me-1"></i> Use This Photo
-                    </button>
-                    <button type="button" id="retakeBtn" class="btn btn-sm btn-warning px-3 fw-bold d-none" onclick="retakeLiveSnapshot()">
+                    <button type="button" id="retakeBtn" class="btn btn-warning px-3 fw-bold rounded-pill d-none" onclick="retakeLiveSnapshot()">
                         <i class="bi bi-arrow-repeat me-1"></i> Retake
+                    </button>
+                    <button type="button" id="useCaptureBtn" class="btn btn-success px-4 fw-bold rounded-pill d-none" onclick="applyCapturedSnapshot()">
+                        <i class="bi bi-check-lg me-1"></i> Crop &amp; Use Photo
                     </button>
                 </div>
             </div>
@@ -825,12 +1052,94 @@ $csrfToken = \App\Services\AuthService::generateCsrfToken();
 <script>
 let currentTargetField = null;
 let cameraStream = null;
-let capturedDataUrl = null;
+let currentFacingMode = 'environment';
+let cropSourceDataUrl = null;
+let cropAspectRatio = 0; // 0 = free, 1 = 1:1, 0.75 = 3:4, 2 = 2:1
+let cropRect = { x: 0, y: 0, w: 100, h: 100 }; // in displayed preview pixels
+let cropImgMetrics = { dispW: 0, dispH: 0, natW: 0, natH: 0 };
+let cropDragState = null;
+let openedCropOnlyMode = false;
+
+const FIELD_CROP_DEFAULTS = {
+    photo: { title: 'Passport Photo — Camera & Crop', ratio: 1, guideW: '58%', guideH: '72%' },
+    signature: { title: 'Signature — Camera & Crop', ratio: 2, guideW: '82%', guideH: '36%' },
+    aadhar_card: { title: 'Aadhaar Card — Camera & Crop', ratio: 0, guideW: '88%', guideH: '70%' },
+    pan_form: { title: 'DOB Proof — Camera & Crop', ratio: 0, guideW: '86%', guideH: '78%' }
+};
 
 // Trigger hidden file input
 function triggerFileInput(inputId) {
     const el = document.getElementById(inputId);
     if (el) el.click();
+}
+
+function previewUploadedThumb(event, fieldKey, title) {
+    event.stopPropagation();
+    const b64 = document.getElementById(fieldKey + '_base64')?.value || '';
+    if (b64 && b64.startsWith('data:image/')) {
+        openImageModal(b64, title);
+    }
+}
+
+function estimateBase64Bytes(dataUrl) {
+    if (!dataUrl) return 0;
+    const idx = dataUrl.indexOf(',');
+    const b64 = idx >= 0 ? dataUrl.slice(idx + 1) : dataUrl;
+    return Math.round((b64.length * 3) / 4);
+}
+
+// Downscale & compress large mobile camera/gallery images automatically so uploads never fail > 2MB
+function compressImageDataUrl(rawDataUrl, maxDim = 1600, maxBytes = 1.6 * 1024 * 1024) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = function() {
+            let w = img.naturalWidth || img.width;
+            let h = img.naturalHeight || img.height;
+            if (w > maxDim || h > maxDim) {
+                const scale = Math.min(maxDim / w, maxDim / h);
+                w = Math.max(1, Math.round(w * scale));
+                h = Math.max(1, Math.round(h * scale));
+            }
+            const c = document.createElement('canvas');
+            c.width = w;
+            c.height = h;
+            const ctx = c.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, w, h);
+            ctx.drawImage(img, 0, 0, w, h);
+
+            let q = 0.9;
+            let out = c.toDataURL('image/jpeg', q);
+            while (estimateBase64Bytes(out) > maxBytes && q > 0.45) {
+                q -= 0.1;
+                out = c.toDataURL('image/jpeg', q);
+            }
+            resolve(out);
+        };
+        img.onerror = function() {
+            reject(new Error('Could not decode selected image.'));
+        };
+        img.src = rawDataUrl;
+    });
+}
+
+function setFieldPreviewFromDataUrl(fieldKey, dataUrl, displayName) {
+    const base64Input = document.getElementById(fieldKey + '_base64');
+    const previewBox = document.getElementById('preview_' + fieldKey);
+    const thumbImg = document.getElementById('thumb_' + fieldKey);
+    const nameEl = document.getElementById('name_' + fieldKey);
+    const sizeEl = document.getElementById('size_' + fieldKey);
+    const cropBtn = document.getElementById('crop_btn_' + fieldKey);
+
+    if (base64Input) base64Input.value = dataUrl;
+    if (thumbImg) {
+        thumbImg.src = dataUrl;
+        thumbImg.style.display = 'block';
+    }
+    if (nameEl) nameEl.textContent = displayName || (fieldKey + '_' + Date.now() + '.jpg');
+    if (sizeEl) sizeEl.textContent = (estimateBase64Bytes(dataUrl) / 1024).toFixed(1) + ' KB';
+    if (cropBtn) cropBtn.classList.remove('d-none');
+    if (previewBox) previewBox.classList.remove('d-none');
 }
 
 // Handle file selection (Reads file into RAM immediately and detaches disk handle to prevent Chrome ERR_UPLOAD_FILE_CHANGED / "Your file couldn't be accessed")
@@ -844,10 +1153,10 @@ function handleFileSelected(input, fieldKey) {
         input.value = '';
         return;
     }
-    
-    // Validate size (2MB max)
-    if (file.size > 2 * 1024 * 1024) {
-        alert('File size exceeds the 2MB limit. Please choose a smaller file.');
+
+    // PDFs must strictly be <= 2MB; large mobile images will be auto-compressed below
+    if (!isImage && file.size > 2 * 1024 * 1024) {
+        alert('PDF file size exceeds the 2MB limit. Please choose a smaller file.');
         input.value = '';
         return;
     }
@@ -857,6 +1166,7 @@ function handleFileSelected(input, fieldKey) {
     const nameEl = document.getElementById('name_' + fieldKey);
     const sizeEl = document.getElementById('size_' + fieldKey);
     const base64Input = document.getElementById(fieldKey + '_base64');
+    const cropBtn = document.getElementById('crop_btn_' + fieldKey);
 
     nameEl.textContent = file.name;
     sizeEl.textContent = (file.size / 1024).toFixed(1) + ' KB';
@@ -864,14 +1174,22 @@ function handleFileSelected(input, fieldKey) {
     if (!isImage) {
         thumbImg.src = 'https://cdn-icons-png.flaticon.com/512/337/337946.png';
         thumbImg.style.display = 'block';
+        if (cropBtn) cropBtn.classList.add('d-none');
     }
 
     const reader = new FileReader();
-    reader.onload = function(e) {
-        const dataUrl = e.target.result || '';
+    reader.onload = async function(e) {
+        let dataUrl = e.target.result || '';
         if (isImage) {
+            if (file.size > 1.5 * 1024 * 1024) {
+                try {
+                    dataUrl = await compressImageDataUrl(dataUrl, 1600, 1.5 * 1024 * 1024);
+                    sizeEl.textContent = (estimateBase64Bytes(dataUrl) / 1024).toFixed(1) + ' KB';
+                } catch (err) {}
+            }
             thumbImg.src = dataUrl;
             thumbImg.style.display = 'block';
+            if (cropBtn) cropBtn.classList.remove('d-none');
         }
         if (base64Input) {
             base64Input.value = dataUrl;
@@ -899,6 +1217,8 @@ function removeFile(event, fieldKey) {
     document.getElementById(fieldKey + '_base64').value = '';
     const previewBox = document.getElementById('preview_' + fieldKey);
     if (previewBox) previewBox.classList.add('d-none');
+    const cropBtn = document.getElementById('crop_btn_' + fieldKey);
+    if (cropBtn) cropBtn.classList.add('d-none');
 }
 
 // Drag & Drop Handlers
@@ -938,100 +1258,535 @@ function openImageModal(imgUrl, title) {
     document.getElementById('imageViewerTarget').src = imgUrl;
     document.getElementById('imageViewerTitle').textContent = title || 'Image Viewer';
     document.getElementById('imageViewerDownload').href = imgUrl;
-    const modal = new bootstrap.Modal(document.getElementById('imageViewerModal'));
+    const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('imageViewerModal'));
     modal.show();
 }
 
-// Camera Capture Modal
-function openCameraModal(event, fieldKey) {
-    event.stopPropagation();
-    currentTargetField = fieldKey;
-    capturedDataUrl = null;
+// =========================================================================
+// MOBILE-FIRST CAMERA + INTERACTIVE TOUCH/MOUSE CROPPER
+// =========================================================================
+function stopCameraStream() {
+    if (cameraStream) {
+        try {
+            cameraStream.getTracks().forEach(track => track.stop());
+        } catch (e) {}
+        cameraStream = null;
+    }
+    const video = document.getElementById('cameraVideo');
+    if (video) {
+        try { video.pause(); } catch (e) {}
+        video.srcObject = null;
+    }
+}
 
+function updateGuideBoxForField(fieldKey) {
+    const cfg = FIELD_CROP_DEFAULTS[fieldKey] || FIELD_CROP_DEFAULTS.photo;
+    const titleSpan = document.querySelector('#cameraModalTitle span');
+    if (titleSpan) titleSpan.textContent = cfg.title;
+    const guide = document.getElementById('cameraGuideBox');
+    if (guide) {
+        guide.style.width = cfg.guideW;
+        guide.style.height = cfg.guideH;
+    }
+}
+
+function showLiveCameraUI() {
+    document.getElementById('cameraLiveStage').style.display = 'block';
+    document.getElementById('cropEditorArea').style.display = 'none';
     document.getElementById('snapCaptureBtn').classList.remove('d-none');
     document.getElementById('useCaptureBtn').classList.add('d-none');
     document.getElementById('retakeBtn').classList.add('d-none');
-    document.getElementById('cameraVideo').style.display = 'block';
-    document.getElementById('cameraCanvas').style.display = 'none';
+    document.getElementById('flipCameraBtn').classList.remove('d-none');
+    document.getElementById('cameraStatus').textContent = 'Frame me photo/document set karein aur Capture Photo dabayein.';
+}
 
-    const modal = new bootstrap.Modal(document.getElementById('cameraModal'));
+function showCropEditorUI() {
+    document.getElementById('cameraLiveStage').style.display = 'none';
+    document.getElementById('cropEditorArea').style.display = 'flex';
+    document.getElementById('snapCaptureBtn').classList.add('d-none');
+    document.getElementById('useCaptureBtn').classList.remove('d-none');
+    if (openedCropOnlyMode) {
+        document.getElementById('retakeBtn').classList.add('d-none');
+    } else {
+        document.getElementById('retakeBtn').classList.remove('d-none');
+    }
+    document.getElementById('flipCameraBtn').classList.add('d-none');
+    document.getElementById('cameraStatus').textContent = 'Corners pakad kar halka crop adjust karein, fir "Crop & Use Photo" dabayein.';
+}
+
+async function startLiveCameraStream() {
+    stopCameraStream();
+
+    const video = document.getElementById('cameraVideo');
+    const fallbackPanel = document.getElementById('cameraFallbackPanel');
+    const fallbackMsg = document.getElementById('cameraFallbackMsg');
+    const guideOverlay = document.getElementById('cameraGuideOverlay');
+    const captureBtn = document.getElementById('snapCaptureBtn');
+
+    if (fallbackPanel) fallbackPanel.classList.add('d-none');
+    if (video) video.style.display = 'block';
+    if (guideOverlay) guideOverlay.style.display = 'flex';
+    if (captureBtn) {
+        captureBtn.disabled = true;
+        captureBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Opening Camera...';
+    }
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        if (video) video.style.display = 'none';
+        if (guideOverlay) guideOverlay.style.display = 'none';
+        if (fallbackPanel) fallbackPanel.classList.remove('d-none');
+        if (fallbackMsg) fallbackMsg.textContent = 'Is browser me live camera supported nahi hai. Niche "Open Phone Camera" se seedha photo khinch kar crop karein.';
+        if (captureBtn) {
+            captureBtn.classList.add('d-none');
+            captureBtn.disabled = false;
+        }
+        return;
+    }
+
+    const attempts = [
+        { video: { facingMode: { ideal: currentFacingMode }, width: { ideal: 1280 }, height: { ideal: 960 } }, audio: false },
+        { video: { facingMode: currentFacingMode }, audio: false },
+        { video: true, audio: false }
+    ];
+
+    let stream = null;
+    let lastErr = null;
+    for (const constraints of attempts) {
+        try {
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+            if (stream) break;
+        } catch (err) {
+            lastErr = err;
+        }
+    }
+
+    if (!stream) {
+        if (video) video.style.display = 'none';
+        if (guideOverlay) guideOverlay.style.display = 'none';
+        if (fallbackPanel) fallbackPanel.classList.remove('d-none');
+        if (fallbackMsg) {
+            fallbackMsg.textContent = 'Live camera open nahi hua (' + (lastErr ? lastErr.message : 'Permission denied') + '). Niche "Open Phone Camera" button use karein!';
+        }
+        if (captureBtn) {
+            captureBtn.classList.add('d-none');
+            captureBtn.disabled = false;
+        }
+        return;
+    }
+
+    cameraStream = stream;
+    video.srcObject = stream;
+    video.muted = true;
+    video.setAttribute('playsinline', 'true');
+    video.setAttribute('muted', 'true');
+
+    const markReady = () => {
+        if (captureBtn) {
+            captureBtn.classList.remove('d-none');
+            captureBtn.disabled = false;
+            captureBtn.innerHTML = '<i class="bi bi-camera-fill me-1"></i> Capture Photo';
+        }
+    };
+
+    video.onloadedmetadata = () => {
+        video.play().then(markReady).catch(markReady);
+    };
+    setTimeout(markReady, 1200);
+}
+
+function openCameraModal(event, fieldKey) {
+    event.stopPropagation();
+    currentTargetField = fieldKey;
+    openedCropOnlyMode = false;
+    cropSourceDataUrl = null;
+    currentFacingMode = (fieldKey === 'photo') ? 'environment' : 'environment';
+
+    updateGuideBoxForField(fieldKey);
+    showLiveCameraUI();
+
+    const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('cameraModal'));
+    modal.show();
+    startLiveCameraStream();
+}
+
+function openCropperForField(event, fieldKey) {
+    event.stopPropagation();
+    const existingDataUrl = document.getElementById(fieldKey + '_base64')?.value || '';
+    if (!existingDataUrl || !existingDataUrl.startsWith('data:image/')) {
+        alert('Only uploaded JPG/PNG images can be cropped.');
+        return;
+    }
+    currentTargetField = fieldKey;
+    openedCropOnlyMode = true;
+    stopCameraStream();
+    updateGuideBoxForField(fieldKey);
+
+    const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('cameraModal'));
     modal.show();
 
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } })
-            .then(stream => {
-                cameraStream = stream;
-                const video = document.getElementById('cameraVideo');
-                video.srcObject = stream;
-                video.play();
-            })
-            .catch(err => {
-                alert('Unable to access camera: ' + err.message + '. You can upload file directly.');
-                closeCameraModal();
-            });
-    } else {
-        alert('Camera is not supported on this browser. Please use standard file upload.');
-        closeCameraModal();
+    setTimeout(() => {
+        loadImageIntoCropper(existingDataUrl);
+    }, 180);
+}
+
+function toggleCameraFacingMode() {
+    currentFacingMode = (currentFacingMode === 'environment') ? 'user' : 'environment';
+    startLiveCameraStream();
+}
+
+function triggerNativeMobileCamera() {
+    const nativeInp = document.getElementById('nativeMobileCameraInput');
+    if (nativeInp) {
+        nativeInp.value = '';
+        nativeInp.click();
     }
+}
+
+function handleNativeCameraFile(input) {
+    if (!input.files || input.files.length === 0) return;
+    const file = input.files[0];
+    const reader = new FileReader();
+    reader.onload = async function(e) {
+        let dataUrl = e.target.result || '';
+        try {
+            input.value = '';
+        } catch (err) {}
+        if (!dataUrl) return;
+        try {
+            // Normalize orientation & size before cropping on mobile
+            dataUrl = await compressImageDataUrl(dataUrl, 1600, 1.8 * 1024 * 1024);
+        } catch (err) {}
+        stopCameraStream();
+        loadImageIntoCropper(dataUrl);
+    };
+    reader.readAsDataURL(file);
 }
 
 function captureLiveSnapshot() {
     const video = document.getElementById('cameraVideo');
     const canvas = document.getElementById('cameraCanvas');
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
+    if (!video || !video.videoWidth || !video.videoHeight) {
+        alert('Camera abhi load ho raha hai, 1 second ruk kar fir Capture dabayein.');
+        return;
+    }
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d');
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    capturedDataUrl = canvas.toDataURL('image/jpeg', 0.88);
-
-    video.style.display = 'none';
-    canvas.style.display = 'block';
-
-    document.getElementById('snapCaptureBtn').classList.add('d-none');
-    document.getElementById('useCaptureBtn').classList.remove('d-none');
-    document.getElementById('retakeBtn').classList.remove('d-none');
+    const rawSnap = canvas.toDataURL('image/jpeg', 0.92);
+    stopCameraStream();
+    loadImageIntoCropper(rawSnap);
 }
 
-function retakeLiveSnapshot() {
-    capturedDataUrl = null;
-    document.getElementById('cameraVideo').style.display = 'block';
-    document.getElementById('cameraCanvas').style.display = 'none';
+function loadImageIntoCropper(dataUrl) {
+    cropSourceDataUrl = dataUrl;
+    const cfg = FIELD_CROP_DEFAULTS[currentTargetField] || FIELD_CROP_DEFAULTS.photo;
+    cropAspectRatio = cfg.ratio;
+    updateRatioButtonStyles();
+    showCropEditorUI();
 
-    document.getElementById('snapCaptureBtn').classList.remove('d-none');
-    document.getElementById('useCaptureBtn').classList.add('d-none');
-    document.getElementById('retakeBtn').classList.add('d-none');
+    const imgEl = document.getElementById('cropPreviewImg');
+    imgEl.onload = function() {
+        // Allow modal layout to paint before measuring displayed image box
+        requestAnimationFrame(() => {
+            initCropMetricsAndDefaultBox();
+        });
+    };
+    imgEl.src = dataUrl;
+}
+
+function updateRatioButtonStyles() {
+    const map = {
+        0: 'ratioBtn_free',
+        1: 'ratioBtn_1_1',
+        0.75: 'ratioBtn_3_4',
+        2: 'ratioBtn_2_1'
+    };
+    Object.values(map).forEach((id) => {
+        document.getElementById(id)?.classList.remove('active');
+    });
+    const activeId = map[cropAspectRatio];
+    if (activeId) {
+        document.getElementById(activeId)?.classList.add('active');
+    }
+}
+
+function initCropMetricsAndDefaultBox() {
+    const imgEl = document.getElementById('cropPreviewImg');
+    if (!imgEl || !imgEl.naturalWidth) return;
+
+    const dispW = imgEl.clientWidth || imgEl.offsetWidth;
+    const dispH = imgEl.clientHeight || imgEl.offsetHeight;
+    if (!dispW || !dispH) {
+        setTimeout(initCropMetricsAndDefaultBox, 120);
+        return;
+    }
+
+    cropImgMetrics = {
+        dispW,
+        dispH,
+        natW: imgEl.naturalWidth,
+        natH: imgEl.naturalHeight
+    };
+
+    resetCropBoxToDefault();
+}
+
+function resetCropBoxToDefault() {
+    const { dispW, dispH } = cropImgMetrics;
+    if (!dispW || !dispH) return;
+
+    let w, h;
+    if (cropAspectRatio > 0) {
+        // Fit largest centered crop box with requested aspect ratio (82% of stage)
+        if (dispW / dispH > cropAspectRatio) {
+            h = dispH * 0.82;
+            w = h * cropAspectRatio;
+        } else {
+            w = dispW * 0.86;
+            h = w / cropAspectRatio;
+        }
+    } else {
+        w = dispW * 0.88;
+        h = dispH * 0.88;
+    }
+
+    w = Math.min(dispW, Math.max(40, w));
+    h = Math.min(dispH, Math.max(40, h));
+
+    cropRect = {
+        x: Math.round((dispW - w) / 2),
+        y: Math.round((dispH - h) / 2),
+        w: Math.round(w),
+        h: Math.round(h)
+    };
+    renderCropBox();
+}
+
+function setCropAspectRatio(ratio) {
+    cropAspectRatio = ratio;
+    updateRatioButtonStyles();
+    resetCropBoxToDefault();
+}
+
+function renderCropBox() {
+    const box = document.getElementById('cropBox');
+    if (!box) return;
+    box.style.left = cropRect.x + 'px';
+    box.style.top = cropRect.y + 'px';
+    box.style.width = cropRect.w + 'px';
+    box.style.height = cropRect.h + 'px';
+
+    const dimEl = document.getElementById('cropDimInfo');
+    if (dimEl && cropImgMetrics.dispW > 0) {
+        const scaleX = cropImgMetrics.natW / cropImgMetrics.dispW;
+        const scaleY = cropImgMetrics.natH / cropImgMetrics.dispH;
+        const outW = Math.round(cropRect.w * scaleX);
+        const outH = Math.round(cropRect.h * scaleY);
+        dimEl.textContent = `Selected Crop: ${outW} × ${outH} px (Move box ya corners kheench kar adjust karein)`;
+    }
+}
+
+function rotateCropSource90() {
+    if (!cropSourceDataUrl) return;
+    const img = new Image();
+    img.onload = function() {
+        const c = document.createElement('canvas');
+        c.width = img.naturalHeight;
+        c.height = img.naturalWidth;
+        const ctx = c.getContext('2d');
+        ctx.translate(c.width / 2, c.height / 2);
+        ctx.rotate(Math.PI / 2);
+        ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
+        const rotatedUrl = c.toDataURL('image/jpeg', 0.92);
+        cropSourceDataUrl = rotatedUrl;
+        const imgEl = document.getElementById('cropPreviewImg');
+        imgEl.onload = function() {
+            requestAnimationFrame(() => initCropMetricsAndDefaultBox());
+        };
+        imgEl.src = rotatedUrl;
+    };
+    img.src = cropSourceDataUrl;
+}
+
+// Unified Touch + Mouse pointer interactions for Crop Box & Corner Handles
+(function initCropPointerEvents() {
+    const box = document.getElementById('cropBox');
+    if (!box) return;
+    const MIN_SIZE = 36;
+
+    box.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const handleEl = e.target.closest('.crop-handle');
+        const mode = handleEl ? handleEl.dataset.handle : 'move';
+        cropDragState = {
+            mode,
+            pointerId: e.pointerId,
+            startX: e.clientX,
+            startY: e.clientY,
+            orig: { ...cropRect }
+        };
+        try { box.setPointerCapture(e.pointerId); } catch (err) {}
+    });
+
+    box.addEventListener('pointermove', (e) => {
+        if (!cropDragState || e.pointerId !== cropDragState.pointerId) return;
+        e.preventDefault();
+        const dx = e.clientX - cropDragState.startX;
+        const dy = e.clientY - cropDragState.startY;
+        const { dispW, dispH } = cropImgMetrics;
+        const o = cropDragState.orig;
+
+        if (cropDragState.mode === 'move') {
+            const nx = Math.max(0, Math.min(dispW - o.w, o.x + dx));
+            const ny = Math.max(0, Math.min(dispH - o.h, o.y + dy));
+            cropRect = { x: Math.round(nx), y: Math.round(ny), w: o.w, h: o.h };
+            renderCropBox();
+            return;
+        }
+
+        let left = o.x;
+        let top = o.y;
+        let right = o.x + o.w;
+        let bottom = o.y + o.h;
+
+        if (cropDragState.mode.includes('w')) left = Math.max(0, Math.min(right - MIN_SIZE, o.x + dx));
+        if (cropDragState.mode.includes('e')) right = Math.min(dispW, Math.max(left + MIN_SIZE, o.x + o.w + dx));
+        if (cropDragState.mode.includes('n')) top = Math.max(0, Math.min(bottom - MIN_SIZE, o.y + dy));
+        if (cropDragState.mode.includes('s')) bottom = Math.min(dispH, Math.max(top + MIN_SIZE, o.y + o.h + dy));
+
+        let nw = right - left;
+        let nh = bottom - top;
+
+        if (cropAspectRatio > 0) {
+            // Preserve aspect ratio anchored on the opposite corner
+            nh = nw / cropAspectRatio;
+            if (cropDragState.mode.includes('n')) {
+                top = bottom - nh;
+                if (top < 0) {
+                    top = 0;
+                    nh = bottom;
+                    nw = nh * cropAspectRatio;
+                    if (cropDragState.mode.includes('w')) left = right - nw;
+                }
+            } else {
+                if (top + nh > dispH) {
+                    nh = dispH - top;
+                    nw = nh * cropAspectRatio;
+                    if (cropDragState.mode.includes('w')) left = right - nw;
+                }
+            }
+            if (left < 0) {
+                left = 0;
+                nw = right;
+                nh = nw / cropAspectRatio;
+                if (cropDragState.mode.includes('n')) top = bottom - nh;
+            }
+            if (left + nw > dispW) {
+                nw = dispW - left;
+                nh = nw / cropAspectRatio;
+                if (cropDragState.mode.includes('n')) top = bottom - nh;
+            }
+        }
+
+        if (nw >= MIN_SIZE && nh >= MIN_SIZE) {
+            cropRect = {
+                x: Math.round(Math.max(0, left)),
+                y: Math.round(Math.max(0, top)),
+                w: Math.round(Math.min(dispW - Math.max(0, left), nw)),
+                h: Math.round(Math.min(dispH - Math.max(0, top), nh))
+            };
+            renderCropBox();
+        }
+    });
+
+    const endDrag = (e) => {
+        if (!cropDragState || e.pointerId !== cropDragState.pointerId) return;
+        try { box.releasePointerCapture(e.pointerId); } catch (err) {}
+        cropDragState = null;
+    };
+    box.addEventListener('pointerup', endDrag);
+    box.addEventListener('pointercancel', endDrag);
+
+    window.addEventListener('resize', () => {
+        if (document.getElementById('cropEditorArea')?.style.display === 'flex') {
+            initCropMetricsAndDefaultBox();
+        }
+    });
+})();
+
+function retakeLiveSnapshot() {
+    cropSourceDataUrl = null;
+    openedCropOnlyMode = false;
+    showLiveCameraUI();
+    startLiveCameraStream();
 }
 
 function applyCapturedSnapshot() {
-    if (!capturedDataUrl || !currentTargetField) return;
+    if (!cropSourceDataUrl || !currentTargetField) return;
+    const imgEl = document.getElementById('cropPreviewImg');
+    if (!imgEl || !cropImgMetrics.dispW || !cropImgMetrics.dispH) return;
 
-    // Set base64 value in hidden input
-    document.getElementById(currentTargetField + '_base64').value = capturedDataUrl;
+    const scaleX = cropImgMetrics.natW / cropImgMetrics.dispW;
+    const scaleY = cropImgMetrics.natH / cropImgMetrics.dispH;
+    const sx = Math.max(0, Math.round(cropRect.x * scaleX));
+    const sy = Math.max(0, Math.round(cropRect.y * scaleY));
+    const sw = Math.max(10, Math.min(cropImgMetrics.natW - sx, Math.round(cropRect.w * scaleX)));
+    const sh = Math.max(10, Math.min(cropImgMetrics.natH - sy, Math.round(cropRect.h * scaleY)));
 
-    // Display preview
-    const previewBox = document.getElementById('preview_' + currentTargetField);
-    const thumbImg = document.getElementById('thumb_' + currentTargetField);
-    const nameEl = document.getElementById('name_' + currentTargetField);
-    const sizeEl = document.getElementById('size_' + currentTargetField);
+    let outW = sw;
+    let outH = sh;
+    const maxDim = (currentTargetField === 'photo') ? 800 : 1400;
+    if (outW > maxDim || outH > maxDim) {
+        const s = Math.min(maxDim / outW, maxDim / outH);
+        outW = Math.max(1, Math.round(outW * s));
+        outH = Math.max(1, Math.round(outH * s));
+    }
 
-    thumbImg.src = capturedDataUrl;
-    nameEl.textContent = 'camera_capture_' + Date.now() + '.jpg';
-    sizeEl.textContent = 'Captured Photo';
-    previewBox.classList.remove('d-none');
+    const canvas = document.getElementById('cameraCanvas');
+    canvas.width = outW;
+    canvas.height = outH;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, outW, outH);
+    ctx.drawImage(imgEl, sx, sy, sw, sh, 0, 0, outW, outH);
 
+    let q = 0.90;
+    let finalDataUrl = canvas.toDataURL('image/jpeg', q);
+    while (estimateBase64Bytes(finalDataUrl) > 1.6 * 1024 * 1024 && q > 0.45) {
+        q -= 0.1;
+        finalDataUrl = canvas.toDataURL('image/jpeg', q);
+    }
+
+    setFieldPreviewFromDataUrl(currentTargetField, finalDataUrl, `${currentTargetField}_cropped_${Date.now()}.jpg`);
     closeCameraModal();
 }
 
 function closeCameraModal() {
-    if (cameraStream) {
-        cameraStream.getTracks().forEach(track => track.stop());
-        cameraStream = null;
-    }
+    stopCameraStream();
+    cropDragState = null;
     const modalEl = document.getElementById('cameraModal');
     const modalInstance = bootstrap.Modal.getInstance(modalEl);
     if (modalInstance) modalInstance.hide();
 }
+
+// Ensure camera stream always stops on modal dismiss & crop box re-measures once modal is fully shown
+(function initCameraModalLifecycle() {
+    const modalEl = document.getElementById('cameraModal');
+    if (!modalEl) return;
+    modalEl.addEventListener('shown.bs.modal', function() {
+        if (document.getElementById('cropEditorArea')?.style.display === 'flex' && cropSourceDataUrl) {
+            initCropMetricsAndDefaultBox();
+        }
+    });
+    modalEl.addEventListener('hidden.bs.modal', function() {
+        stopCameraStream();
+        cropDragState = null;
+    });
+})();
 
 
 // Auto-Hyphen (-) Formatter for DATE OF BIRTH (DD-MM-YYYY)
